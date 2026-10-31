@@ -1,3 +1,5 @@
+#[path = "support/cleanup_checks.rs"]
+mod cleanup_checks;
 #[path = "support/common.rs"]
 mod common;
 #[path = "support/environment_checks.rs"]

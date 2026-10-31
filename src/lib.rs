@@ -2,6 +2,7 @@ pub mod config;
 pub mod core;
 pub mod engine;
 pub mod failure;
+pub mod holders;
 pub mod native;
 pub mod process;
 pub mod record;

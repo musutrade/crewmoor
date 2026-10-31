@@ -1,7 +1,11 @@
 // Transport-level test double. Never used as a real container or Agent.
 mod environment;
+mod live_environment;
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "environment-evidence") {
+        return result(live_environment::report(args.last()));
+    }
     if let Some(value) = environment::dispatch(&args) {
         return result(value);
     }

@@ -36,6 +36,7 @@ pub struct Fake {
     pub extra: RefCell<bool>,
     pub fail: RefCell<bool>,
     pub child: RefCell<Option<Child>>,
+    pub holder: RefCell<Option<Child>>,
     pub agent: RefCell<Option<Child>>,
     pub shell: RefCell<Option<Child>>,
     pub empty_shell: RefCell<bool>,
@@ -43,11 +44,19 @@ pub struct Fake {
     pub removed: RefCell<bool>,
     pub closed: RefCell<bool>,
     pub leave_actor: RefCell<bool>,
+    pub leave_holder: RefCell<bool>,
+    pub leave_socket: RefCell<bool>,
+    pub fail_creation: RefCell<bool>,
+    pub fail_after_holder: RefCell<bool>,
+    pub created: RefCell<bool>,
+    pub multiple_holders: RefCell<bool>,
+    pub changed_holder: RefCell<bool>,
 }
 fn spawn() -> Result<Child> {
     Ok(
         std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
             .arg("hold")
+            .env("CODEX_SESSION_ID", "synthetic-transport-session")
             .stdin(std::process::Stdio::piped())
             .spawn()?,
     )
@@ -79,14 +88,14 @@ impl Fake {
         };
         json!({"address":"t7","name":r.config.role,"created_ms":42,"cwd":r.config.cwd,
             "argv":r.config.argv(),"state":state,"pid":child_pid(&self.agent),
-            "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"reported":false})
+            "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"reported":false,"holder":"owned-holder"})
     }
     pub fn agent(&self, r: &Record) -> Value {
         json!({"agent":{"pane_id":"w1:p1","terminal_id":"term-own","agent":"codex","name":r.config.role,"interactive_ready":true,"agent_status":"idle"}})
     }
     fn core(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.first().map(String::as_str) {
-            Some("server") => self.server(args),
+            Some("server") => self.server(r, args),
             Some("run") => self.start_core(r),
             Some("get") => self.get_core(r),
             Some("ls") => Ok(self.inventory(r)),
@@ -99,7 +108,15 @@ impl Fake {
         }
     }
     fn start_core(&self, r: &Record) -> Result<Value> {
+        if *self.fail_creation.borrow() {
+            return Err("failed before terminal creation".into());
+        }
+        *self.holder.borrow_mut() = Some(spawn()?);
+        if *self.fail_after_holder.borrow() {
+            return Err("failed after holder creation, before terminal".into());
+        }
         *self.agent.borrow_mut() = Some(spawn()?);
+        *self.created.borrow_mut() = true;
         Ok(
             json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","turn":0}),
         )
@@ -118,9 +135,10 @@ impl Fake {
         Ok(json!({"killed":true}))
     }
     fn inventory(&self, r: &Record) -> Value {
-        let mut terminals = vec![
-            json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","status":"idle","turn":1}),
-        ];
+        let mut terminals = Vec::new();
+        if *self.created.borrow() && !*self.removed.borrow() {
+            terminals.push(json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","status":"idle","turn":1}));
+        }
         if *self.extra.borrow() {
             terminals.push(json!({"address":"unowned"}));
         }
@@ -130,16 +148,21 @@ impl Fake {
         match args.first().map(String::as_str) {
             Some("status") => Ok(json!({"version":"0.9.5"})),
             Some("workspace") => self.workspace(r, args),
-            Some("agent") => {
-                if args.get(1).map(String::as_str) == Some("start") {
-                    *self.agent.borrow_mut() = Some(spawn()?);
-                }
-                Ok(self.agent(r))
-            }
+            Some("agent") => self.tui_agent(r, args),
             Some("pane") => self.pane(args),
-            Some("session") => self.shutdown().map(|_| json!({})),
+            Some("session") => {
+                self.shutdown()?;
+                self.close_endpoint(r)?;
+                Ok(json!({}))
+            }
             _ => Ok(json!({})),
         }
+    }
+    fn tui_agent(&self, r: &Record, args: &[String]) -> Result<Value> {
+        if args.get(1).map(String::as_str) == Some("start") {
+            *self.agent.borrow_mut() = Some(spawn()?);
+        }
+        Ok(self.agent(r))
     }
     fn pane(&self, args: &[String]) -> Result<Value> {
         if *self.closed.borrow() {
@@ -154,7 +177,7 @@ impl Fake {
     }
     fn processes(&self) -> Value {
         let shell = child_pid(&self.shell);
-        let foreground = if *self.empty_shell.borrow() {
+        let foreground = if *self.empty_shell.borrow() || child_pid(&self.agent).is_none() {
             shell
         } else {
             child_pid(&self.agent)
@@ -175,7 +198,11 @@ impl Fake {
                 Ok(json!({}))
             }
             _ => {
+                if *self.fail_creation.borrow() {
+                    return Err("failed before workspace creation".into());
+                }
                 *self.shell.borrow_mut() = Some(spawn()?);
+                *self.created.borrow_mut() = true;
                 Ok(
                     json!({"workspace":{"workspace_id":"w1"},"root_pane":{"pane_id":"w1:p1","terminal_id":"term-own"}}),
                 )
@@ -183,8 +210,11 @@ impl Fake {
         }
     }
     fn workspaces(&self, r: &Record) -> Value {
-        let mut workspaces =
-            vec![json!({"workspace_id":"w1","label":r.owner,"pane_count":1,"tab_count":1})];
+        let mut workspaces = Vec::new();
+        if *self.created.borrow() && !*self.closed.borrow() {
+            workspaces
+                .push(json!({"workspace_id":"w1","label":r.owner,"pane_count":1,"tab_count":1}));
+        }
         if *self.extra.borrow() {
             workspaces.push(json!({"workspace_id":"unowned"}));
         }
@@ -195,15 +225,56 @@ impl Fake {
         *self.empty_shell.borrow_mut() = true;
         Ok(())
     }
-    fn server(&self, args: &[String]) -> Result<Value> {
+    fn server(&self, r: &Record, args: &[String]) -> Result<Value> {
         if args.get(1).map(String::as_str) == Some("stop") {
             close(&self.child)?;
+            if !*self.leave_holder.borrow() {
+                close(&self.holder)?;
+            }
+            self.close_endpoint(r)?;
+            return Ok(json!({}));
         }
-        Ok(json!({"version":"0.1.15","core":{"id":"own-core"},"pid":child_pid(&self.child)}))
+        let holders = self.holders();
+        Ok(
+            json!({"version":"0.1.15","core":{"id":"own-core"},"pid":child_pid(&self.child),"holder":holders.first(),"holders":holders}),
+        )
+    }
+    fn holders(&self) -> Vec<Value> {
+        let mut list = Vec::new();
+        if let Some(pid) = child_pid(&self.holder) {
+            let instance = if *self.changed_holder.borrow() {
+                "changed-holder"
+            } else {
+                "owned-holder"
+            };
+            list.push(json!({"pid":pid,"instance":instance,"current":true,"terminals":1}));
+            if *self.multiple_holders.borrow() {
+                list.push(json!({"pid":pid,"instance":"other","current":false}));
+            }
+        }
+        list
+    }
+    fn close_endpoint(&self, r: &Record) -> Result<()> {
+        if !*self.leave_socket.borrow() {
+            self.listener.borrow_mut().take();
+            std::fs::remove_file(r.socket())?;
+        }
+        Ok(())
+    }
+    pub fn replace_shell(&self) -> Result<()> {
+        close(&self.shell)?;
+        *self.shell.borrow_mut() = Some(spawn()?);
+        Ok(())
+    }
+    pub fn replace_holder(&self) -> Result<()> {
+        close(&self.holder)?;
+        *self.holder.borrow_mut() = Some(spawn()?);
+        Ok(())
     }
     fn shutdown(&self) -> Result<()> {
         close(&self.agent)?;
         close(&self.shell)?;
+        close(&self.holder)?;
         close(&self.child)
     }
 }
@@ -233,6 +304,11 @@ impl Drop for Fake {
     }
 }
 pub fn launch(runtime: Runtime) -> (tempfile::TempDir, Record, Fake) {
+    let (dir, config, fake) = setup(runtime);
+    let record = crewmoor::engine::launch(config, &dir.path().join("instance"), &fake).unwrap();
+    (dir, record, fake)
+}
+pub fn setup(runtime: Runtime) -> (tempfile::TempDir, Config, Fake) {
     let dir = directory();
     let fake = Fake::default();
     let mut config = config(dir.path(), runtime.clone());
@@ -241,6 +317,5 @@ pub fn launch(runtime: Runtime) -> (tempfile::TempDir, Record, Fake) {
         Runtime::Tui => "herdr 0.9.5",
     }
     .into();
-    let record = crewmoor::engine::launch(config, &dir.path().join("instance"), &fake).unwrap();
-    (dir, record, fake)
+    (dir, config, fake)
 }

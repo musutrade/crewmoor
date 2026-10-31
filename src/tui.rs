@@ -9,6 +9,7 @@ use serde_json::Value;
 pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     verify_server(r, runner)?;
     create_workspace(r, runner)?;
+    capture_shell(r, runner)?;
     start_agent(r, runner)
 }
 fn verify_server(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -46,6 +47,15 @@ fn start_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = runner.call(r, &launch_args(r)?)?;
     r.accepted = Some(true);
     r.observations.push(value);
+    r.save()
+}
+fn capture_shell(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    let handle = r.handle.as_deref().ok_or("missing pane")?;
+    let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
+    verify_pane(r, &pane["pane"])?;
+    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
+    r.original_shell = Some(process::identity(pid(&info, "/process_info/shell_pid")?)?);
+    r.observations.push(info);
     r.save()
 }
 pub fn launch_args(r: &Record) -> Result<Vec<String>> {
@@ -119,11 +129,43 @@ fn agent_process(info: &Value) -> Option<process::Identity> {
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.guard()?;
+    if r.handle.is_none() {
+        r.require_uncreated()?;
+        return stop_empty(r, runner);
+    }
+    stop_target(r, runner)
+}
+fn stop_target(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    r.original_shell
+        .as_ref()
+        .ok_or("original shell identity unknown")?;
     r.ending_process = Some(stop_guard(r, runner)?);
     r.save()?;
     let id = exclusive_workspace(r, runner)?;
     close_workspace(r, &id, runner)?;
+    stop_empty(r, runner)
+}
+fn stop_empty(r: &Record, runner: &impl Runner) -> Result<()> {
+    verify_instance(r, runner)?;
+    let value = runner.call(r, &strings(&["workspace", "list"]))?;
+    let list = value["workspaces"]
+        .as_array()
+        .ok_or("missing workspace inventory")?;
+    if !list.is_empty() {
+        return Err("private TUI contains resources; refusing empty-instance stop".into());
+    }
+    r.guard()?;
     runner.call(r, &strings(&["session", "stop", &r.session, "--json"]))?;
+    Ok(())
+}
+fn verify_instance(r: &Record, runner: &impl Runner) -> Result<()> {
+    let value = runner.call(r, &strings(&["status", "server", "--json"]))?;
+    if value["version"].as_str() != r.config.runtime_version.strip_prefix("herdr ") {
+        return Err("TUI server version changed".into());
+    }
+    if r.container_id.as_deref() != Some(&r.session) {
+        return Err("TUI instance identity unknown".into());
+    }
     Ok(())
 }
 fn close_workspace(r: &mut Record, id: &str, runner: &impl Runner) -> Result<()> {
@@ -140,11 +182,34 @@ fn stop_guard(r: &Record, runner: &impl Runner) -> Result<process::Identity> {
     let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
     verify_pane(r, &pane["pane"])?;
     let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
+    verify_original_shell(r, &info)?;
     if empty_shell(&info) {
-        return process::identity(sole_foreground(&info)?);
+        return verify_shell(r, &info);
     }
     target(r, runner)?;
     verify_running(r, &info)
+}
+fn verify_original_shell(r: &Record, info: &Value) -> Result<()> {
+    let original = r
+        .original_shell
+        .as_ref()
+        .ok_or("original shell identity unknown")?;
+    process::same(original)?;
+    if pid(info, "/process_info/shell_pid")? != original.pid {
+        return Err("native shell replaced; refusing stop".into());
+    }
+    Ok(())
+}
+fn verify_shell(r: &Record, info: &Value) -> Result<process::Identity> {
+    let original = r
+        .original_shell
+        .as_ref()
+        .ok_or("original shell identity unknown")?;
+    process::same(original)?;
+    if sole_foreground(info)? != original.pid {
+        return Err("original shell replaced; refusing stop".into());
+    }
+    Ok(original.clone())
 }
 fn verify_pane(r: &Record, pane: &Value) -> Result<()> {
     if pane["pane_id"].as_str() != r.handle.as_deref() {

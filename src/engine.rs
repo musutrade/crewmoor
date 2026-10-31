@@ -70,13 +70,27 @@ fn confirm_exit(record: &Record) -> Result<()> {
         Some(expected),
         record.ending_process.as_ref(),
         record.agent_process.as_ref(),
+        record.original_shell.as_ref(),
     ]
     .into_iter()
     .flatten()
-    {
+    .chain(
+        record
+            .core_holders
+            .iter()
+            .flatten()
+            .map(|holder| &holder.process),
+    ) {
         process::wait_exited(identity)?;
     }
-    Ok(())
+    socket_absent(record)
+}
+fn socket_absent(record: &Record) -> Result<()> {
+    match fs::symlink_metadata(record.socket()) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("native socket remains; binding retained".into()),
+    }
 }
 pub fn preserve(record: &mut Record, result: Result<()>) -> Result<()> {
     if let Err(error) = result {

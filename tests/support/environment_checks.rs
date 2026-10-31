@@ -92,3 +92,28 @@ fn poisoned_parent(record: &Record) -> Command {
         .arg(&record.root);
     cmd
 }
+#[test]
+fn read_only_receipt_probe_reports_only_whitelisted_marker_names() {
+    for runtime in [Runtime::Core, Runtime::Tui] {
+        let (_dir, record, _fake) = common::launch(runtime);
+        let output = Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+            .arg("environment-evidence")
+            .arg(&record.root)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains("synthetic-transport-session"));
+        let report: Value = serde_json::from_str(&text).unwrap();
+        let list = report["processes"].as_array().unwrap();
+        assert_eq!(list.len(), 3);
+        for process in list {
+            assert!(
+                process["present_markers"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::from("CODEX_SESSION_ID"))
+            );
+        }
+    }
+}

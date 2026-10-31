@@ -1,5 +1,5 @@
 use crate::{
-    Result,
+    Result, holders,
     native::{Runner, pid, strings, text},
     process,
     record::Record,
@@ -12,19 +12,60 @@ pub fn status(r: &Record, runner: &impl Runner) -> Result<Value> {
     {
         return Err("core server version mismatch".into());
     }
+    if Some(process::identity(pid(&value, "/pid")?)?) != r.server {
+        return Err("native core server process changed".into());
+    }
     Ok(value)
 }
 pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = status(r, runner)?;
     r.container_id = Some(text(&value, "/core/id")?);
+    r.core_holders = Some(holders::read(&value)?);
     r.phase = "agent-request-intent".into();
     r.save()?;
+    let result = request_agent(r, runner);
+    let captured = capture_holders(r, runner);
+    result?;
+    captured
+}
+fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = runner.call(r, &launch_args(r))?;
     r.accepted = Some(true);
     r.observations.push(value.clone());
     r.save()?;
     r.handle = Some(text(&value, "/address")?);
     r.save()
+}
+fn capture_holders(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    let value = instance_status(r, runner)?;
+    let current = holders::read(&value)?;
+    let previous = r
+        .core_holders
+        .as_ref()
+        .ok_or("launch holder inventory unknown")?;
+    if !previous.is_empty() && previous != &current {
+        return Err("launch holder changed".into());
+    }
+    r.core_holders = Some(current);
+    r.observations.push(value);
+    r.save()
+}
+fn instance_status(r: &Record, runner: &impl Runner) -> Result<Value> {
+    let value = status(r, runner)?;
+    if r.container_id.as_deref() != Some(text(&value, "/core/id")?.as_str()) {
+        return Err("core instance changed or unknown".into());
+    }
+    Ok(value)
+}
+fn verify_holders(r: &Record, runner: &impl Runner) -> Result<()> {
+    let expected = r
+        .core_holders
+        .as_ref()
+        .ok_or("holder ownership unknown; refusing stop/query")?;
+    if *expected != holders::read(&instance_status(r, runner)?)? {
+        return Err("holder identity changed; refusing stop/query".into());
+    }
+    Ok(())
 }
 pub fn launch_args(r: &Record) -> Vec<String> {
     let mut args = strings(&[
@@ -74,10 +115,7 @@ fn bind_generation(r: &mut Record, value: &Value) -> Result<()> {
     r.save()
 }
 fn fetch_target(r: &Record, runner: &impl Runner) -> Result<Value> {
-    let value = status(r, runner)?;
-    if r.container_id.as_deref() != Some(text(&value, "/core/id")?.as_str()) {
-        return Err("core instance changed".into());
-    }
+    verify_holders(r, runner)?;
     let handle = r.handle.as_deref().ok_or("missing terminal handle")?;
     let value = runner.call(r, &strings(&["get", handle]))?;
     Ok(value)
@@ -114,6 +152,17 @@ fn verify_command(r: &Record, value: &Value) -> Result<()> {
     if value["argv"] != serde_json::to_value(r.config.argv())? {
         return Err("program changed".into());
     }
+    verify_terminal_holder(r, value)
+}
+fn verify_terminal_holder(r: &Record, value: &Value) -> Result<()> {
+    let holder = r
+        .core_holders
+        .as_ref()
+        .and_then(|list| list.first())
+        .ok_or("terminal holder unknown")?;
+    if value["holder"].as_str() != Some(&holder.instance) {
+        return Err("terminal holder changed".into());
+    }
     Ok(())
 }
 pub fn observe(r: &mut Record, value: Value) -> Result<()> {
@@ -141,6 +190,13 @@ pub fn readiness(value: &Value) -> String {
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.guard()?;
+    if r.handle.is_none() {
+        r.require_uncreated()?;
+        return stop_empty(r, runner);
+    }
+    stop_target(r, runner)
+}
+fn stop_target(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = target(r, runner)?;
     exclusive(r, runner)?;
     prepare_ending(r, &value)?;
@@ -168,6 +224,18 @@ fn finish_terminal(r: &mut Record, runner: &impl Runner) -> Result<()> {
     )?;
     r.phase = "terminal-removed".into();
     r.save()?;
+    stop_empty(r, runner)
+}
+fn stop_empty(r: &Record, runner: &impl Runner) -> Result<()> {
+    verify_holders(r, runner)?;
+    let value = runner.call(r, &strings(&["ls", "--all"]))?;
+    let list = value["terminals"]
+        .as_array()
+        .ok_or("missing terminal inventory")?;
+    if !list.is_empty() {
+        return Err("private core contains resources; refusing empty-instance stop".into());
+    }
+    r.guard()?;
     runner.call(r, &strings(&["server", "stop"]))?;
     Ok(())
 }
