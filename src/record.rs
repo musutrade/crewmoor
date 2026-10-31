@@ -35,6 +35,9 @@ pub struct Record {
     #[serde(default)]
     pub process_verified: bool,
     pub agent_status: String,
+    pub server_owned: bool,
+    pub binding_scope: String,
+    pub app_terminal: Option<String>,
 }
 impl Record {
     pub fn prepare(config: Config, root: &Path) -> Result<Self> {
@@ -45,9 +48,15 @@ impl Record {
         }
         fs::DirBuilder::new().mode(0o700).create(root)?;
         let owner = uuid::Uuid::new_v4().simple().to_string();
+        let server_owned = config.app.is_none();
+        let session = config
+            .app
+            .as_ref()
+            .map(|a| a.session.clone())
+            .unwrap_or_else(|| format!("cm-{}", &owner[..12]));
         let result = Self {
             crewmoor_version: env!("CARGO_PKG_VERSION").into(),
-            session: format!("cm-{}", &owner[..12]),
+            session,
             config,
             owner,
             root: root.canonicalize()?,
@@ -69,6 +78,9 @@ impl Record {
             native_name: None,
             process_verified: false,
             agent_status: "unknown".into(),
+            server_owned,
+            binding_scope: if server_owned { "instance" } else { "terminal" }.into(),
+            app_terminal: None,
         };
         result.save()?;
         result.bind()?;
@@ -88,6 +100,9 @@ impl Record {
         Ok(record)
     }
     pub fn socket(&self) -> PathBuf {
+        if let Some(app) = &self.config.app {
+            return app.socket.clone();
+        }
         match self.config.runtime {
             crate::config::Runtime::Core => self
                 .config
@@ -108,6 +123,9 @@ impl Record {
         Ok(())
     }
     pub fn guard(&self) -> Result<()> {
+        if self.server_owned != self.config.app.is_none() {
+            return Err("server ownership disagrees with launch mode".into());
+        }
         self.binding()?;
         crate::process::same(self.server.as_ref().ok_or("missing server identity")?)?;
         if Some(fs::metadata(self.socket())?.ino()) != self.socket_inode {

@@ -122,8 +122,13 @@ fn observed_agent(r: &Record, info: &Value) -> Result<Option<process::Identity>>
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<bool> {
     if let Some(pane) = r.handle.clone() {
+        let may_close = workspace_may_close(r, runner)?;
         close_target(r, &pane, runner)?;
+        close_empty_workspace(r, runner, may_close)?;
     }
+    stop_empty(r, runner)
+}
+fn stop_empty(r: &Record, runner: &impl Runner) -> Result<bool> {
     let value = runner.call(r, &strings(&["workspace", "list"]))?;
     let list = value["workspaces"]
         .as_array()
@@ -134,6 +139,46 @@ pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<bool> {
     r.guard()?;
     runner.call(r, &strings(&["session", "stop", &r.session, "--json"]))?;
     Ok(true)
+}
+fn workspace_may_close(r: &Record, runner: &impl Runner) -> Result<bool> {
+    let id = r
+        .workspace_id
+        .as_deref()
+        .ok_or("missing returned workspace")?;
+    let value = runner.call(r, &strings(&["workspace", "get", id]))?;
+    if value["workspace"]["workspace_id"].as_str() != Some(id) {
+        return Err("workspace changed".into());
+    }
+    Ok(value["workspace"]["pane_count"].as_u64() == Some(1)
+        && value["workspace"]["tab_count"].as_u64() == Some(1))
+}
+fn close_empty_workspace(r: &Record, runner: &impl Runner, eligible: bool) -> Result<()> {
+    if !eligible {
+        return Ok(());
+    }
+    let value = runner.call(r, &strings(&["workspace", "list"]))?;
+    let list = value["workspaces"]
+        .as_array()
+        .ok_or("missing workspace inventory")?;
+    let Some(own) = list
+        .iter()
+        .find(|w| w["workspace_id"].as_str() == r.workspace_id.as_deref())
+    else {
+        return Ok(());
+    };
+    if !empty_workspace(own) {
+        return Ok(());
+    }
+    let id = r
+        .workspace_id
+        .as_deref()
+        .ok_or("missing returned workspace")?;
+    runner.call(r, &strings(&["workspace", "close", id]))?;
+    Ok(())
+}
+fn empty_workspace(value: &Value) -> bool {
+    value["pane_count"].as_u64() == Some(0)
+        && value["tab_count"].as_u64().is_some_and(|count| count <= 1)
 }
 fn close_target(r: &mut Record, pane: &str, runner: &impl Runner) -> Result<()> {
     target(r, runner)?;

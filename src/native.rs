@@ -107,6 +107,9 @@ fn agent_version(config: &crate::config::Config) -> Result<()> {
 }
 impl Runner for Native {
     fn call(&self, record: &Record, args: &[String]) -> Result<Value> {
+        if record.config.app.is_some() {
+            return crate::app::call(record, args);
+        }
         let output = crate::transport::output(command(record).args(args), Duration::from_secs(10))?;
         if !output.status.success() {
             let value = serde_json::from_slice::<Value>(&output.stderr).unwrap_or(Value::Null);
@@ -116,6 +119,9 @@ impl Runner for Native {
         payload(value, &record.config.runtime)
     }
     fn boot(&self, record: &Record) -> Result<Identity> {
+        if record.config.app.is_some() {
+            return crate::app::connect(record);
+        }
         setup(record)?;
         boot_native(record)
     }

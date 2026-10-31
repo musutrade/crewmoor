@@ -18,6 +18,8 @@ pub fn status(r: &Record, runner: &impl Runner) -> Result<Value> {
 }
 pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = status(r, runner)?;
+    crate::app::check_host(r, &value)?;
+    crate::app::check_layout(r, runner)?;
     r.container_id = Some(text(&value, "/core/id")?);
     request_agent(r, runner)?;
     capture_holders(r, runner)
@@ -28,7 +30,11 @@ fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.save()?;
     let value = runner.call(r, &launch_args(r))?;
     r.accepted = Some(true);
-    r.handle = Some(text(&value, "/address")?);
+    let handle = text(&value, "/address")?;
+    if let Some(app) = &r.config.app {
+        r.app_terminal = Some(format!("{}/{handle}", app.machine));
+    }
+    r.handle = Some(handle);
     r.save()
 }
 fn capture_holders(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -59,8 +65,17 @@ pub fn launch_args(r: &Record) -> Vec<String> {
         &format!("crewmoor-owner={}", r.owner),
         "--label",
         &format!("crewmoor-team={}", r.config.team),
-        "--",
     ]));
+    if let Some(app) = &r.config.app {
+        args.extend(strings(&[
+            "--keep",
+            "--label",
+            &format!("herdr.space={}", app.space_local()),
+            "--label",
+            &format!("herdr.tab={}", app.tab_local()),
+        ]));
+    }
+    args.push("--".into());
     args.extend(r.config.argv());
     args
 }
@@ -124,8 +139,14 @@ fn observed_process(r: &Record, value: &Value) -> Result<Option<process::Identit
     )?))
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<bool> {
+    if !r.server_owned && r.handle.is_none() {
+        return Err("App target unknown; terminal binding retained".into());
+    }
     if r.handle.is_some() {
         stop_target(r, runner)?;
+    }
+    if !r.server_owned {
+        return Ok(false);
     }
     stop_empty(r, runner)
 }

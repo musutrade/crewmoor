@@ -1,6 +1,6 @@
 # Minimal remaining real acceptance — permission required
 
-This proposal has not been executed. The two earlier Codex launch permissions were consumed by v9; user absence and resuming code work grant no further real startup. The new exact SHA/artifact/config hashes are supplied outside the repository with the audit handoff. Execute only after exact-candidate independent review and specific new user authorization. No Windows/App work is necessary.
+This proposal has not been executed. The two earlier Codex launch permissions were consumed by v9; user absence and resuming code work grant no further real startup. The new exact SHA/artifact/config hashes are supplied outside the repository with the audit handoff. Execute only after exact-candidate independent review and specific new user authorization. The additional [App display/direct-input scenario](app-launch.md#user-acceptance--stop-here-until-coordinated) requires user client/build/target confirmation; it is separate from private TUI acceptance below.
 
 The primary next action is one new isolated **TUI × Codex** launch, no task. Proposed team/role: `issue2-tui-r4` / `cm-tui-r4`; cwd `/tmp/cm-i2-tui4-work`; new state `/tmp/cm-i2-tui4`. No directory or runtime is created by writing this plan.
 

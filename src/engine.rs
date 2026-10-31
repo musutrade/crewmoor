@@ -17,16 +17,34 @@ pub fn launch(config: Config, root: &Path, runner: &impl Runner) -> Result<Recor
     Ok(record)
 }
 fn start(record: &mut Record, runner: &impl Runner) -> Result<()> {
-    record.phase = "server-request-intent".into();
+    connect_instance(record, runner)?;
+    create(record, runner)?;
+    inspect(record, runner)
+}
+fn connect_instance(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    record.phase = if record.server_owned {
+        "server-request-intent"
+    } else {
+        "host-connect-intent"
+    }
+    .into();
     record.save()?;
     record.server = Some(runner.boot(record)?);
     record.save()?;
-    crate::native::wait_socket(&record.socket())?;
-    record.capture_socket()?;
-    record.phase = "server-started".into();
-    record.save()?;
-    create(record, runner)?;
-    inspect(record, runner)
+    capture_endpoint(record)?;
+    record.phase = if record.server_owned {
+        "server-started"
+    } else {
+        "host-connected"
+    }
+    .into();
+    record.save()
+}
+fn capture_endpoint(record: &mut Record) -> Result<()> {
+    if record.server_owned {
+        crate::native::wait_socket(&record.socket())?;
+    }
+    record.capture_socket()
 }
 fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     match r.config.runtime {
@@ -58,6 +76,15 @@ pub fn stop(record: &mut Record, runner: &impl Runner) -> Result<()> {
         Runtime::Core => core::stop(record, runner)?,
         Runtime::Tui => tui::stop(record, runner)?,
     };
+    finish_stop(record, empty)
+}
+fn finish_stop(record: &mut Record, empty: bool) -> Result<()> {
+    if !record.server_owned {
+        record.process_verified = false;
+        record.phase = "target-stopped-host-retained".into();
+        record.save()?;
+        return record.release();
+    }
     if !empty {
         record.phase = "partial-stop".into();
         record.process_verified = false;

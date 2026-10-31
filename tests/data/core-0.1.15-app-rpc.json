@@ -1,0 +1,74 @@
+{
+  "version": "0.1.15",
+  "protocol": "1.3.2",
+  "methods": [
+    {
+      "name": "server.status",
+      "allowed": [],
+      "required": []
+    },
+    {
+      "name": "terminal.run",
+      "allowed": [
+        "argv",
+        "caller",
+        "cwd",
+        "die_with_parent",
+        "env",
+        "keep",
+        "labels",
+        "line",
+        "name",
+        "no_notify",
+        "no_parent",
+        "on",
+        "outlive_parent",
+        "parent",
+        "rm",
+        "timeout",
+        "wait"
+      ],
+      "required": []
+    },
+    {
+      "name": "terminal.get",
+      "allowed": [
+        "caller",
+        "terminal"
+      ],
+      "required": [
+        "terminal"
+      ]
+    },
+    {
+      "name": "terminal.kill",
+      "allowed": [
+        "caller",
+        "terminal"
+      ],
+      "required": [
+        "terminal"
+      ]
+    },
+    {
+      "name": "terminal.rm",
+      "allowed": [
+        "caller",
+        "terminal"
+      ],
+      "required": [
+        "terminal"
+      ]
+    },
+    {
+      "name": "doc.get",
+      "allowed": [
+        "name",
+        "on"
+      ],
+      "required": [
+        "name"
+      ]
+    }
+  ]
+}

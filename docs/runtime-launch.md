@@ -8,8 +8,9 @@ The [official TUI LLM index](https://herdr.dev/llms.txt) currently pins stable 0
 
 | Runtime | Minimal native chain |
 |---|---|
-| TUI 0.9.5 | private server → workspace create → returned root pane → agent start → one process-info → pane close |
+| TUI 0.9.5 | private server → workspace create → returned root pane → agent start → one process-info → pane close → empty owned workspace close |
 | core 0.1.15 | private named Unix-socket core → run → returned terminal → get → kill/rm |
+| App on core 0.1.15 | specified existing socket/core → read existing layout → run with keep/space/tab labels → get → owned kill/rm; host retained |
 
 TUI calls `agent start ROLE --kind codex|claude --pane RETURNED_PANE --timeout 5000 -- AGENT_ARGS`. Its existing shell-busy handling and internal readiness wait are reused. CrewMoor does not add a busy loop, ready gate or status adapter. This installed CLI has a two-second busy-retry window; that is not an end-to-end two-second deadline. A slow/unavailable shell may still produce an unknown launch.
 
@@ -36,15 +37,17 @@ crewmoor inspect /tmp/fresh-state
 crewmoor stop /tmp/fresh-state
 ```
 
-State must be new, absolute and ≤45 bytes for Unix socket paths. Each team is bound to one randomly named private instance in the selected store. Keep one binding namespace per installation. The record maps configured team/role to session/container, workspace/pane/terminal or core address/generation, accepted/unknown admission, and any verified Agent PID/start/executable/cwd. Config role is an assigned logical identity, not invented native evidence.
+State must be new, absolute and ≤45 bytes for Unix socket paths. Private mode binds each team to one randomly named instance in the selected store. Optional [App binding](app-launch.md) instead selects an explicit existing external core and binds only this team's terminal; it never owns that server. Keep one binding namespace per installation. The record maps configured team/role to session/container, workspace/pane/terminal or core address/generation, accepted/unknown admission, and any verified Agent PID/start/executable/cwd. Config role is an assigned logical identity, not invented native evidence.
 
 A startup intent is saved before the single native startup call. Native/version calls have a ten-second bound plus at most one second to reap their own timed-out CLI. Native error/timeout is unknown admission and never triggers another CrewMoor startup call. TUI performs one process-info observation even after the CLI reports a startup error; core uses its returned address and a full get. Neither command exit 0 nor `accepted=true` proves an Agent process. `process_verified` is only resource evidence. No terminal content, unrelated foreground argv or native semantic status is stored.
 
 ## End only this target
 
-Before a mutation, the stored team binding and private server/socket identity must still match. TUI closes only its returned pane after matching pane/terminal/workspace ids. It does not require the original shell to remain alive, the Agent to remain in a unique foreground, or the entire instance to be exclusive. Core checks its returned address, creation generation and owner/team/launch tuple, then calls native kill/rm for that terminal. There are no raw Agent PID signals.
+Before a mutation, the stored team binding and server/socket identity must still match. TUI closes only its returned pane after matching pane/terminal/workspace ids. If its returned workspace had no additional pane/tab and is now empty, it also closes that workspace and checks the resulting inventory. User-added panes/tabs keep their workspace intact. TUI does not require the original shell to remain alive, the Agent to remain in a unique foreground, or the entire instance to be exclusive. Core checks its returned address, creation generation and owner/team/launch tuple, then calls native kill/rm for that terminal. There are no raw Agent PID signals.
 
 After target removal, recorded process exit is checked. Only an empty native instance may be stopped, with recorded service/holder exit and socket absence confirmed before binding release. If the user has added resources, only our target is closed: `phase=partial-stop`, instance/binding retained, no server/session stop. Unknown removal, timeout, changed native identity or unconfirmed exit retains evidence/binding. There is no generic recovery or adoption of existing panes; do not retry an unknown operation blindly.
+
+The preceding whole-instance stop applies only to private mode. App mode always retains its external host, even if empty. `server_owned=false`, `binding_scope=terminal` and `phase=target-stopped-host-retained` distinguish confirmed own-terminal removal/recorded Agent exit from a host that remains available. The terminal binding is then released; host/holders/socket and all user layout/resources are left alone. A host remaining alive does not mean the Agent remains alive.
 
 `phase=stopped` describes owned resource cleanup, not Agent task completion or proof that an Agent ever launched. The Agent's prior fingerprint remains as historical evidence; `process_verified=false` after stop and semantic `agent_status=unknown` are explicit. State/cwd/logs are retained, not deleted automatically. This minimal record format is for new instances, not a migration/recovery tool for old held records.
 

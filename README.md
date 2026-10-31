@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status: minimal launch implementation under validation.** Issue #2 supports Codex/Claude with official TUI workspace-create → agent-start and core run, native location and cleanup of owned resources. It reuses native waits; Agent semantic status remains unknown until a separate hooks Issue. Historical v9 core/Codex evidence exists, but the simplified candidate still needs its own review and newly authorized real acceptance. See [usage and limits](docs/runtime-launch.md), [historical evidence](docs/issue-2-v9-real-acceptance.md) and [the minimal acceptance proposal](docs/issue-2-minimal-acceptance.md). The broader workflow below remains the intended direction.
+> **Project status: minimal launch implementation under validation.** Issue #2 supports Codex/Claude through official TUI and core interfaces, native location and cleanup of owned resources. Optional [App binding](docs/app-launch.md) targets a user-specified existing core/space/tab for formal terminal display and direct user input; real client acceptance is pending. Native waits are reused; Agent semantic status remains unknown until a separate hooks Issue. Historical v9 core/Codex evidence is separate from the current candidate. See [usage and limits](docs/runtime-launch.md), [historical evidence](docs/issue-2-v9-real-acceptance.md) and [remaining acceptance](docs/issue-2-minimal-acceptance.md). The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 
@@ -54,7 +54,7 @@ CrewMoor does not need to turn every handoff into a fixed workflow state machine
 The initial direction is to learn from the existing [herdr-flow-rust](https://github.com/musutrade/herdr-flow-rust) TUI workflow, then support separate integrations for:
 
 - **Herdr TUI**, using its own agent and terminal interfaces.
-- **herdr-core**, the runtime behind Herdr App. Agent control should not require an App window; App-specific presentation can be considered separately.
+- **herdr-core**, the runtime behind Herdr App. Agent startup works without an App window; an optional explicit App binding uses the official keep/space/tab labels so a connected UI can adopt that same terminal and accept user input.
 
 Runtime capabilities and semantics differ. Support for either integration, individual agents, or specific recovery features must be verified rather than assumed. The existing TUI project remains independent and useful; replacement or migration is not a prerequisite.
 

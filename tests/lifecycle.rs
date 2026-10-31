@@ -1,3 +1,5 @@
+#[path = "support/app_checks.rs"]
+mod app_checks;
 #[path = "support/common.rs"]
 mod common;
 #[path = "support/environment_checks.rs"]
@@ -408,5 +410,47 @@ fn each_agent_rejects_wrong_version_and_kernel_executable_without_claiming_launc
         assert!(!saved.process_verified);
         assert_eq!(saved.agent_status, "unknown");
         assert!(saved.binding().is_ok());
+    }
+}
+
+#[test]
+fn tui_closes_its_retained_empty_workspace_before_stopping_the_private_session() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
+    engine::stop(&mut r, &fake).unwrap();
+    assert!(*fake.workspace_closed.borrow());
+    assert!(*fake.stopped.borrow());
+    assert_eq!(r.phase, "stopped");
+    let calls = fake.calls.borrow();
+    let pane = calls
+        .iter()
+        .position(|a| a == &strings(&["pane", "close", "w1:p1"]))
+        .unwrap();
+    let workspace = calls
+        .iter()
+        .position(|a| a == &strings(&["workspace", "close", "w1"]))
+        .unwrap();
+    let session = calls
+        .iter()
+        .position(|a| a.first().map(String::as_str) == Some("session"))
+        .unwrap();
+    assert!(pane < workspace);
+    assert!(workspace < session);
+}
+
+#[test]
+fn tui_keeps_user_panes_tabs_and_unconfirmed_workspace_removal_partial() {
+    for kind in ["pane", "tab", "retained"] {
+        let (_dir, mut r, fake) = common::launch(Runtime::Tui);
+        match kind {
+            "pane" => *fake.extra_pane.borrow_mut() = true,
+            "tab" => *fake.extra_tab.borrow_mut() = true,
+            _ => *fake.leave_workspace.borrow_mut() = true,
+        }
+        engine::stop(&mut r, &fake).unwrap();
+        assert!(*fake.closed.borrow());
+        assert!(!*fake.workspace_closed.borrow());
+        assert!(!*fake.stopped.borrow());
+        assert!(r.binding().is_ok());
+        assert_eq!(r.phase, "partial-stop");
     }
 }

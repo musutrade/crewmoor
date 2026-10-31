@@ -38,6 +38,7 @@ pub struct Config {
     pub agent_version: String,
     #[serde(default)]
     pub agent_args: Vec<String>,
+    pub app: Option<crate::app::Binding>,
 }
 pub fn name(value: &str) -> Result<()> {
     if value.is_empty() || value.len() > 24 {
@@ -56,6 +57,9 @@ impl Config {
         name(&self.team)?;
         name(&self.role)?;
         self.validate_paths()?;
+        if let Some(app) = &self.app {
+            app.validate(&self.runtime)?;
+        }
         if self.runtime == Runtime::Tui {
             self.validate_tui()?;
         }

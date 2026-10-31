@@ -28,6 +28,7 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         agent_executable: env!("CARGO_BIN_EXE_transport-fixture").into(),
         agent_version: "fixture 1".into(),
         agent_args: Vec::new(),
+        app: None,
     }
 }
 #[derive(Default)]
@@ -39,6 +40,10 @@ pub struct Fake {
     pub agent: RefCell<Option<Child>>,
     pub shell: RefCell<Option<Child>>,
     pub extra: RefCell<bool>,
+    pub extra_pane: RefCell<bool>,
+    pub extra_tab: RefCell<bool>,
+    pub workspace_closed: RefCell<bool>,
+    pub leave_workspace: RefCell<bool>,
     pub fail: RefCell<bool>,
     pub ambiguous: RefCell<bool>,
     pub no_agent: RefCell<bool>,
@@ -55,13 +60,20 @@ pub struct Fake {
     pub leave_holder: RefCell<bool>,
     pub leave_socket: RefCell<bool>,
 }
-fn spawn(cwd: &Path) -> Result<Child> {
+fn spawn(r: &Record) -> Result<Child> {
     use std::io::Read;
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
+    if r.config.app.is_some() {
+        for marker in crewmoor::app::HOST_MARKERS {
+            command.env_remove(marker);
+        }
+    } else {
+        command.env("CODEX_SESSION_ID", "synthetic-transport-session");
+    }
+    let mut child = command
         .arg("hold")
-        .env("CODEX_SESSION_ID", "synthetic-transport-session")
         .env("CREWMOOR_TRANSPORT_HANDSHAKE", "1")
-        .current_dir(cwd)
+        .current_dir(&r.config.cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()?;
@@ -116,7 +128,7 @@ impl Fake {
         let saved = Record::load(&r.root)?;
         assert!(saved.request_issued);
         if !*self.no_agent.borrow() {
-            *self.agent.borrow_mut() = Some(spawn(&r.config.cwd)?);
+            *self.agent.borrow_mut() = Some(spawn(r)?);
         }
         if *self.ambiguous.borrow() {
             return Err(Box::new(crewmoor::failure::NativeFailure {
@@ -137,11 +149,14 @@ impl Fake {
                 Ok(json!({"removed":"t7"}))
             }
             Some("ls") => Ok(self.inventory()),
+            Some("app-document") => Ok(
+                json!({"version":1,"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"tb-existing"}]}]}}),
+            ),
             _ => Err("unexpected core call".into()),
         }
     }
     fn start_core(&self, r: &Record) -> Result<Value> {
-        *self.holder.borrow_mut() = Some(spawn(&r.config.cwd)?);
+        *self.holder.borrow_mut() = Some(spawn(r)?);
         *self.created.borrow_mut() = true;
         self.start(r)?;
         Ok(
@@ -257,17 +272,40 @@ impl Fake {
         json!({"process_info":{"pane_id":"w1:p1","shell_pid":child_pid(&self.shell),"foreground_processes":list}})
     }
     fn workspace(&self, r: &Record, args: &[String]) -> Result<Value> {
-        if args.get(1).map(String::as_str) != Some("list") {
-            *self.shell.borrow_mut() = Some(spawn(&r.config.cwd)?);
-            *self.created.borrow_mut() = true;
-            return Ok(json!({"workspace":{"workspace_id":"w1"},"root_pane":self.pane_info()}));
+        match args.get(1).map(String::as_str) {
+            Some("create") => self.create_workspace(r),
+            Some("get") => Ok(json!({"workspace":self.workspace_info(r)})),
+            Some("close") => {
+                assert_eq!(args.get(2).map(String::as_str), Some("w1"));
+                if !*self.leave_workspace.borrow() {
+                    *self.workspace_closed.borrow_mut() = true;
+                }
+                Ok(json!({}))
+            }
+            Some("list") => Ok(self.workspaces(r)),
+            _ => Err("unexpected workspace call".into()),
         }
-        let list = if *self.extra.borrow() {
-            vec![json!({"workspace_id":"user-workspace"})]
-        } else {
-            Vec::new()
-        };
-        Ok(json!({"workspaces":list}))
+    }
+    fn create_workspace(&self, r: &Record) -> Result<Value> {
+        *self.shell.borrow_mut() = Some(spawn(r)?);
+        *self.created.borrow_mut() = true;
+        Ok(json!({"workspace":self.workspace_info(r),"root_pane":self.pane_info()}))
+    }
+    fn workspace_info(&self, r: &Record) -> Value {
+        let panes = usize::from(!*self.closed.borrow()) + usize::from(*self.extra_pane.borrow());
+        let tabs = 1 + usize::from(*self.extra_tab.borrow());
+        json!({"workspace_id":"w1","number":1,"label":r.owner,"focused":false,
+            "pane_count":panes,"tab_count":tabs,"active_tab_id":"w1:t1","agent_status":"unknown"})
+    }
+    fn workspaces(&self, r: &Record) -> Value {
+        let mut list = Vec::new();
+        if *self.created.borrow() && !*self.workspace_closed.borrow() {
+            list.push(self.workspace_info(r));
+        }
+        if *self.extra.borrow() {
+            list.push(json!({"workspace_id":"user-workspace"}));
+        }
+        json!({"workspaces":list})
     }
     fn shutdown(&self, r: &Record) -> Result<()> {
         close(&self.child)?;
@@ -293,7 +331,7 @@ impl Runner for Fake {
     fn boot(&self, r: &Record) -> Result<process::Identity> {
         std::fs::create_dir_all(r.socket().parent().ok_or("missing socket parent")?)?;
         *self.listener.borrow_mut() = Some(UnixListener::bind(r.socket())?);
-        let child = spawn(&r.config.cwd)?;
+        let child = spawn(r)?;
         let identity = process::identity(child.id())?;
         *self.child.borrow_mut() = Some(child);
         Ok(identity)
