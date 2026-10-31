@@ -28,7 +28,12 @@ pub struct Record {
     pub core_holders: Option<Vec<crate::holders::Holder>>,
     pub ending_process: Option<Identity>,
     pub accepted: Option<bool>,
-    pub ready: String,
+    #[serde(default)]
+    pub request_issued: bool,
+    pub request_error: Option<String>,
+    pub native_name: Option<String>,
+    #[serde(default)]
+    pub process_verified: bool,
     pub observations: Vec<serde_json::Value>,
 }
 impl Record {
@@ -59,7 +64,10 @@ impl Record {
             core_holders: None,
             ending_process: None,
             accepted: None,
-            ready: "unknown".into(),
+            request_issued: false,
+            request_error: None,
+            native_name: None,
+            process_verified: false,
             observations: Vec::new(),
         };
         result.save()?;

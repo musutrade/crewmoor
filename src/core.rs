@@ -22,6 +22,7 @@ pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.container_id = Some(text(&value, "/core/id")?);
     r.core_holders = Some(holders::read(&value)?);
     r.phase = "agent-request-intent".into();
+    r.request_issued = true;
     r.save()?;
     let result = request_agent(r, runner);
     let captured = capture_holders(r, runner);
@@ -147,9 +148,7 @@ fn verify_identity(r: &Record, value: &Value) -> Result<()> {
     verify_command(r, value)
 }
 fn verify_command(r: &Record, value: &Value) -> Result<()> {
-    if value["name"].as_str() != Some(&r.config.role) {
-        return Err("role mismatch".into());
-    }
+    crate::native::match_optional(value, "name", &r.config.role)?;
     if value["cwd"].as_str() != r.config.cwd.to_str() {
         return Err("cwd mismatch".into());
     }
@@ -159,27 +158,21 @@ fn verify_command(r: &Record, value: &Value) -> Result<()> {
     Ok(())
 }
 pub fn observe(r: &mut Record, value: Value) -> Result<()> {
-    r.ready = readiness(&value);
-    if value["state"].as_str() == Some("live") {
-        r.agent_process = process::identity(pid(&value, "/pid")?).ok();
-    }
+    r.native_name = crate::native::optional_text(&value, "name")?.map(Into::into);
+    let current = observed_process(r, &value)?;
+    r.process_verified = process::remember(&mut r.agent_process, current)?;
     r.observations.push(value);
     Ok(())
 }
-pub fn readiness(value: &Value) -> String {
-    if value["state"].as_str() != Some("live") {
-        return "unknown".into();
+fn observed_process(r: &Record, value: &Value) -> Result<Option<process::Identity>> {
+    if value["state"] != "live" || value["pid"].is_null() {
+        return Ok(None);
     }
-    if value["reported"].as_bool() != Some(true) {
-        return "unknown".into();
-    }
-    if value["status"]["app"].as_str() != Some("codex") {
-        return "unknown".into();
-    }
-    value["status"]["state"]
-        .as_str()
-        .unwrap_or("unknown")
-        .into()
+    Ok(Some(process::agent_identity(
+        pid(value, "/pid")?,
+        &r.config.agent_executable,
+        &r.config.cwd,
+    )?))
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.guard()?;
@@ -233,6 +226,9 @@ fn stop_empty(r: &Record, runner: &impl Runner) -> Result<()> {
     Ok(())
 }
 fn prepare_ending(r: &mut Record, value: &Value) -> Result<()> {
+    r.agent_process
+        .as_ref()
+        .ok_or("Agent birth fingerprint unknown; refusing stop")?;
     if value["state"].as_str() == Some("live") {
         crate::engine::verified_process(r)?;
         let current = process::identity(pid(value, "/pid")?)?;

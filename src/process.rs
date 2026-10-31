@@ -1,6 +1,9 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Identity {
     pub pid: u32,
@@ -28,6 +31,33 @@ pub fn same(expected: &Identity) -> Result<()> {
         return Err("process changed; refusing operation".into());
     }
     Ok(())
+}
+pub fn agent_identity(pid: u32, executable: &Path, cwd: &Path) -> Result<Identity> {
+    let result = identity(pid)?;
+    if result.executable != executable.canonicalize()? {
+        return Err("Agent executable changed".into());
+    }
+    verify_cwd(&result, cwd)?;
+    Ok(result)
+}
+pub fn verify_cwd(expected: &Identity, cwd: &Path) -> Result<()> {
+    same(expected)?;
+    if fs::read_link(format!("/proc/{}/cwd", expected.pid))? != cwd.canonicalize()? {
+        return Err("Agent cwd changed".into());
+    }
+    same(expected)
+}
+pub fn remember(expected: &mut Option<Identity>, current: Option<Identity>) -> Result<bool> {
+    let Some(current) = current else {
+        return Ok(false);
+    };
+    if let Some(previous) = expected.as_ref()
+        && previous != &current
+    {
+        return Err("Agent process replaced; refusing adoption".into());
+    }
+    *expected = Some(current);
+    Ok(true)
 }
 
 pub fn exited(expected: &Identity) -> Result<bool> {

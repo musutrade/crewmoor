@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status: runtime launch prototype under validation.** The Rust entrypoint has a real isolated herdr-core/Codex launch and App observation; TUI Agent acceptance is blocked after two failed attempts. Controlled cleanup and independent audit remain separate gates. See [runtime usage and limits](docs/runtime-launch.md) and [actual evidence](docs/issue-2-runtime-evidence.md). The broader workflow below remains the intended direction.
+> **Project status: launch prototype under validation.** Issue #2 supports explicit Codex/Claude selection and TUI/core launch, process location and owned cleanup. It does not infer Agent ready/working/done state; Agent feedback is a separate issue. Historical real core/Codex and App observations exist; the revised entrypoints still need audited real launch/cleanup evidence. See [usage and limits](docs/runtime-launch.md) and [evidence](docs/issue-2-runtime-evidence.md). The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 

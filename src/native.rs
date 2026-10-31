@@ -82,7 +82,7 @@ fn sanitize(cmd: &mut Command) {
 pub fn version(binary: &std::path::Path) -> Result<String> {
     let mut cmd = Command::new(binary);
     sanitize(&mut cmd);
-    let output = cmd.arg("--version").output()?;
+    let output = crate::transport::output(cmd.arg("--version"), Duration::from_secs(10))?;
     if !output.status.success() {
         return Err("version query failed".into());
     }
@@ -100,17 +100,24 @@ pub fn check_runtime_version(config: &crate::config::Config, actual: &str) -> Re
     Ok(())
 }
 fn agent_version(config: &crate::config::Config) -> Result<()> {
-    if version(std::path::Path::new("codex"))? != config.agent_version {
-        return Err("Codex version mismatch".into());
+    if version(&config.agent_executable)? != config.agent_version {
+        return Err("Agent version mismatch".into());
     }
     Ok(())
 }
 impl Runner for Native {
     fn call(&self, record: &Record, args: &[String]) -> Result<Value> {
-        let output = command(record).args(args).output()?;
+        let output = crate::transport::output(command(record).args(args), Duration::from_secs(10))?;
         if !output.status.success() {
             let value = serde_json::from_slice::<Value>(&output.stderr).unwrap_or(Value::Null);
             return Err(crate::failure::NativeFailure::decode(&value).into());
+        }
+        if matches!(record.config.runtime, Runtime::Tui)
+            && args.first().map(String::as_str) == Some("pane")
+            && args.get(1).map(String::as_str) == Some("run")
+            && output.stdout.is_empty()
+        {
+            return Ok(Value::Null);
         }
         let value: Value = serde_json::from_slice(&output.stdout)?;
         payload(value, &record.config.runtime)
@@ -163,6 +170,7 @@ fn setup(record: &Record) -> Result<()> {
 }
 fn tui_boot(record: &Record) -> Result<Identity> {
     let child = spawn_server(record)?;
+    wait_socket(&record.socket())?;
     process::identity(child.id())
 }
 fn spawn_server(record: &Record) -> Result<std::process::Child> {
@@ -202,4 +210,18 @@ pub fn pid(value: &Value, pointer: &str) -> Result<u32> {
             .and_then(Value::as_u64)
             .ok_or("missing PID")?,
     )?)
+}
+pub fn optional_text<'a>(value: &'a Value, key: &str) -> Result<Option<&'a str>> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => Ok(Some(value.as_str().ok_or("invalid optional text")?)),
+    }
+}
+pub fn match_optional(value: &Value, key: &str, expected: &str) -> Result<()> {
+    if let Some(actual) = optional_text(value, key)?
+        && actual != expected
+    {
+        return Err(format!("{key} changed").into());
+    }
+    Ok(())
 }

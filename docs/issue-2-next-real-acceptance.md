@@ -1,48 +1,55 @@
-# Next real acceptance plan — authorized scope, audit pending
+# Bounded startup acceptance — exact revised audit pending
 
-Batch `crewmoor-issue-2-001`. The user authorized these two single attempts and retained that scope after the v6 audit failure; neither launch was consumed. **Do not run rejected v6 or any replacement until the exact revised SHA/artifacts receive independent code-audit pass.** The coordinator's retained authorization covers implementation corrections with unchanged scope/effects; no repeated permission request is needed after that pass. The current core `cm-0c926f847d55`, all its terminals and the user's Windows machine/space entries remain under HOLD. Do not reuse them, retrofit their receipts, send tasks, restart them or test cleanup on them.
+Batch `crewmoor-issue-2-001`. The user retained authorization for one new isolated TUI Codex and one new isolated core Codex startup/check/owned stop. Neither attempt has been consumed. Rejected v6/v7 must not run. Execute only after independent pass for the exact simplified candidate and the v8 artifact/config hashes in the external `next-real-plan.json`. Implementation now supports Codex and Claude, but this authorization does not expand to Claude or four attempts.
 
-The coordinator receives the exact candidate SHA, binary SHA-256 values and config paths in the external `next-real-plan.json` accompanying the audit request. Do not execute a different build. Planned versions: CrewMoor 0.1.0 at that SHA, installed TUI 0.9.5, core 0.1.15, Codex 0.166.0, Rust stable 1.99.1/edition 2024. Version mismatch stops the attempt; no installation, downgrade or compatibility fallback. Building/copying evidence artifacts does not start a runtime.
+The minimum acceptance is: report request admission accurately, prove actual Agent PID/start/executable/cwd, locate instance/logical-role/native handle and safely end only owned resources. Ready/idle/working/done and App Agents membership are not criteria; Agent feedback belongs to another issue. No feedback protocol or messages are implemented.
 
-## Two separate, single attempts
+## Pinned inputs and commands
 
-After the revised exact candidate receives independent audit pass, verify its artifact/config hashes and versions under the retained authorization, then create only the two empty scratch cwd directories below. Require unused state roots and team bindings; launch each runtime once. Sessions/native ids come from actual receipts, not guessed Windows discovery names.
+Expected installed versions: TUI 0.9.5, core 0.1.15, Codex 0.166.0, Rust stable 1.99.1/edition 2024. CrewMoor 0.1.0 is bound to the audit's exact SHA, not merely its package version. TUI requires its recorded original Bash shell; version/type must be recorded during preflight. Artifacts are snapshots, not PATH installations. No new software, downgrade, compatibility fallback or proxy/config changes.
 
-| Runtime | Team / role | State root | cwd | Prepared config |
-|---|---|---|---|---|
-| TUI | `issue2-tui-r3` / `cm-tui-r3` | `/tmp/cm-i2-tui3` | `/tmp/cm-i2-tui3-work` | external `tui-r3.toml` |
-| core | `issue2-core-r2` / `cm-core-r2` | `/tmp/cm-i2-core2` | `/tmp/cm-i2-core2-work` | external `core-r2.toml` |
+| Runtime | Agent | Team / role | State | cwd | External config |
+|---|---|---|---|---|---|
+| TUI | Codex | `issue2-tui-r3` / `cm-tui-r3` | `/tmp/cm-i2-tui3` | `/tmp/cm-i2-tui3-work` | `tui-r3.toml` |
+| core | Codex | `issue2-core-r2` / `cm-core-r2` | `/tmp/cm-i2-core2` | `/tmp/cm-i2-core2-work` | `core-r2.toml` |
 
-Both use the same existing CrewMoor binding namespace, unique team names and private XDG roots. Core uses a fresh named Unix socket under `/run/user/1000/herdr-core`; no TCP listener, SSH/proxy/global configuration change or default-session replacement. TUI omits an explicit `--no-daemon`; core includes it once. No model task, opening message, trust/auth answer, plugin installation or automatic retry.
+Before execution verify all exact hashes/versions, unused state roots/team bindings, and create only those empty cwd directories. Sessions/native handles come from actual receipts. New core uses only its private named Unix socket; no TCP, SSH/default-session change or Windows/App mutation.
 
-Commands, with the pinned artifact directory `/home/gem/.local/state/crewmoor/crewmoor-issue-2-001`:
+With artifact directory `/home/gem/.local/state/crewmoor/crewmoor-issue-2-001`:
 
 ```text
-.../crewmoor-run-v7 launch .../tui-r3.toml /tmp/cm-i2-tui3
-.../crewmoor-run-v7 inspect /tmp/cm-i2-tui3
-.../crewmoor-evidence-v7 environment-evidence /tmp/cm-i2-tui3
-.../crewmoor-run-v7 stop /tmp/cm-i2-tui3
+.../crewmoor-run-v8 launch .../tui-r3.toml /tmp/cm-i2-tui3
+.../crewmoor-run-v8 inspect /tmp/cm-i2-tui3
+.../crewmoor-evidence-v8 environment-evidence /tmp/cm-i2-tui3
+.../crewmoor-run-v8 stop /tmp/cm-i2-tui3
 
-.../crewmoor-run-v7 launch .../core-r2.toml /tmp/cm-i2-core2
-.../crewmoor-run-v7 inspect /tmp/cm-i2-core2
-.../crewmoor-evidence-v7 environment-evidence /tmp/cm-i2-core2
-.../crewmoor-run-v7 stop /tmp/cm-i2-core2
+.../crewmoor-run-v8 launch .../core-r2.toml /tmp/cm-i2-core2
+.../crewmoor-run-v8 inspect /tmp/cm-i2-core2
+.../crewmoor-evidence-v8 environment-evidence /tmp/cm-i2-core2
+.../crewmoor-run-v8 stop /tmp/cm-i2-core2
 ```
 
-One bounded read-only inspect after startup may establish readiness; do not loop or relaunch to replace unknown/error. TUI requires native interactive-ready/Agent status; core requires live/reported Codex OSC status. Request acceptance, kernel process identity and ready are separately saved; any layer lacking evidence stays unknown/error. Failure ends that runtime's attempt and is reported, with only the same strictly owned failed instance eligible for guarded cleanup. It does not create another attempt.
+Each launch has one startup mutation. TUI now uses official `pane run` on its proved original empty Bash shell, with one Rust-encoded `command <absolute executable> <argv>` string. Bash hex quoting transports whitespace/quotes/control bytes/metacharacters as data. Codex receives `--no-daemon` exactly once and `--no-alt-screen`; no opening task/prompt. Core uses direct argv with that same canonical executable. There is no Agent ready wait or state polling. Native CLI calls have a 10-second limit plus at most one second to reap a timed-out owned CLI child.
 
-The Rust evidence binary reads only processes identified by the task's guarded receipt, checks fingerprints before/after access, and extracts a fixed list of parent-session/tool/CI/color marker **names**, skipping values. Server/Agent plus original shell or holder must have no such markers. It never prints complete environment or credentials. Synthetic tests separately establish auth/tool/proxy preservation; real testing does not dump those values. Native terminal routing/identity variables generated for the new PTY are expected and remain distinct from forbidden parent metadata.
+Admission and process are separate: TUI exit 0/empty stdout acknowledges input admission only; a failure/timeout leaves `accepted=null` and never resends. One process observation may still prove the exact Agent. If it does not, report unknown/unconfirmed; do not add waits, loops, another process or another launch. Optional native display fields do not become fake identity or semantic state.
 
-## Controlled end evidence
+The read-only Rust evidence probe reads only guarded receipt-owned PIDs, verifies fingerprints before/after access and reports whitelisted parent-marker names, skipping values. It does not print credentials/full environment. Keep all receipt, admission/error, native owner/id, original-shell/holder and actual process evidence. Synthetic tests establish tool/auth/proxy preservation separately.
 
-Before stop, save core/session id, team/role/cwd, native handles, owner labels, exact Agent/server/holder or original-shell fingerprints and exclusive inventories. The receipt must already own those identities from launch. On replacement, extra resources, unknown metadata, transport error or timeout, refuse and preserve binding/evidence. No forced signals to unrelated PIDs, no manual deletion of target resources, no new Agent startup for cleanup.
+## End only proved resources
 
-Successful stop must prove native target not-found, server/Agent/ending/original-shell/holder process exit as applicable, primary socket absence and binding release. Keep stopped state/logs and diagnostic artifacts. A failed launch with no target can end only a verified empty native inventory using its persisted server/socket/container/holder ownership. Where identity was never captured, report manual recovery required rather than inventing it.
+Stop requires the receipt's server/socket/binding, exact native ids/owner and exclusive inventory. Missing original shell, Agent PID/foreground or holder proof refuses; no discovery/adoption during stop. Unknown admission does not by itself prevent stop when all ownership/process evidence is complete. Missing optional display name does not weaken or block that proof.
 
-## App and authorization remain separate
+Success must show native target not-found, actual server/Agent/ending/original-shell/holder exit as applicable, API socket absence and binding release. Preserve state/logs. A failure without any target may end only its verified empty inventory using recorded server/socket/container/holder identity. Unknown metadata, replacement, extra resources or timeout preserves binding/evidence and is reported; no force cleanup or retry.
 
-Retained user authorization covers existing authentication/config loading and possible plugins/MCP/upstream network/cost for these two single attempts and cleanup of only their own resources; no zero-cost claim. Execution still requires independent pass for the exact revised SHA/artifacts. Installation, proxy/config changes, extra attempts and Windows/App mutations remain outside this scope.
+## Scope and unverified combinations
 
-Windows App build is still unknown. Old t1 terminal display is user-verified; external t1 Agents-panel membership is not. If a new App observation is requested, first report the actual new session/native target and obtain the App build/machine/active-space identity without credentials. Do not assume `--temp` implies App layout discovery or that aliases equal internal machine ids. Do not create a space, terminal, Agent or membership label for the user automatically. Keep the observation target alive until the user finishes. Extra App resources cause stop refusal and require user coordination; they are never reassigned to CrewMoor. No Windows mutation is included in this plan's two Linux launch attempts.
+Startup may access existing authentication/config/plugins/MCP and upstream network/cost, as authorized for these two Codex attempts. No zero-cost claim. The old core `cm-0c926f847d55`, its t1 and all user-created objects/Windows entries remain under HOLD, and are not queried, changed or used as cleanup tests. No new App observation is needed for these Linux attempts.
 
-Remote CI/required checks and independent audit bind the new candidate separately. Successful Rust tests do not satisfy any missing real or App acceptance item.
+| Combination | Automatic evidence | Revised real evidence |
+|---|---|---|
+| TUI × Codex | Rust transport + Bash argv/kernel checks | Authorized once, pending exact audit |
+| core × Codex | Rust transport/ownership/exit checks | Authorized once, pending exact audit |
+| TUI × Claude | Rust transport + Bash argv/kernel checks | Not run, not authorized |
+| core × Claude | Rust transport/ownership/exit checks | Not run, not authorized |
+
+Claude is pinned to installed `2.1.314 (Claude Code)` and its canonical executable, interactive argv without Codex flags, optionally `--model`. If additional real Claude acceptance is requested, a separate concrete two-instance proposal is supplied with the audit handoff; it is not executed or counted as authorized. The user's App-created Claude does not satisfy either CrewMoor Claude entrypoint test. Remote CI/required checks remain separate from local Rust tests and real startup evidence.

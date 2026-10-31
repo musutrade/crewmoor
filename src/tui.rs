@@ -42,90 +42,108 @@ fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.save()
 }
 fn start_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    if !can_launch(r, runner)? {
+        r.request_error = Some("startup withheld: original empty shell unconfirmed".into());
+        return r.save();
+    }
     r.phase = "agent-request-intent".into();
+    r.guard()?;
+    r.request_issued = true;
     r.save()?;
-    let value = runner.call(r, &launch_args(r)?)?;
-    r.accepted = Some(true);
-    r.observations.push(value);
+    match runner.call(r, &launch_args(r)?) {
+        Ok(value) => {
+            r.accepted = Some(true);
+            r.observations.push(value);
+        }
+        Err(error) => {
+            r.request_error = Some(error.to_string());
+        }
+    }
     r.save()
+}
+fn can_launch(r: &Record, runner: &impl Runner) -> Result<bool> {
+    r.guard()?;
+    let Some(shell) = r.original_shell.as_ref() else {
+        return Ok(false);
+    };
+    if shell.executable != std::path::Path::new("/bin/bash").canonicalize()? {
+        return Err("TUI startup quoting requires the recorded Bash shell".into());
+    }
+    process::verify_cwd(shell, &r.config.cwd)?;
+    target(r, runner)?;
+    let info = process_info(r, runner)?;
+    verify_original_shell(r, &info)?;
+    Ok(empty_shell(&info))
 }
 fn capture_shell(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let handle = r.handle.as_deref().ok_or("missing pane")?;
     let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
     verify_pane(r, &pane["pane"])?;
-    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
-    r.original_shell = Some(process::identity(pid(&info, "/process_info/shell_pid")?)?);
+    let info = process_info(r, runner)?;
+    r.original_shell = match info.pointer("/process_info/shell_pid") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(process::identity(pid(&info, "/process_info/shell_pid")?)?),
+    };
     r.observations.push(info);
     r.save()
 }
 pub fn launch_args(r: &Record) -> Result<Vec<String>> {
-    let mut args = strings(&[
-        "agent",
-        "start",
-        &r.config.role,
-        "--kind",
-        "codex",
-        "--pane",
-        r.handle.as_deref().ok_or("missing pane")?,
-        "--timeout",
-        "30000",
-        "--",
-    ]);
-    args.extend(r.config.agent_args.clone());
-    Ok(args)
+    crate::launch::args(r)
 }
 pub fn target(r: &Record, runner: &impl Runner) -> Result<Value> {
     let handle = r.handle.as_deref().ok_or("missing pane")?;
-    let value = runner.call(r, &strings(&["agent", "get", handle]))?;
-    verify_target(r, &value["agent"])?;
+    let value = runner.call(r, &strings(&["pane", "get", handle]))?;
+    verify_target(r, &value["pane"])?;
+    exclusive_workspace(r, runner)?;
     Ok(value)
 }
 pub fn verify_target(r: &Record, value: &Value) -> Result<()> {
-    if value["pane_id"].as_str() != r.handle.as_deref() {
-        return Err("pane changed".into());
-    }
-    if value["terminal_id"].as_str() != r.terminal_id.as_deref() {
-        return Err("terminal changed".into());
-    }
-    if value["agent"].as_str() != Some("codex") {
-        return Err("agent changed".into());
-    }
-    if value["name"].as_str() != Some(&r.config.role) {
-        return Err("logical role changed".into());
-    }
-    Ok(())
+    verify_pane(r, value)
 }
 pub fn observe(r: &mut Record, value: Value, runner: &impl Runner) -> Result<()> {
-    r.ready = readiness(&value["agent"]);
-    let info = runner.call(
-        r,
-        &strings(&[
-            "pane",
-            "process-info",
-            "--pane",
-            r.handle.as_deref().ok_or("missing pane")?,
-        ]),
-    )?;
-    r.agent_process = agent_process(&info);
+    let info = process_info(r, runner)?;
+    let current = if r.request_issued {
+        agent_process(r, &info)?
+    } else {
+        None
+    };
+    r.process_verified = process::remember(&mut r.agent_process, current)?;
     r.observations.extend([value, info]);
     Ok(())
 }
-pub fn readiness(value: &Value) -> String {
-    if value["interactive_ready"].as_bool() != Some(true) {
-        return "unknown".into();
+fn process_info(r: &Record, runner: &impl Runner) -> Result<Value> {
+    let handle = r.handle.as_deref().ok_or("missing pane")?;
+    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
+    if info["process_info"]["pane_id"].as_str() != Some(handle) {
+        return Err("process-info pane changed".into());
     }
-    value["agent_status"].as_str().unwrap_or("unknown").into()
+    Ok(info)
 }
-fn agent_process(info: &Value) -> Option<process::Identity> {
-    let processes = info
+fn agent_process(r: &Record, info: &Value) -> Result<Option<process::Identity>> {
+    if info["process_info"]["shell_pid"].is_null() {
+        return Ok(None);
+    }
+    verify_original_shell(r, info)?;
+    let Some(agent) = foreground_agent(r, info) else {
+        return Ok(None);
+    };
+    Ok(Some(process::agent_identity(
+        pid(agent, "/pid")?,
+        &r.config.agent_executable,
+        &r.config.cwd,
+    )?))
+}
+fn foreground_agent<'a>(r: &Record, info: &'a Value) -> Option<&'a Value> {
+    let list = info
         .pointer("/process_info/foreground_processes")?
         .as_array()?;
-    let agent = processes.iter().find(|value| {
-        value["name"]
-            .as_str()
-            .is_some_and(|name| name.starts_with("codex"))
-    })?;
-    process::identity(pid(agent, "/pid").ok()?).ok()
+    if list.len() != 1 {
+        return None;
+    }
+    let name = list[0]["name"].as_str()?;
+    let executable = r.config.agent_executable.canonicalize().ok()?;
+    let basename = executable.file_name()?.to_str()?;
+    (name == r.config.agent.name() || name == basename).then_some(&list[0])
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.guard()?;
@@ -181,7 +199,7 @@ fn stop_guard(r: &Record, runner: &impl Runner) -> Result<process::Identity> {
     let handle = r.handle.as_deref().ok_or("missing pane")?;
     let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
     verify_pane(r, &pane["pane"])?;
-    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
+    let info = process_info(r, runner)?;
     verify_original_shell(r, &info)?;
     if empty_shell(&info) {
         return verify_shell(r, &info);
@@ -245,6 +263,7 @@ fn verify_running(r: &Record, info: &Value) -> Result<process::Identity> {
         .as_ref()
         .ok_or("Agent process unknown; refusing stop")?;
     process::same(expected)?;
+    process::agent_identity(expected.pid, &r.config.agent_executable, &r.config.cwd)?;
     if sole_foreground(info)? != expected.pid {
         return Err("foreground replaced".into());
     }

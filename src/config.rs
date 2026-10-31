@@ -8,6 +8,20 @@ pub enum Runtime {
     Tui,
     Core,
 }
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentKind {
+    Codex,
+    Claude,
+}
+impl AgentKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -19,6 +33,8 @@ pub struct Config {
     pub endpoint_dir: Option<PathBuf>,
     pub runtime_binary: PathBuf,
     pub runtime_version: String,
+    pub agent: AgentKind,
+    pub agent_executable: PathBuf,
     pub agent_version: String,
     #[serde(default)]
     pub agent_args: Vec<String>,
@@ -43,13 +59,17 @@ impl Config {
         absolute(&self.store)?;
         validate_endpoint(self.endpoint_dir.as_deref())?;
         absolute(&self.runtime_binary)?;
+        absolute(&self.agent_executable)?;
         if !self.cwd.is_dir() {
             return Err("cwd is not a directory".into());
         }
-        validate_args(&self.agent_args)
+        validate_args(&self.agent, &self.agent_args)
     }
     pub fn argv(&self) -> Vec<String> {
-        let mut args = vec!["codex".into(), "--no-daemon".into()];
+        let mut args = vec![self.agent_executable.display().to_string()];
+        if self.agent == AgentKind::Codex {
+            args.push("--no-daemon".into());
+        }
         args.extend(self.agent_args.clone());
         args
     }
@@ -66,23 +86,30 @@ pub fn absolute(path: &std::path::Path) -> Result<()> {
     }
     Ok(())
 }
-pub fn validate_args(args: &[String]) -> Result<()> {
+pub fn validate_args(kind: &AgentKind, args: &[String]) -> Result<()> {
     let mut values = args.iter();
     while let Some(arg) = values.next() {
-        agent_arg(arg, &mut values)?;
+        agent_arg(kind, arg, &mut values)?;
     }
     Ok(())
 }
-fn agent_arg<'a>(arg: &str, values: &mut impl Iterator<Item = &'a String>) -> Result<()> {
+fn agent_arg<'a>(
+    kind: &AgentKind,
+    arg: &str,
+    values: &mut impl Iterator<Item = &'a String>,
+) -> Result<()> {
     match arg {
-        "--no-alt-screen" => Ok(()),
-        "--model" | "-m" => model(values.next()),
-        _ => Err("only interactive --no-alt-screen and --model are supported; prompts/subcommands are forbidden".into()),
+        "--no-alt-screen" if *kind == AgentKind::Codex => Ok(()),
+        "--model" => model(values.next()),
+        "-m" if *kind == AgentKind::Codex => model(values.next()),
+        _ => Err(
+            "unsupported argument for this Agent kind; prompts/subcommands are forbidden".into(),
+        ),
     }
 }
 fn model(value: Option<&String>) -> Result<()> {
     let value = value.ok_or("missing model")?;
-    if value.is_empty() || value.starts_with('-') {
+    if value.is_empty() || value.starts_with('-') || value.contains('\0') {
         return Err("invalid model".into());
     }
     Ok(())

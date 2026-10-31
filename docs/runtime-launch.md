@@ -1,102 +1,73 @@
-# Runtime launch prototype (Issue #2)
+# Start, locate and end an owned Agent
 
-Linux-only, latest Rust stable / edition 2024. One configured Codex process in one new Herdr TUI or herdr-core instance. No initial prompt, messages, database, team orchestration, worktree management, installer or daemon replacement.
-
-Build and validate:
+Issue #2 is limited to request admission, actual Agent process evidence, instance/logical-role/native-handle location and controlled end of owned resources. It does not normalize or wait for ready/idle/working/done, implement Agent feedback, send tasks, manage messages/SQLite/worktrees, or manage App membership. Linux and latest Rust stable/edition 2024 only.
 
 ```sh
-CARGO_TARGET_DIR="$PWD/target" cargo +stable build --locked --bin crewmoor
+CARGO_TARGET_DIR="$PWD/target" cargo +stable build --locked --bins
 CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
-The root `Cargo.toml` is the business crate. Complete verify checks it with fmt, the source/lint policy, Clippy `-D warnings`, tests, fresh LLVM coverage and all-function CRAP <= 10. Tests use a Rust transport executable and injected native replies. They do not start Herdr, Codex or containers; a transport startup failure uses only the Rust fixture. Real runtime acceptance is separate.
+Root `Cargo.toml` is the business crate: fmt, policy, Clippy `-D warnings`, tests, fresh LLVM coverage and every-function CRAP <=10 apply. Every developer/auditor invocation uses its own absolute target, inherited by all Cargo/LLVM children; old shared-target results are invalid. CI uses the same Rust verify entrypoint. Tests use owned Rust transport processes and a private `--noprofile --norc` Bash for shell-boundary checks, never real Agents.
 
-Copy and edit `examples/tui.toml` or `examples/core.toml`, setting absolute cwd, store and installed binary, and exact `--version` outputs. Agent support is deliberately Codex-only. Allowed optional launch arguments are `--no-alt-screen` and `--model NAME`; prompts/subcommands are rejected. Core passes `--no-daemon` explicitly. TUI uses its native codex launch path without duplicating that flag: this host's interactive shell already injects it via a codex alias. TUI Agent acceptance remains blocked after two failed real attempts; removing the duplicate is covered by regression, not a third real startup. Startup may still access credentials, MCP/plugins and network, so obtain the user's launch authorization first.
+## Small configuration
 
-Use different team names and previously nonexistent state roots for the two runtimes:
+Edit an example in `examples/`, using a fresh team/state root, absolute cwd/store/runtime binary/Agent executable and exact version strings. Only `agent = "codex"` or `agent = "claude"` is accepted. Other kinds, prompts, subcommands, print/background mode, permission bypass options and unknown arguments are rejected.
 
-```sh
-cargo run --locked --bin crewmoor -- launch /absolute/tui.toml /tmp/cm-tui
-cargo run --locked --bin crewmoor -- inspect /tmp/cm-tui
-cargo run --locked --bin crewmoor -- stop /tmp/cm-tui
+| Kind | Checked installed version | Interactive argv |
+|---|---|---|
+| Codex | `codex-cli 0.166.0` | canonical executable, `--no-daemon`, configured options |
+| Claude | `2.1.314 (Claude Code)` | canonical executable, configured options |
 
-cargo run --locked --bin crewmoor -- launch /absolute/core.toml /tmp/cm-core
-cargo run --locked --bin crewmoor -- inspect /tmp/cm-core
-# Stop only after any required App observation and removal of its temporary connection.
-cargo run --locked --bin crewmoor -- stop /tmp/cm-core
-```
-
-State roots must be absolute and <=45 bytes to fit native Unix socket limits. The store is the CrewMoor binding namespace: team names must be unique inside that store. Exclusive binding creation prevents the same team from launching in a second instance, including a different runtime. Use the same store for all teams managed by this CrewMoor namespace. A stopped instance releases its binding; state and evidence remain. State roots are never overwritten, retried or recursively deleted.
-
-## What the JSON means
-
-- `crewmoor_version`, config versions, owner, team/role and session identify this launch. Keep the tested git SHA and binary SHA-256 alongside the receipt for exact build provenance.
-- `server` contains Linux PID, process start ticks and executable path. Socket inode, binding owner and canonical state root are checked before query/stop. A changed or missing identity fails before native calls, preventing core CLI auto-start from reconnecting to an unintended instance.
-- `container_id` is the native core id or private TUI session; `handle` is the native terminal address or pane id, with native creation generation or terminal/workspace ids. Never reuse a handle in another container.
-- `accepted: true` is a successful native Agent launch response. `null` means there was no confirmed response; an error or timeout does not prove rejection or absence of effects.
-- Core 0.1.15 CLI `run` and `ls` return compact summaries, not the full schema objects. After the launch acknowledgment, CrewMoor uses `get` to validate the same container/owner/role/argv/cwd and bind the creation generation. A summary-only receipt can be inspected this way without repeating `run`; unacknowledged requests cannot establish a generation. Stop validates the full target and then checks the compact inventory contains only that address.
-- `agent_process` is the observed OS process identity, separate from request acceptance. `null` means unconfirmed. Native observations preserve reported argv, process and terminal facts.
-- TUI `original_shell` is captured immediately after workspace creation and before the Agent request, with PID/start ticks/executable. Core `core_holders` records native instance ids plus those process fingerprints before and after its single Agent request, including an unsuccessful request. `null` means unknown, `[]` means a verified empty holder inventory. Neither is populated retroactively during stop.
-- `ready` is the explicitly reported Agent state, or `unknown`. TUI requires `interactive_ready`; core requires an OSC status from app `codex`. A terminal being live does not imply ready. A trust/auth dialog is not answered automatically.
-- An intent is saved before mutation, and successful native creation replies are saved before decoding. Partial/failed launches retain an `unknown-outcome` receipt and binding. Do not launch again to resolve ambiguity; inspect the recorded private instance, and ask for human recovery when strict identity checks cannot succeed.
-
-`operation.lock` prevents concurrent operations on the same state. A crashed client can leave it behind; inspect ownership and active processes before an authorized manual removal. This is a small local receipt/binding mechanism, not a recovery or orchestration system. Configuration, executables and receipt files are trusted local inputs; it is not a hostile-user sandbox.
-
-## Isolation and controlled end
-
-TUI uses its supported `herdr --session <random> server` flow with a private XDG config tree and separate process group, then `workspace create` and `agent start`. Named TUI sessions derive their socket from XDG config and override the ambient socket/config selector, so the caller's Herdr socket and pane markers are removed only in child environments. The private config disables background version/manifest checks. Separate-group survival is tested with a Rust process fixture; actual TUI lifecycle evidence is still required.
-
-Core uses a random `HC_SESSION`, private XDG state/config (`notes=false`) and a private socket. `run --bg --no-parent --no-notify` creates only this Agent. No command changes proxy settings, `~/.codex/.env`, existing runtime configuration or the shared Codex daemon. Agents' normal authentication/config loading remains inherited.
-
-## Child environment boundary
-
-`native::command` sanitizes every future native child before startup; `server_command` uses the same path, and version probes use the same sanitizer. It uses this explicit denylist rather than clearing the environment or removing whole prefixes:
-
-| Removed keys | Reason |
-|---|---|
-| `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TOOL_CALL_ID` | Parent conversation/tool-call identity must not label a new runtime or its unrelated descendants. |
-| `CODEX_CI`, `CODEX_VERSION`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED` | Parent tool execution/build/sandbox metadata is not a new Agent's identity or execution policy. |
-| `HERDR_ENV`, `HERDR_SOCKET_PATH`, `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Prevent routing/correlation with the developer's TUI. The new TUI session is selected through native arguments. |
-| `HC_SOCKET`, `HC_SESSION`, `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE`, `HC_RUNTIME` | Remove ambient core/terminal/scope routing. Core children receive only this receipt's fresh `HC_SESSION`/`HC_SOCKET`; native core creates its terminal identity. |
-| `CI`, `CONTINUOUS_INTEGRATION`, `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM` | Do not carry a CI runner's formatting or another terminal's identity into a new interactive runtime. Native PTY setup supplies its own terminal defaults. |
-
-Other inherited settings remain untouched, including `PATH`, `HOME`, `CODEX_HOME`, authentication variables, `SSH_AUTH_SOCK`, Cargo/Rustup locations and download settings, **all proxy variables** (including `HERDR_PROXY` and direct/local bypass rules), and `HERDR_BIN_PATH`. Private XDG state/config selectors are the explicit per-instance overrides described above. No parent process, running service, user's configuration file or proxy environment is edited. Local executables and shell startup files remain trusted inputs; this is not an environment sandbox against arbitrary executable overrides.
-
-A Rust-only regression sets concrete keys to synthetic non-sensitive values in a separate parent process, traverses the actual core command / TUI server command, and starts two further Rust descendants to model holder and Agent inheritance. It checks removed keys, replacement core selectors and preserved tool/auth/proxy settings at all three child levels; output is booleans only. It does not start Herdr/Codex. The existing real core was started before this fix and remains contaminated and under explicit HOLD; it was not restarted to claim clean acceptance.
-
-## Stop verification
-
-Stop verifies the same server process/socket/binding plus native role, handle, creation generation, cwd/argv and ownership labels (core), or terminal/workspace identity and workspace owner label (TUI). It refuses additional terminals, workspaces, tabs or panes. TUI requires the recorded Agent foreground PID or the persisted original shell fingerprint with the same unique foreground/group PID. A replaced/restarted shell in the same pane is refused; stop does not adopt its current identity. Missing original-shell metadata also fails closed.
-
-Core requires native StatusResult `holder`/`holders` to agree with its persisted native instance and PID/start/executable fingerprints. Multiple, replaced or unknown holders are refused before mutation. Target access requires exactly one recorded current holder and a single matching terminal in the native inventory, then verifies handle/owner/team/creation generation/argv/cwd. Core 0.1.15's public Terminal response has **no holder field**; no per-terminal holder value is assumed. Fresh native inventories are checked again before ending the server/session. Native not-found must confirm removal of a created terminal/pane; `/proc` must then confirm server, ending/Agent, original TUI shell and every recorded core holder exited, and the API socket must be absent before releasing the binding. Timeouts/transport failures are not absence. PID reuse is distinguished by start ticks; zombies are terminated programs, not live Agents.
-
-For a launch that failed before any target was recorded, server-only stop requires matching binding/server/socket/container identity, no partial target/process/generation evidence, and a genuinely empty native terminal/workspace inventory. Core additionally requires the holder inventory recorded during launch, even when empty. Unknown identity, nonempty inventory or a failure before sufficient startup metadata was saved requires human recovery; no resource is guessed or adopted. State/logs remain and uncertain outcomes retain their binding. Business cwd/worktrees, shared caches and the current held core are not removed or modified.
-
-The original core and v5 TUI cleanup predate these shell/holder guarantees. Their evidence is not upgraded retroactively. See [the next real acceptance plan](issue-2-next-real-acceptance.md); it is preparation only and does not authorize new instances.
-
-## Windows App observation through existing SSH
-
-Ubuntu's headless test does not include an App binary. Windows App and local core versions/capabilities must be confirmed by the user. Core 0.1.15 documents `machine add TARGET --name NAME --session SESSION --temp`; ordinary SSH transports the generation-1 core protocol over stdin/stdout. No TCP listener or SSH configuration change is needed.
-
-For App acceptance, configure this test's `endpoint_dir` as the Ubuntu user's standard `/run/user/UID/herdr-core`, preserving private state/config. This creates a new random-session Unix socket; it does not change the existing default socket. Check the native remote config has no `socket` override, and that the SSH user resolves the same runtime directory. A scratch nonstandard socket is not automatically found by `--session`.
-
-After CrewMoor has actually launched the target, the coordinator supplies its exact session/core id/address/team/role/cwd/process. Only then the user may add a **new** temporary machine in Windows, filling their existing SSH target locally (no credentials are requested):
+Both accept `--model NAME`; only Codex accepts `-m NAME` and `--no-alt-screen`. Claude never receives Codex flags. Version is queried from the configured executable; Native launch resolves that file before recording/sending argv. Kernel executable path must match its canonical path, with exact PID/start ticks and cwd. Startup may read existing credentials/config/plugins/MCP and use upstream network/cost; launch authorization must cover that. No zero-cost claim, installation or proxy/config change is implied.
 
 ```text
-herdr-core machine add <existing-SSH-target> --name <new-temporary-name> --session <actual-session> --temp
-herdr-core get <new-temporary-name>/<actual-terminal-address>
+crewmoor launch /absolute/config.toml /tmp/new-owned-state
+crewmoor inspect /tmp/new-owned-state
+crewmoor stop /tmp/new-owned-state
 ```
 
-Do not use `--install` or replace an existing entry. On Windows, `--via` appearing in help does not establish support; use ordinary SSH. This is a CLI connection template, not a guarantee of App discovery: current upstream App source says temporary machine entries stay outside its layout documents. The installed Windows App build and actual machine entry must be verified separately. In this batch the user actually connected as `vps-cm`; the developer did not create or change that entry.
+The state root must not exist, be absolute and <=45 bytes. Exclusive binding prevents another instance with the same team in that store. Keep one binding namespace for teams managed by this CrewMoor installation. A random native session and owner token isolate each instance; native handles are scoped to it. State/logs remain after a successful stop; business cwd and shared caches are not removed.
 
-Connection, terminal display and Agents-panel membership are separate observations. The user displayed the original reported, idle Codex with `terminal.show`; it still did not appear in Agents, whereas the user's App-created Claude did. Therefore missing OSC status does not explain this particular observation. The inspected upstream App revision enumerates formal space/tab/pane terminals with a nonempty Agent status; temporary `terminal.show` swaps do not add formal membership. That source revision is not a verified match for the installed Windows App. See [the evidence report](issue-2-runtime-evidence.md) for the exact source and remaining limits.
+## Two startup paths
 
-When cleanup is authorized, first coordinate removal of **only the task's temporary Windows entry** using `herdr-core machine rm <new-temporary-name>`, then coordinate CrewMoor stop. Removing that entry leaves the remote program running until the controlled stop; disconnecting first avoids a reconnect auto-starting a new core after shutdown. App-created terminals remain user-owned. Additional resources make this prototype's whole-instance stop refuse; never remove them or weaken checks to make cleanup pass. The current batch has an explicit hold on all core cleanup, including its original `t1`, because the user is using the same core. No cleanup command is presently authorized for that session.
+Core starts a new named `HC_SESSION` with private XDG config/state and Unix socket, then `run --bg --no-parent --no-notify --name ROLE --cwd CWD --label ... -- <argv>`. No TCP port, parent team or default-session replacement. Full `get` completes the compact CLI launch response; native owner/team/generation/argv/cwd and the sole terminal inventory must agree. Core status is used only for server/holder resource identity.
 
-Existing user-created App targets, including prior default-core Claude observations/message/close evidence, are background capability evidence. They do not satisfy CrewMoor's independent startup/App acceptance and are never controlled or cleaned by these commands.
+TUI creates a private named server, workspace and pane, then records the original shell's kernel fingerprint. It uses `pane run PANE ONE_COMMAND_STRING`, not `agent start` or `agent get`. TUI 0.9.5's `agent start` forces an interactive-ready wait; that semantic gate is intentionally removed. The installed `pane run` helper queues text+Enter, exits 0 without stdout on admission and does not prove execution. Only that known admission path accepts empty stdout. One immutable startup command is sent, no prompt/task.
 
-## Evidence
+Before sending, binding/server/socket, native pane/terminal/workspace, owner label, one workspace/tab/pane, original shell fingerprint and unique shell foreground/group must all agree. This TUI implementation requires the recorded shell executable to be Bash. The single command is `command <quoted executable> <quoted argv>`, bypassing aliases. Rust encodes every argument byte inside Bash ANSI-C hex quotes; spaces, quotes, newlines, terminal control bytes and shell metacharacters stay data and are not sent as raw terminal controls. NUL is rejected. Tests compare Rust argv and `/proc/self/cmdline` after real Bash execution, including malicious-looking synthetic values.
 
-Real TUI/core launch and cleanup evidence, actual App observation, simulated tests, and CI are reported separately. See the batch evidence report when available. No unexecuted App or remote CI step is called passed.
+Missing shell/foreground evidence withholds input: `request_issued=false`, `accepted=null`, process unconfirmed and a diagnostic. It is not a native rejection or a successful Agent startup. A later stop cannot adopt a shell whose birth fingerprint was never captured.
 
-Sources: [TUI automation](https://herdr.dev/tui/docs/agent-automation/), [core command reference](https://github.com/herdrdev/herdr-core/blob/master/docs/commands.md), and the installed binaries' help/schema (TUI 0.9.5, core 0.1.15, Codex 0.166.0 at implementation).
+All native CLI/version calls are bounded at 10 seconds, with up to one additional second to reap a timed-out owned CLI child. Anonymous files capture output without a pipe-reader deadlock. Timeout/failure never resends a startup request. TUI preserves admission as unknown and performs the single process observation; process evidence may succeed independently. No ready wait or process/state polling is added.
+
+Source fixed to TUI [v0.9.5 pane run](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/pane.rs#L1039) and [silent admission helper](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli.rs#L755), plus installed CLI help/bundled schemas. Core uses installed 0.1.15 help/schema and archived native responses; fake responses do not invent public Terminal fields.
+
+## What the receipt proves
+
+- `request_issued` records intent immediately before the one mutation. `accepted=true` confirms the native request/CLI admission; `null` means no confirmed admission. Neither implies a running Agent.
+- `agent_process` records the first verified Agent PID/start ticks/executable. `process_verified` says the current observation confirmed that process and cwd. Missing evidence sets it false while retaining the earlier fingerprint; a changed process is never silently adopted.
+- Config `team`/`role` is CrewMoor's assigned logical identity, bound through its owner token, native ids and process evidence. It is not a claim that an optional native Agent name was reported. `native_name=null` means unknown; core name, if present, must match. TUI does not consume AgentInfo at all.
+- `original_shell` is captured before TUI input. `core_holders` contains native holder instance ids and PID/start/executable fingerprints captured before and after the single core Agent request, even if it failed. `null` means unknown; `[]` is a proven empty pre-target inventory.
+- `phase=observed` only means the resource observation completed. A receipt with `process_verified=false` is not a confirmed launch. There is no `ready` field or unified Agent semantic state. Raw native observations may still contain uninterpreted protocol fields.
+
+Optional core `holder` may be omitted: required `holders` supplies the single current holder. If the alias is explicitly supplied, including null, it must agree with the inventory. Multiple/changed/non-current holders fail; target access requires exactly one. An empty holder inventory is only valid before target creation/server-only cleanup. Terminal `name` may be missing/null without weakening ownership. Public Terminal has no holder field.
+
+Pane/process data must reference the owned pane; Agent lookup verifies the selected kind's process name (or canonical executable basename), kernel executable/cwd and unchanged fingerprint. Missing shell/foreground/PID fields provide no process proof. They never authorize cleanup.
+
+## Controlled end
+
+Stop needs current native owner/ids and exclusive inventories, original shell plus the recorded Agent process as applicable, holder fingerprints, socket inode and team binding. Present mismatch, extra resources or missing necessary evidence refuses before destructive calls. A failed TUI launch can close its original empty shell only when that same fingerprint/foreground/group is verified. Stop never discovers and adopts a replacement Agent or shell.
+
+Native target not-found must confirm removal; timeout is not absence. Server, Agent/ending process, original TUI shell and all recorded holders must have exited, and the API socket must be absent before releasing the binding. PID reuse is distinguished by start ticks. Unknown outcomes retain binding/evidence.
+
+A failure before any target identity exists can end only a strictly verified empty native inventory with persisted server/socket/container/binding ownership and core holder inventory. Partial/unknown identity requires human recovery; no generic recovery framework or force cleanup is provided. A per-state operation lock prevents overlapping CrewMoor operations, not outside user/App changes.
+
+## Environment and real acceptance
+
+Every new native child uses the explicit denylist in `native::sanitize`: parent Codex conversation/tool/build/CI markers, ambient Herdr/core routing/scope markers, and inherited terminal/CI/color markers. New core session/socket selectors are then set for that instance. `PATH`, `HOME`, `CODEX_HOME`, authentication, SSH agent, Cargo/Rustup settings, `HERDR_BIN_PATH` and every proxy/bypass variable stay untouched. No global file, proxy environment or existing service is edited. Local executables/config/shell files remain trusted inputs.
+
+Rust parent/child/descendant tests check concrete synthetic removed/preserved keys. The read-only evidence binary reports only whitelisted marker names for receipt-owned processes, checking fingerprints before/after access; values and unrelated environment entries are not retained or printed.
+
+Automatic tests cover TUI/core × Codex/Claude. Revised real tests remain unexecuted pending exact-SHA audit: authorization covers only one new TUI Codex and one new core Codex, with no task and owned cleanup. Claude entrypoint real startup/stop is unverified; the user's App Claude is background evidence. App Agents-panel membership, Windows build and Agent ready/working/done are not Issue #2 acceptance gates. No Windows/App change is included. The old core/session and all user objects remain under HOLD.
+
+See [historical evidence](issue-2-runtime-evidence.md) and [the bounded real plan](issue-2-next-real-acceptance.md). The plan requires independent audit of the exact new candidate/artifacts before execution; it does not consume or expand authorization by being written.

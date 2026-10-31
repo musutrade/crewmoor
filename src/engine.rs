@@ -59,7 +59,7 @@ pub fn stop(record: &mut Record, runner: &impl Runner) -> Result<()> {
     }
     confirm_exit(record)?;
     record.agent_process = None;
-    record.ready = "not-running".into();
+    record.process_verified = false;
     record.phase = "stopped".into();
     record.save()?;
     record.release()
@@ -95,7 +95,7 @@ fn socket_absent(record: &Record) -> Result<()> {
 pub fn preserve(record: &mut Record, result: Result<()>) -> Result<()> {
     if let Err(error) = result {
         record.phase = "unknown-outcome".into();
-        record.ready = "unknown".into();
+        record.process_verified = false;
         record.save()?;
         return Err(error);
     }
@@ -104,8 +104,9 @@ pub fn preserve(record: &mut Record, result: Result<()>) -> Result<()> {
 pub fn read_config(path: &Path) -> Result<Config> {
     Ok(toml::from_str(&fs::read_to_string(path)?)?)
 }
-pub fn launch_native(config: Config, root: &Path) -> Result<Record> {
+pub fn launch_native(mut config: Config, root: &Path) -> Result<Record> {
     config.validate()?;
+    config.agent_executable = config.agent_executable.canonicalize()?;
     crate::native::versions_config(&config)?;
     launch(config, root, &Native)
 }

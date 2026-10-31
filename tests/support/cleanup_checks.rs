@@ -14,7 +14,7 @@ fn replaced_shell_in_the_same_owned_pane_is_never_adopted_at_stop() {
     let original = r.original_shell.as_ref().unwrap().clone();
     process::same(&original).unwrap();
     fake.discard_agent().unwrap();
-    fake.replace_shell().unwrap();
+    fake.replace_shell(&r).unwrap();
     stop_unknown(&mut r, &fake);
     assert!(process::exited(&original).unwrap());
     assert!(
@@ -57,7 +57,7 @@ fn changed_multiple_or_unknown_holders_refuse_before_ending_an_agent() {
     *fake.changed_holder.borrow_mut() = true;
     stop_unknown(&mut r, &fake);
     *fake.changed_holder.borrow_mut() = false;
-    fake.replace_holder().unwrap();
+    fake.replace_holder(&r).unwrap();
     stop_unknown(&mut r, &fake);
     r.core_holders = None;
     stop_unknown(&mut r, &fake);
@@ -122,7 +122,7 @@ fn a_remaining_socket_prevents_binding_release_after_processes_end() {
 }
 #[test]
 fn holder_schema_and_partial_target_records_fail_closed() {
-    let value = json!({"pid":std::process::id(),"instance":"probe","current":true});
+    let value = json!({"pid":std::process::id(),"instance":"probe","current":true,"terminals":0});
     assert_eq!(
         holders::read(&json!({"holders":[value],"holder":value}))
             .unwrap()

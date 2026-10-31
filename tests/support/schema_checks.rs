@@ -58,10 +58,6 @@ fn pinned_terminal_contract_rejects_an_invented_holder_field() {
 fn consumed_tui_objects_match_bundled_schema_field_contracts() {
     let (_dir, r, fake) = common::launch(Runtime::Tui);
     let fields = contracts("tui-0.9.5");
-    assert!(field_contract(
-        &fake.agent(&r)["agent"],
-        &fields["AgentInfo"]
-    ));
     let pane = fake.call(&r, &strings(&["pane", "get", "w1:p1"])).unwrap();
     assert!(field_contract(&pane["pane"], &fields["PaneInfo"]));
     let info = fake

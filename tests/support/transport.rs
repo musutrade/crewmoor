@@ -1,8 +1,12 @@
 // Transport-level test double. Never used as a real container or Agent.
 mod environment;
 mod live_environment;
+mod probe;
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().collect();
+    if let Some(value) = probe::dispatch(&args) {
+        return result(value);
+    }
     if args.iter().any(|arg| arg == "environment-evidence") {
         return result(live_environment::report(args.last()));
     }
@@ -34,7 +38,12 @@ fn result(value: crewmoor::Result<()>) -> std::process::ExitCode {
     }
 }
 fn hold() -> std::process::ExitCode {
-    use std::io::Read;
+    use std::io::{Read, Write};
+    if std::env::var_os("CREWMOOR_TRANSPORT_HANDSHAKE").is_some()
+        && std::io::stdout().write_all(b"R\n").is_err()
+    {
+        return std::process::ExitCode::FAILURE;
+    }
     let _ = std::io::stdin().read_to_end(&mut Vec::new());
     std::process::ExitCode::SUCCESS
 }

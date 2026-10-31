@@ -18,9 +18,11 @@ pub fn read(status: &Value) -> Result<Vec<Holder>> {
     if list.len() > 1 {
         return Err("multiple holders; refusing ownership assumption".into());
     }
-    let current = status.get("holder").filter(|value| !value.is_null());
-    if list.first() != current {
-        return Err("current holder disagrees with holder inventory".into());
+    if let Some(value) = status.get("holder") {
+        let current = (!value.is_null()).then_some(value);
+        if list.first() != current {
+            return Err("current holder disagrees with holder inventory".into());
+        }
     }
     list.iter().map(parse).collect()
 }

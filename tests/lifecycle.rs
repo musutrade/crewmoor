@@ -6,6 +6,8 @@ mod common;
 mod environment_checks;
 #[path = "support/schema_checks.rs"]
 mod schema_checks;
+#[path = "support/start_only_checks.rs"]
+mod start_only_checks;
 use crewmoor::{
     config::{self, Runtime},
     core, engine,
@@ -21,7 +23,7 @@ use std::{fs, os::unix::net::UnixListener};
 fn isolated_core_launch_inspect_and_controlled_terminal_stop() {
     let (_dir, mut record, fake) = common::launch(Runtime::Core);
     assert_eq!(record.accepted, Some(true));
-    assert_eq!(record.ready, "unknown");
+    assert!(record.process_verified);
     assert!(engine::verified_process(&record).is_ok());
     engine::inspect(&mut record, &fake).unwrap();
     engine::stop(&mut record, &fake).unwrap();
@@ -42,7 +44,7 @@ fn isolated_core_launch_inspect_and_controlled_terminal_stop() {
 #[test]
 fn isolated_tui_launch_and_stop_preserve_native_identity() {
     let (_dir, mut record, fake) = common::launch(Runtime::Tui);
-    assert_eq!(record.ready, "idle");
+    assert!(record.process_verified);
     assert_eq!(record.handle.as_deref(), Some("w1:p1"));
     engine::stop(&mut record, &fake).unwrap();
     assert!(
@@ -85,21 +87,9 @@ fn receipt_binding_generation_and_target_mismatch_fail_closed() {
     assert!(record.guard().is_err());
 }
 #[test]
-fn unknowns_are_not_ready_and_tui_mismatch_is_refused() {
-    assert_eq!(core::readiness(&json!({"state":"live"})), "unknown");
-    assert_eq!(
-        core::readiness(&json!({"reported":true,"status":{"app":"bash","state":"idle"}})),
-        "unknown"
-    );
-    assert_eq!(
-        core::readiness(
-            &json!({"state":"live","reported":true,"status":{"app":"codex","state":"idle"}})
-        ),
-        "idle"
-    );
-    assert_eq!(tui::readiness(&json!({"agent_status":"idle"})), "unknown");
+fn tui_native_identity_mismatch_is_refused() {
     let (_dir, r, fake) = common::launch(Runtime::Tui);
-    let mut value = fake.agent(&r)["agent"].clone();
+    let mut value = fake.call(&r, &strings(&["pane", "get", "w1:p1"])).unwrap()["pane"].clone();
     value["terminal_id"] = json!("replaced");
     assert!(tui::verify_target(&r, &value).is_err());
 }
@@ -130,7 +120,7 @@ fn failure_is_persisted_without_relaunch_or_assumed_success() {
     let error = engine::inspect(&mut r, &fake);
     assert!(engine::preserve(&mut r, error).is_err());
     assert_eq!(Record::load(&r.root).unwrap().phase, "unknown-outcome");
-    assert_eq!(r.ready, "unknown");
+    assert!(!r.process_verified);
     assert!(engine::stop(&mut r, &fake).is_err());
 }
 #[test]
@@ -187,7 +177,7 @@ fn native_transport_payload_environment_and_version_errors_are_checked() {
     assert!(native::pid(&json!({"pid":-1}), "/pid").is_err());
 }
 #[test]
-fn readiness_socket_and_release_are_checked() {
+fn socket_and_release_are_checked() {
     let dir = common::directory();
     let socket = dir.path().join("ready.sock");
     let _listener = UnixListener::bind(&socket).unwrap();
@@ -225,6 +215,8 @@ fn configuration_io_cli_and_version_checks_do_not_start_unverified_programs() {
     );
     assert!(!std::path::Path::new("/tmp/cm-never-start").exists());
     config.runtime_version = "fixture 1".into();
+    assert!(native::versions_config(&config).is_ok());
+    config.agent_version = "wrong-agent".into();
     assert!(native::versions_config(&config).is_err());
     assert!(native::version("/bin/false".as_ref()).is_err());
     assert!(native::version("/nonexistent/codex".as_ref()).is_err());
@@ -258,7 +250,7 @@ fn tui_transport_startup_failure_retains_an_unknown_receipt() {
     let receipt = Record::load(&state).unwrap();
     assert_eq!(receipt.phase, "unknown-outcome");
     assert_eq!(receipt.accepted, None);
-    assert_eq!(receipt.ready, "unknown");
+    assert!(!receipt.process_verified);
     assert!(!receipt.socket().exists());
 }
 
@@ -345,7 +337,7 @@ fn failed_tui_start_can_close_only_its_original_empty_shell() {
     fake.discard_agent().unwrap();
     engine::stop(&mut r, &fake).unwrap();
     assert_eq!(r.phase, "stopped");
-    assert_eq!(r.ready, "not-running");
+    assert!(!r.process_verified);
     assert!(r.binding().is_err());
 }
 
@@ -366,10 +358,11 @@ fn tui_stop_refuses_an_added_or_unconfirmed_foreground_process() {
 }
 
 #[test]
-fn runtime_specific_daemon_arguments_do_not_duplicate_tui_injection() {
+fn tui_uses_startup_admission_without_a_readiness_command() {
     let (_dir, r, _fake) = common::launch(Runtime::Tui);
     let tui_args = tui::launch_args(&r).unwrap();
-    assert!(!tui_args.iter().any(|arg| arg == "--no-daemon"));
+    assert_eq!(&tui_args[..2], &strings(&["pane", "run"]));
+    assert_eq!(tui_args.len(), 4);
     let (_dir, r, _fake) = common::launch(Runtime::Core);
     assert_eq!(
         core::launch_args(&r)

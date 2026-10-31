@@ -1,6 +1,6 @@
 use crewmoor::{
     Result,
-    config::{Config, Runtime},
+    config::{AgentKind, Config, Runtime},
     native::Runner,
     process,
     record::Record,
@@ -18,7 +18,9 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         endpoint_dir: None,
         runtime_binary: env!("CARGO_BIN_EXE_transport-fixture").into(),
         runtime_version: "fixture 1".into(),
-        agent_version: "codex-cli test".into(),
+        agent: AgentKind::Codex,
+        agent_executable: env!("CARGO_BIN_EXE_transport-fixture").into(),
+        agent_version: "fixture 1".into(),
         agent_args: Vec::new(),
     }
 }
@@ -51,15 +53,61 @@ pub struct Fake {
     pub created: RefCell<bool>,
     pub multiple_holders: RefCell<bool>,
     pub changed_holder: RefCell<bool>,
+    pub omit_holder: RefCell<bool>,
+    pub omit_name: RefCell<bool>,
+    pub null_name: RefCell<bool>,
+    pub missing_process: RefCell<bool>,
+    pub null_process: RefCell<bool>,
+    pub omit_pid: RefCell<bool>,
+    pub minimal_terminal: RefCell<bool>,
+    pub ambiguous_start: RefCell<bool>,
 }
-fn spawn() -> Result<Child> {
-    Ok(
-        std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
-            .arg("hold")
-            .env("CODEX_SESSION_ID", "synthetic-transport-session")
-            .stdin(std::process::Stdio::piped())
-            .spawn()?,
-    )
+fn spawn(cwd: &Path) -> Result<Child> {
+    use std::io::Read;
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+        .arg("hold")
+        .env("CODEX_SESSION_ID", "synthetic-transport-session")
+        .env("CREWMOOR_TRANSPORT_HANDSHAKE", "1")
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    let mut marker = [0];
+    child
+        .stdout
+        .take()
+        .ok_or("missing transport pipe")?
+        .read_exact(&mut marker)?;
+    if marker != *b"R" {
+        return Err("transport exec handshake failed".into());
+    }
+    Ok(child)
+}
+fn spawn_shell(cwd: &Path) -> Result<Child> {
+    use std::io::Read;
+    let mut child = std::process::Command::new("/bin/bash")
+        .args([
+            "--noprofile",
+            "--norc",
+            "-c",
+            "printf 'R\\n'; read -r transport_end",
+        ])
+        .current_dir(cwd)
+        .env("CODEX_SESSION_ID", "synthetic-transport-session")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut marker = [0];
+    child
+        .stdout
+        .take()
+        .ok_or("missing shell pipe")?
+        .read_exact(&mut marker)?;
+    if marker != *b"R" {
+        return Err("shell exec handshake failed".into());
+    }
+    Ok(child)
 }
 fn close(slot: &RefCell<Option<Child>>) -> Result<()> {
     if let Some(mut child) = slot.borrow_mut().take()
@@ -86,13 +134,23 @@ impl Fake {
         } else {
             "live"
         };
-        json!({"address":"t7","name":r.config.role,"created_ms":42,"cwd":r.config.cwd,
+        if *self.minimal_terminal.borrow() {
+            return json!({"address":"t7","labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"argv":r.config.argv(),"cwd":r.config.cwd,"state":state,"created_ms":42,"screen":"exact","cols":80,"rows":24});
+        }
+        let mut value = json!({"address":"t7","name":r.config.role,"created_ms":42,"cwd":r.config.cwd,
             "argv":r.config.argv(),"state":state,"pid":child_pid(&self.agent),
             "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"reported":false,
-            "screen":"exact","cols":80,"rows":24})
-    }
-    pub fn agent(&self, r: &Record) -> Value {
-        json!({"agent":{"pane_id":"w1:p1","terminal_id":"term-own","agent":"codex","name":r.config.role,"interactive_ready":true,"agent_status":"idle","workspace_id":"w1","tab_id":"w1:t1","focused":false,"revision":1}})
+            "screen":"exact","cols":80,"rows":24});
+        if *self.omit_name.borrow() {
+            value.as_object_mut().unwrap().remove("name");
+        }
+        if *self.null_name.borrow() {
+            value["name"] = Value::Null;
+        }
+        if *self.omit_pid.borrow() {
+            value.as_object_mut().unwrap().remove("pid");
+        }
+        value
     }
     fn core(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.first().map(String::as_str) {
@@ -112,11 +170,11 @@ impl Fake {
         if *self.fail_creation.borrow() {
             return Err("failed before terminal creation".into());
         }
-        *self.holder.borrow_mut() = Some(spawn()?);
+        *self.holder.borrow_mut() = Some(spawn(&r.config.cwd)?);
         if *self.fail_after_holder.borrow() {
             return Err("failed after holder creation, before terminal".into());
         }
-        *self.agent.borrow_mut() = Some(spawn()?);
+        *self.agent.borrow_mut() = Some(spawn(&r.config.cwd)?);
         *self.created.borrow_mut() = true;
         Ok(
             json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","turn":0}),
@@ -149,8 +207,7 @@ impl Fake {
         match args.first().map(String::as_str) {
             Some("status") => Ok(json!({"version":"0.9.5"})),
             Some("workspace") => self.workspace(r, args),
-            Some("agent") => self.tui_agent(r, args),
-            Some("pane") => self.pane(args),
+            Some("pane") => self.pane(r, args),
             Some("session") => {
                 self.shutdown()?;
                 self.close_endpoint(r)?;
@@ -159,13 +216,10 @@ impl Fake {
             _ => Ok(json!({})),
         }
     }
-    fn tui_agent(&self, r: &Record, args: &[String]) -> Result<Value> {
-        if args.get(1).map(String::as_str) == Some("start") {
-            *self.agent.borrow_mut() = Some(spawn()?);
+    fn pane(&self, r: &Record, args: &[String]) -> Result<Value> {
+        if args.get(1).map(String::as_str) == Some("run") {
+            return self.start_tui(r);
         }
-        Ok(self.agent(r))
-    }
-    fn pane(&self, args: &[String]) -> Result<Value> {
         if *self.closed.borrow() {
             return Err(missing("pane_not_found"));
         }
@@ -173,19 +227,40 @@ impl Fake {
             let pane = self.pane_info();
             return Ok(json!({"pane":pane}));
         }
-        Ok(self.processes())
+        Ok(self.processes(r))
+    }
+    fn start_tui(&self, r: &Record) -> Result<Value> {
+        *self.agent.borrow_mut() = Some(spawn(&r.config.cwd)?);
+        if *self.ambiguous_start.borrow() {
+            return Err(Box::new(crewmoor::failure::NativeFailure {
+                code: "timeout".into(),
+                message: "ambiguous input admission".into(),
+            }));
+        }
+        Ok(Value::Null)
     }
     fn pane_info(&self) -> Value {
         json!({"pane_id":"w1:p1","terminal_id":"term-own","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":"unknown","revision":1})
     }
-    fn processes(&self) -> Value {
+    fn processes(&self, r: &Record) -> Value {
+        if *self.missing_process.borrow() {
+            return json!({"process_info":{"pane_id":"w1:p1"}});
+        }
+        if *self.null_process.borrow() {
+            return json!({"process_info":{"pane_id":"w1:p1","shell_pid":null,"foreground_processes":null}});
+        }
         let shell = child_pid(&self.shell);
         let foreground = if *self.empty_shell.borrow() || child_pid(&self.agent).is_none() {
             shell
         } else {
             child_pid(&self.agent)
         };
-        let mut processes = vec![json!({"name":"codex","pid":foreground})];
+        let name = if foreground == shell {
+            "bash"
+        } else {
+            r.config.agent.name()
+        };
+        let mut processes = vec![json!({"name":name,"pid":foreground})];
         if *self.extra_process.borrow() {
             processes.push(json!({"name":"other","pid":1}));
         }
@@ -204,7 +279,7 @@ impl Fake {
                 if *self.fail_creation.borrow() {
                     return Err("failed before workspace creation".into());
                 }
-                *self.shell.borrow_mut() = Some(spawn()?);
+                *self.shell.borrow_mut() = Some(spawn_shell(&r.config.cwd)?);
                 *self.created.borrow_mut() = true;
                 let workspace = self.workspaces(r)["workspaces"][0].clone();
                 let pane = self.pane_info();
@@ -241,9 +316,11 @@ impl Fake {
         let live = self.live_count();
         let finished =
             usize::from(*self.created.borrow() && *self.killed.borrow() && !*self.removed.borrow());
-        Ok(
-            json!({"version":"0.1.15","core":{"id":"own-core","name":"fixture"},"pid":child_pid(&self.child),"holder":holders.first(),"holders":holders,"uptime_ms":1,"live":live,"finished":finished}),
-        )
+        let mut value = json!({"version":"0.1.15","core":{"id":"own-core","name":"fixture"},"pid":child_pid(&self.child),"holder":holders.first(),"holders":holders,"uptime_ms":1,"live":live,"finished":finished});
+        if *self.omit_holder.borrow() {
+            value.as_object_mut().unwrap().remove("holder");
+        }
+        Ok(value)
     }
     fn holders(&self) -> Vec<Value> {
         let mut list = Vec::new();
@@ -272,14 +349,14 @@ impl Fake {
         }
         Ok(())
     }
-    pub fn replace_shell(&self) -> Result<()> {
+    pub fn replace_shell(&self, r: &Record) -> Result<()> {
         close(&self.shell)?;
-        *self.shell.borrow_mut() = Some(spawn()?);
+        *self.shell.borrow_mut() = Some(spawn_shell(&r.config.cwd)?);
         Ok(())
     }
-    pub fn replace_holder(&self) -> Result<()> {
+    pub fn replace_holder(&self, r: &Record) -> Result<()> {
         close(&self.holder)?;
-        *self.holder.borrow_mut() = Some(spawn()?);
+        *self.holder.borrow_mut() = Some(spawn(&r.config.cwd)?);
         Ok(())
     }
     fn shutdown(&self) -> Result<()> {
@@ -303,7 +380,7 @@ impl Runner for Fake {
     fn boot(&self, r: &Record) -> Result<process::Identity> {
         std::fs::create_dir_all(r.socket().parent().ok_or("missing parent")?)?;
         *self.listener.borrow_mut() = Some(UnixListener::bind(r.socket())?);
-        let child = spawn()?;
+        let child = spawn(&r.config.cwd)?;
         let identity = process::identity(child.id())?;
         *self.child.borrow_mut() = Some(child);
         Ok(identity)
