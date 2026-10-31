@@ -276,3 +276,57 @@ fn compact_core_launch_reply_can_be_completed_only_from_matching_owned_terminal(
         1
     );
 }
+
+#[test]
+fn tui_server_transport_is_not_in_the_callers_process_group() {
+    let dir = common::directory();
+    let record = Record::prepare(
+        common::config(dir.path(), Runtime::Tui),
+        &dir.path().join("instance"),
+    )
+    .unwrap();
+    let mut command = native::server_command(&record).unwrap();
+    let mut child = command
+        .arg("hold")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+    let (_, rest) = stat.rsplit_once(") ").unwrap();
+    assert_eq!(
+        rest.split_whitespace().nth(2).unwrap(),
+        child.id().to_string()
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[test]
+fn owned_transport_server_survives_its_launch_client_exit() {
+    use std::io::Read;
+    let dir = common::directory();
+    let r = Record::prepare(
+        common::config(dir.path(), Runtime::Tui),
+        &dir.path().join("instance"),
+    )
+    .unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+        .arg("detach-child")
+        .arg(&r.root)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let pid: u32 = String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let identity = process::identity(pid).unwrap();
+    assert_eq!(
+        identity.executable,
+        std::path::PathBuf::from(env!("CARGO_BIN_EXE_transport-fixture"))
+    );
+    let mut client =
+        std::os::unix::net::UnixStream::connect(r.root.join("transport.sock")).unwrap();
+    client.read_to_end(&mut Vec::new()).unwrap();
+}

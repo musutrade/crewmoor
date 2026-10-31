@@ -143,13 +143,18 @@ fn tui_boot(record: &Record) -> Result<Identity> {
     process::identity(child.id())
 }
 fn spawn_server(record: &Record) -> Result<std::process::Child> {
+    Ok(server_command(record)?.spawn()?)
+}
+pub fn server_command(record: &Record) -> Result<Command> {
+    use std::os::unix::process::CommandExt;
     let log = fs::File::create(record.root.join("server.log"))?;
-    Ok(command(record)
-        .arg("server")
+    let mut cmd = command(record);
+    cmd.arg("server")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log)
-        .spawn()?)
+        .process_group(0);
+    Ok(cmd)
 }
 pub fn wait_socket(path: &std::path::Path) -> Result<()> {
     for _ in 0..100 {
