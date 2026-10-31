@@ -34,6 +34,7 @@ State roots must be absolute and <=45 bytes to fit native Unix socket limits. Th
 - `server` contains Linux PID, process start ticks and executable path. Socket inode, binding owner and canonical state root are checked before query/stop. A changed or missing identity fails before native calls, preventing core CLI auto-start from reconnecting to an unintended instance.
 - `container_id` is the native core id or private TUI session; `handle` is the native terminal address or pane id, with native creation generation or terminal/workspace ids. Never reuse a handle in another container.
 - `accepted: true` is a successful native Agent launch response. `null` means there was no confirmed response; an error or timeout does not prove rejection or absence of effects.
+- Core 0.1.15 CLI `run` and `ls` return compact summaries, not the full schema objects. After the launch acknowledgment, CrewMoor uses `get` to validate the same container/owner/role/argv/cwd and bind the creation generation. A summary-only receipt can be inspected this way without repeating `run`; unacknowledged requests cannot establish a generation. Stop validates the full target and then checks the compact inventory contains only that address.
 - `agent_process` is the observed OS process identity, separate from request acceptance. `null` means unconfirmed. Native observations preserve reported argv, process and terminal facts.
 - `ready` is the explicitly reported Agent state, or `unknown`. TUI requires `interactive_ready`; core requires an OSC status from app `codex`. A terminal being live does not imply ready. A trust/auth dialog is not answered automatically.
 - An intent is saved before mutation, and successful native creation replies are saved before decoding. Partial/failed launches retain an `unknown-outcome` receipt and binding. Do not launch again to resolve ambiguity; inspect the recorded private instance, and ask for human recovery when strict identity checks cannot succeed.
@@ -42,7 +43,7 @@ State roots must be absolute and <=45 bytes to fit native Unix socket limits. Th
 
 ## Isolation and controlled end
 
-TUI uses its supported `herdr --session <random> server` flow with a private XDG config tree, then `workspace create` and `agent start`. Named TUI sessions derive their socket from XDG config and override the ambient socket/config selector, so the caller's Herdr socket and pane markers are removed only in child environments.
+TUI uses its supported `herdr --session <random> server` flow with a private XDG config tree and separate process group, then `workspace create` and `agent start`. Named TUI sessions derive their socket from XDG config and override the ambient socket/config selector, so the caller's Herdr socket and pane markers are removed only in child environments. The private config disables background version/manifest checks. Separate-group survival is tested with a Rust process fixture; actual TUI lifecycle evidence is still required.
 
 Core uses a random `HC_SESSION`, private XDG state/config (`notes=false`) and a private socket. `run --bg --no-parent --no-notify` creates only this Agent. No command changes proxy settings, `~/.codex/.env`, existing runtime configuration or the shared Codex daemon. Agents' normal authentication/config loading remains inherited.
 

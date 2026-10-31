@@ -173,5 +173,8 @@ fn exclusive(r: &Record, runner: &impl Runner) -> Result<()> {
     if terminals.len() != 1 {
         return Err("private core contains additional resources; refusing stop".into());
     }
-    verify_target(r, &terminals[0])
+    if Some(text(&terminals[0], "/address")?) != r.handle {
+        return Err("inventory target changed".into());
+    }
+    Ok(())
 }

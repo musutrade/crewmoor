@@ -78,7 +78,9 @@ impl Fake {
         }
     }
     fn inventory(&self, r: &Record) -> Value {
-        let mut terminals = vec![self.terminal(r)];
+        let mut terminals = vec![
+            json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","status":"idle","turn":1}),
+        ];
         if *self.extra.borrow() {
             terminals.push(json!({"address":"unowned"}));
         }
