@@ -1,5 +1,7 @@
 #[path = "support/common.rs"]
 mod common;
+#[path = "support/environment_checks.rs"]
+mod environment_checks;
 use crewmoor::{
     config::{self, Runtime},
     core, engine,

@@ -52,14 +52,37 @@ fn sanitize(cmd: &mut Command) {
         "HC_SOCKET",
         "HC_SESSION",
         "HC_TERMINAL_ID",
+        "HC_TERMINAL_SOCKET",
+        "HC_SCOPE",
+        "HC_RUNTIME",
         "HERDR_ENV",
         "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+        "CODEX_TOOL_CALL_ID",
+        "CODEX_CI",
+        "CODEX_VERSION",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS",
+        "CODEX_SANDBOX",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+        "CI",
+        "CONTINUOUS_INTEGRATION",
+        "NO_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "FORCE_COLOR",
+        "TERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "COLORTERM",
     ] {
         cmd.env_remove(name);
     }
 }
 pub fn version(binary: &std::path::Path) -> Result<String> {
-    let output = Command::new(binary).arg("--version").output()?;
+    let mut cmd = Command::new(binary);
+    sanitize(&mut cmd);
+    let output = cmd.arg("--version").output()?;
     if !output.status.success() {
         return Err("version query failed".into());
     }

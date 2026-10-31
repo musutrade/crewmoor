@@ -5,7 +5,7 @@ Linux-only, latest Rust stable / edition 2024. One configured Codex process in o
 Build and validate:
 
 ```sh
-cargo +stable build --locked --bin crewmoor
+CARGO_TARGET_DIR="$PWD/target" cargo +stable build --locked --bin crewmoor
 CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
@@ -47,6 +47,24 @@ TUI uses its supported `herdr --session <random> server` flow with a private XDG
 
 Core uses a random `HC_SESSION`, private XDG state/config (`notes=false`) and a private socket. `run --bg --no-parent --no-notify` creates only this Agent. No command changes proxy settings, `~/.codex/.env`, existing runtime configuration or the shared Codex daemon. Agents' normal authentication/config loading remains inherited.
 
+## Child environment boundary
+
+`native::command` sanitizes every future native child before startup; `server_command` uses the same path, and version probes use the same sanitizer. It uses this explicit denylist rather than clearing the environment or removing whole prefixes:
+
+| Removed keys | Reason |
+|---|---|
+| `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TOOL_CALL_ID` | Parent conversation/tool-call identity must not label a new runtime or its unrelated descendants. |
+| `CODEX_CI`, `CODEX_VERSION`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED` | Parent tool execution/build/sandbox metadata is not a new Agent's identity or execution policy. |
+| `HERDR_ENV`, `HERDR_SOCKET_PATH`, `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Prevent routing/correlation with the developer's TUI. The new TUI session is selected through native arguments. |
+| `HC_SOCKET`, `HC_SESSION`, `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE`, `HC_RUNTIME` | Remove ambient core/terminal/scope routing. Core children receive only this receipt's fresh `HC_SESSION`/`HC_SOCKET`; native core creates its terminal identity. |
+| `CI`, `CONTINUOUS_INTEGRATION`, `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM` | Do not carry a CI runner's formatting or another terminal's identity into a new interactive runtime. Native PTY setup supplies its own terminal defaults. |
+
+Other inherited settings remain untouched, including `PATH`, `HOME`, `CODEX_HOME`, authentication variables, `SSH_AUTH_SOCK`, Cargo/Rustup locations and download settings, **all proxy variables** (including `HERDR_PROXY` and direct/local bypass rules), and `HERDR_BIN_PATH`. Private XDG state/config selectors are the explicit per-instance overrides described above. No parent process, running service, user's configuration file or proxy environment is edited. Local executables and shell startup files remain trusted inputs; this is not an environment sandbox against arbitrary executable overrides.
+
+A Rust-only regression sets concrete keys to synthetic non-sensitive values in a separate parent process, traverses the actual core command / TUI server command, and starts two further Rust descendants to model holder and Agent inheritance. It checks removed keys, replacement core selectors and preserved tool/auth/proxy settings at all three child levels; output is booleans only. It does not start Herdr/Codex. The existing real core was started before this fix and remains contaminated and under explicit HOLD; it was not restarted to claim clean acceptance.
+
+## Stop verification
+
 Stop verifies the same server process/socket/binding plus native role, handle, creation generation, cwd/argv and ownership labels (core), or terminal/workspace identity and workspace owner label (TUI). It refuses additional terminals, workspaces, tabs or panes. TUI also requires the recorded Agent foreground PID or the sole original native shell PID/group; an unrecognized replacement or additional foreground process is refused. This permits cleanup of a failed launch that returned to its own empty shell. Native not-found must confirm removal of the terminal/pane, followed by `/proc` exit confirmation for the server and captured ending/Agent identities. Timeouts and transport errors are not absence. PID reuse is distinguished by process start ticks; zombies are terminated programs, not live Agents. State and observations remain, and uncertain outcomes retain the binding. Business cwd/worktrees and shared caches are not removed.
 
 ## Windows App observation through existing SSH
@@ -62,9 +80,11 @@ herdr-core machine add <existing-SSH-target> --name <new-temporary-name> --sessi
 herdr-core get <new-temporary-name>/<actual-terminal-address>
 ```
 
-Do not use `--install` or replace an existing entry. On Windows, `--via` appearing in help does not establish support; use ordinary SSH. App discovery of the temporary entry and its target must still be observed, not inferred from CLI success. The App may show a terminal without an Agent sidebar entry if that Agent does not report OSC status. The user can select/peek at the exact terminal and compare its name, cwd and displayed program; a peek is viewing, not a model task. Do not send input, close the program or create extra panes as an observation shortcut.
+Do not use `--install` or replace an existing entry. On Windows, `--via` appearing in help does not establish support; use ordinary SSH. This is a CLI connection template, not a guarantee of App discovery: current upstream App source says temporary machine entries stay outside its layout documents. The installed Windows App build and actual machine entry must be verified separately. In this batch the user actually connected as `vps-cm`; the developer did not create or change that entry.
 
-After the user confirms observation, first remove **only the temporary Windows entry** using `herdr-core machine rm <new-temporary-name>`, then coordinate CrewMoor stop. Removing that entry leaves the remote program running until the controlled stop; disconnecting first avoids a reconnect auto-starting a new core after shutdown.
+Connection, terminal display and Agents-panel membership are separate observations. The user displayed the original reported, idle Codex with `terminal.show`; it still did not appear in Agents, whereas the user's App-created Claude did. Therefore missing OSC status does not explain this particular observation. The inspected upstream App revision enumerates formal space/tab/pane terminals with a nonempty Agent status; temporary `terminal.show` swaps do not add formal membership. That source revision is not a verified match for the installed Windows App. See [the evidence report](issue-2-runtime-evidence.md) for the exact source and remaining limits.
+
+When cleanup is authorized, first coordinate removal of **only the task's temporary Windows entry** using `herdr-core machine rm <new-temporary-name>`, then coordinate CrewMoor stop. Removing that entry leaves the remote program running until the controlled stop; disconnecting first avoids a reconnect auto-starting a new core after shutdown. App-created terminals remain user-owned. Additional resources make this prototype's whole-instance stop refuse; never remove them or weaken checks to make cleanup pass. The current batch has an explicit hold on all core cleanup, including its original `t1`, because the user is using the same core. No cleanup command is presently authorized for that session.
 
 Existing user-created App targets, including prior default-core Claude observations/message/close evidence, are background capability evidence. They do not satisfy CrewMoor's independent startup/App acceptance and are never controlled or cleaned by these commands.
 

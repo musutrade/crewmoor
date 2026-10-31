@@ -60,6 +60,6 @@ Rust 集成测试涵盖 CRAP 边界、无效/缺失度量、生产/测试/raw un
 
 inventory 回归验证：外部 `#[path]`/include 文件中的 suppression、unwrap 被拒，外部 CC=4/零覆盖率的合成报告按 CRAP=20 拒绝，未知报告文件失败；build.rs 和包根 binary 不会改变 integration-test helper 的测试上下文。永久 fixture 同时包含外部模块、include 文件、build.rs、根级 binary 和 integration test，在完整 verify 中实际编译、运行并计量。
 
-本机完整 `verify` 已通过。远端 GitHub Actions 尚未执行，当前业务验收 N/A，不以工具自测代替业务验收。
+根业务 crate 必须执行完整门禁，不能报告 N/A。Issue #2 的最终验证回报绑定准确提交、独立 target 绝对路径、命令和日志；旧共享 target 的结果无效。远端 GitHub Actions 尚未执行；自动门禁、真实容器生命周期和用户 App 观察分别验收。
 
 来源：[Rust 1.99.1 官方公告](https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/)、[LLVM coverage export](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export)、[Rust 模块与 path 属性规则](https://doc.rust-lang.org/reference/items/modules.html)。

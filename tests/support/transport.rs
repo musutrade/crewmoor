@@ -1,6 +1,10 @@
 // Transport-level test double. Never used as a real container or Agent.
+mod environment;
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().collect();
+    if let Some(value) = environment::dispatch(&args) {
+        return result(value);
+    }
     if args.iter().any(|a| a == "detach-child") {
         return result(detach_child(args.last()));
     }
