@@ -6,7 +6,7 @@ pub fn choose(value: bool) -> u8 {
 #[cfg(test)]
 mod tests {
     fn helper() -> u8 {
-        "1".parse::<u8>().unwrap()
+        super::test_support::number()
     }
     #[test]
     fn both_paths() {
@@ -15,3 +15,6 @@ mod tests {
         assert_eq!("2".parse::<u8>().unwrap(), 2);
     }
 }
+
+#[cfg(test)]
+mod test_support;

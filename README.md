@@ -1,52 +1,60 @@
 # crewmoor
 
-Rust 最新 stable、edition 2024；不维护旧版本/MSRV 兼容矩阵。目前没有业务 crate，`fixtures/quality` 只是隔离的门禁验收数据，`tools/quality` 是开发工具。
+Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。当前没有业务 crate；`tools/quality` 是 Rust 质量 CLI，`fixtures/quality` 是隔离验收 fixture。
 
-## 本地与 CI
-
-需要 Python 3.11+、Rust stable 的 clippy/rustfmt/llvm-tools-preview 和 cargo-llvm-cov 0.9.0。依赖遵循现有 Rustup/Cargo 下载配置，不改代理。首次安装：
+## 本地与 CI 的统一入口
 
 ```sh
 rustup update stable
 rustup component add --toolchain stable clippy rustfmt llvm-tools-preview
 cargo +stable install cargo-llvm-cov --version 0.9.0 --locked
-python3 tools/quality/selftest.py
+cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
-最后一条也是 CI 的验收命令：正例真实运行 Clippy、Rust 测试和 LLVM 覆盖率；负例在临时数据中验证规则，不把 suppression 加入实际项目代码。门禁工具自身执行策略检查与 `cargo clippy --all-targets -- -D warnings`。
+CI 最后一步使用相同 `verify` 命令。所有调度、配置检查、源码检查、CRAP 计算和验收测试均为 Rust；YAML 仅声明安装及 Cargo 调用。
 
-业务 crate 出现后，提交其 Cargo.lock 并运行：
+`verify` 依次检查工具自身、fixture，然后判断根目录业务 Cargo.toml：没有业务 crate 时明确输出 N/A；有业务 crate 时运行同一完整检查。工具自身也执行 fmt、策略检查、Clippy `--workspace --all-targets --all-features -- -D warnings`、真实测试覆盖率及全部命名函数的 CRAP，包括测试源码。每个子进程必须成功，不吞失败。
+
+可独立运行以下子命令（相对于仓库根目录）：
 
 ```sh
-python3 tools/quality/gate.py Cargo.toml
+cargo run --locked --manifest-path tools/quality/Cargo.toml -- lint-policy fixtures/quality/Cargo.toml
+cargo run --locked --manifest-path tools/quality/Cargo.toml -- check fixtures/quality/Cargo.toml
+cargo run --locked --manifest-path tools/quality/Cargo.toml -- crap fixtures/quality/Cargo.toml /absolute/path/coverage.json
 ```
 
-该命令不接收跳过检查、放宽 lint 或自报覆盖率参数。它在同次运行生成新覆盖率报告；编译、测试、检查任一步失败都会返回非零。缺少 Cargo.toml、函数或度量也失败。CI 在没有根 Cargo.toml 时只报告「业务验收不适用」，不会把门禁自测成功说成业务通过；有根 Cargo.toml 时自动运行上述业务命令。
+`check` 会自行生成本次测试的真实覆盖率。`crap` 用于分析已经生成的 LLVM JSON，调用方负责报告与源码版本一致；CI 使用 `verify`，不接收外部覆盖率、阈值或 baseline 参数。直接检查缺失的业务 Cargo.toml 会失败，N/A 仅由 `verify` 的业务存在性判断明确输出。
 
-## 函数 CRAP <= 10
+## CRAP <= 10 的度量定义
 
-公式 `CC² × (1 − coverage)³ + CC`，coverage 在 0–1 范围；精确值 10 通过，大于 10 失败，不以打印舍入值判定。
+公式：`CC² × (1 − coverage)³ + CC`。coverage 在 0–1 范围；10 通过，超过 10 失败，不按显示舍入值判定。
 
-- CC 来自 `syn` Rust AST：每个自由函数、impl 方法和有默认实现的 trait 方法独立从 1 开始；if、while、for、loop、?、&&、|| 各加 1；match 增加「分支数 − 1」及每个 guard，or-pattern 增加「备选数 − 1」。嵌套命名函数另算，不累加到外层。测试函数也计算 CRAP。
-- 覆盖率来自 `cargo llvm-cov --workspace --all-targets --all-features --json` 实际测试运行后的 LLVM code regions（kind 0）命中数/总数，**不是**整个文件或「函数是否曾调用」的覆盖率。相同源位置的泛型实例区域按最大执行次数合并。按绝对文件路径、函数起始行与 AST 绑定；缺失、额外、不匹配、负计数、空度量均失败。
-- 此 CC 是明确约定的语法圈复杂度模型，不声称与其他工具完全相同。无条件 loop 和 `?` 也计入，属于保守选择；覆盖率采用 region coverage，不是 line/branch coverage。
-- 当前限制：闭包、自定义表达式宏、标准宏参数中的控制流不能可靠度量，拒绝而非记为 0。标准断言/格式化/vec/panic 类宏作为调用，不计算宏内部生成的分支。条件编译未进入本次 all-features 构建的源函数若无覆盖率会失败；需要另行设计配置矩阵后才能支持，不能静默忽略。相同行的多个函数也拒绝。宏生成函数若不能与 AST 对齐失败。尚不支持完整宏展开、跨平台矩阵、doc-test 覆盖率。
-- 源文件清单来自 Cargo workspace 自有 target 的源目录递归扫描，包含测试；共享源文件按生产上下文处理。未编译的源文件不自动排除，缺度量时失败。工具与 fixture 的门禁自测不等于工具本身已经通过函数 CRAP 业务验收。
+- 使用 `syn` AST 对自由函数、impl 方法、有默认体的 trait 方法逐个计算 CC，起点为 1。if、while、for、loop、?、&&、|| 各加 1；match 增加分支数减一及 guard 数。一个分支内的 or-pattern 不另加路径。闭包分支计入所属函数；嵌套命名函数另算，不重复计入父函数。
+- 覆盖率为函数起止行范围内的 LLVM **可执行行命中比例**：segment 有 has_count、不是 gap 时纳入该行，同一行任一计数大于零即命中。这是明确的 source-line 模型，不是分支覆盖率，也不是“函数被调用过即 100%”。相比初始方案，迁移版改为该行模型，并将闭包控制流计入所属函数。
+- `cargo llvm-cov --workspace --all-targets --all-features --json` 实际执行测试。加 `--no-default-ignore-filename-regex` 保留测试源码度量，Rust 端只选 Cargo workspace 自有源码清单；第三方代码不纳入检查。`--no-rustc-wrapper` 避免注入额外编译 wrapper，仍保留本机已有 Cargo 配置。
+- 空报告、无效 JSON/schema、非法坐标/计数、缺文件度量、函数没有可执行行及零函数项目都失败；实际有度量且未覆盖的行按零覆盖率处理。只有声明而无函数的文件无需覆盖率。
+- 源清单来自 Cargo metadata 中自有 target 源目录递归扫描。测试和生产共用的文件按生产上下文检查；未编译源码不自动豁免，无度量就失败。
+
+模型边界：不实现完整宏展开。已知断言、格式化、vec、matches、env、json 等宏作为不透明调用，显式控制流 token 出现在参数中则拒绝；其他表达式宏拒绝。宏内部生成的控制流与函数未展开计数，不声称覆盖宏展开后的全部函数。条件编译矩阵、跨平台和 doctest 覆盖率尚未实现。函数行范围模型对同行函数/嵌套函数存在共享行度量；建议函数各自独立行，业务引入复杂生成代码前应扩展模型并独立审计。
+
+实现参考 [herdr-flow-rust 的 Rust CLI](https://github.com/musutrade/herdr-flow-rust) 的 crap/lint-policy 分层及行覆盖率模型；未复制其 baseline、增量放行或缺失度量回退策略。
 
 ## unwrap 与 Clippy 零豁免
 
-独立 AST 检查器禁止生产上下文中的 `.unwrap()`、`Type::unwrap` 引用及非测试宏中的 unwrap 标识符，不依赖文本文件名或当前 `cfg(test)` 编译标志。显式 `#[test]` 函数、`#[cfg(test)]` 项及其后代、文件级 `#![cfg(test)]`、Cargo metadata 指定的 integration-test target 属于测试上下文。生产函数即使与测试模块同文件仍检查。复杂 cfg 表达式不会推断为测试；可采用明确的 `#[cfg(test)]` 结构。宏 token 检查可能保守拒绝同名非调用标识符。
+独立 Rust AST 规则禁止生产 `.unwrap()`、`Type::unwrap` 引用及非测试宏的 unwrap token；比较前统一去除 raw identifier 前缀，`r#unwrap` 不能绕过。`.expect()` 方法不在禁令内。
 
-不启用 opt-in `clippy::unwrap_used`，也不设置 `allow-unwrap-in-tests`；测试 unwrap 仍须满足其他已启用 Clippy lint，例如不能使用会触发 unnecessary_literal_unwrap 的写法。Clippy 使用 `--workspace --all-targets --all-features -- -D warnings`。`.expect()` 方法没有被禁止。
+测试上下文只认明确的 `#[test]` 函数、`#[cfg(test)]` 项及其后代、文件级 `#![cfg(test)]`，或 Cargo metadata 的 integration-test target。不依赖文件名中的 test，也不因测试编译就把同文件生产函数豁免。复杂 cfg 表达式不推断为测试。**外置测试模块需在被引用文件顶部写 `#![cfg(test)]`**，即使父文件已有 `#[cfg(test)] mod tests;`；尚未实现跨文件模块属性传播。fixture `src/test_support.rs` 对此做真实编译/测试验证。
 
-自有 Rust 代码中的 `#[allow]` / `#[expect]`（包括 cfg_attr 嵌套及测试代码）拒绝；为避免分组 lint 间接绕过，当前保守禁止所有此类属性。Cargo lint allow、Clippy 配置文件、lint 降级 rustflags、未知编译 wrapper 和相关环境覆盖也拒绝。保留普通链接参数及已知的 `sccache` 缓存 wrapper，不修改用户配置。第三方依赖不属于策略扫描范围。
+不启用 opt-in `clippy::unwrap_used`，不设置 Clippy 测试例外；测试 unwrap 仍须满足其他已启用 lint。所有 `allow`/`expect` lint 属性（包括 raw identifier、cfg_attr、测试与宏中的直接属性）均拒绝。Cargo lint allow、Clippy 配置文件、降低 lint 的 flags、未知编译 wrapper、相关环境覆盖，以及 CI 中常见 suppression/吞失败写法也拒绝。第三方依赖不在扫描范围。
 
-CI 工作流对 -A/--allow/--cap-lints、continue-on-error、常见吞失败 shell 写法做额外检查。项目执行路径固定为 Python checked subprocess，不提供自定义 shell hook。此检查防止常见配置误用，**不是**任意恶意修改检查器/CI 或外部编译器的安全沙箱；工作流及门禁自身变更仍需独立审计。
+这是防止项目常见误配置的规则，不能当成恶意代码沙箱：fragment 拼接生成的属性、宏 shadowing、第三方 proc-macro 展开以及修改检查器本身仍需要独立审计。保留已知 sccache 缓存 wrapper、普通链接参数和 LLVM 覆盖率 instrumentation 参数；不修改用户代理、Rustup/Cargo 配置或会话环境。
 
-## 本次验证与来源
+## 验证证据与限制
 
-2026-10-31：`rustup update stable` 确认 stable 未变化；实际 `rustc 1.99.1 (58cf8f9c3 2026-10-13)`、`cargo 1.99.1 (5f94df478 2026-08-27)`、`cargo-llvm-cov 0.9.0`。CI 显式更新 stable，安装 coverage exporter 固定版本；Rust AST 依赖记录于工具 Cargo.lock。
+2026-10-31：`rustup update stable` 确认 stable 未变化；本机 `rustc 1.99.1 (58cf8f9c3 2026-10-13)`、`cargo 1.99.1 (5f94df478 2026-08-27)`、cargo-llvm-cov 0.9.0。CI 显式更新 stable；依赖保存在 Cargo.lock。
 
-官方来源：[Rust 1.99.1 公告](https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/)、[LLVM coverage export](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export)、[Clippy 配置说明](https://doc.rust-lang.org/stable/clippy/lint_configuration.html)。
+Rust 集成测试涵盖 CRAP 边界、无效/缺失度量、生产/测试/raw unwrap、raw suppression、外置测试模块约定、配置与命令失败传播。报告 schema 和调度失败用例使用合成数据/模拟 runner；完整 `verify` 对工具和 fixture 实际执行 fmt/Clippy/测试与覆盖率，二者证据不混称。
 
-已验证本机门禁正反例及边界。GitHub Actions 尚未远端运行；当前没有业务功能或业务覆盖率可验收。
+本机完整 `verify` 已通过。远端 GitHub Actions 尚未执行，当前业务验收 N/A，不以工具自测代替业务验收。
+
+来源：[Rust 1.99.1 官方公告](https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/)、[LLVM coverage export](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export)。

@@ -5,25 +5,19 @@ on:
 permissions:
   contents: read
 jobs:
-  gate-selftest:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch latest stable (no MSRV matrix)
-        run: |
-          rustup update stable --no-self-update
-          rustup component add --toolchain stable clippy rustfmt llvm-tools-preview
-          rustc +stable --version
-          cargo +stable --version
+      - name: Fetch latest stable
+        run: rustup update stable --no-self-update
+      - name: Install toolchain components
+        run: rustup component add --toolchain stable clippy rustfmt llvm-tools-preview
+      - name: Compiler version
+        run: rustc +stable --version
+      - name: Cargo version
+        run: cargo +stable --version
       - name: Install coverage exporter
         run: cargo +stable install cargo-llvm-cov --version 0.9.0 --locked
-      - name: Gate acceptance (positive, negative, boundary)
-        run: python3 tools/quality/selftest.py
-      - name: Business quality gate
-        shell: bash
-        run: |
-          if test -f Cargo.toml; then
-            python3 tools/quality/gate.py Cargo.toml
-          else
-            echo 'Business acceptance: N/A — no business Cargo.toml. Gate self-tests are separate.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+      - name: Rust quality acceptance and business gate
+        run: cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
