@@ -1,0 +1,9 @@
+team = "sample-tui"
+role = "probe"
+runtime = "tui"
+cwd = "/absolute/project"
+store = "/absolute/crewmoor-bindings"
+runtime_binary = "/home/gem/.local/bin/herdr"
+runtime_version = "herdr 0.9.5"
+agent_version = "codex-cli 0.166.0"
+agent_args = ["--no-alt-screen"]

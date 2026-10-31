@@ -199,7 +199,12 @@ fn verify_checks_tool_before_fixture_and_propagates_errors() {
         Ok(())
     })
     .unwrap();
-    assert_eq!(paths.borrow().len(), 2);
+    let count = if driver::root().join("Cargo.toml").is_file() {
+        3
+    } else {
+        2
+    };
+    assert_eq!(paths.borrow().len(), count);
     assert!(paths.borrow()[0].ends_with("tools/quality/Cargo.toml"));
     assert!(paths.borrow()[1].ends_with("fixtures/quality/Cargo.toml"));
     assert!(driver::verify_with(|_| Err("check failed".into())).is_err());

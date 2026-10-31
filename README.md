@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status: planning.** The workflow and capabilities below describe the intended direction. They are not yet implemented or available to install.
+> **Project status: runtime launch prototype.** A Rust entrypoint can launch, inspect and end one Codex Agent in an isolated Herdr TUI or herdr-core instance. See [runtime usage and limits](docs/runtime-launch.md). The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 
@@ -62,7 +62,7 @@ Runtime capabilities and semantics differ. Support for either integration, indiv
 
 CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
 
-Design discussion starts in the repository issues. There are no installation or usage instructions yet because the project is still at the planning stage.
+Design discussion starts in the repository issues. The first prototype's supported setup and acceptance steps are in [docs/runtime-launch.md](docs/runtime-launch.md).
 
 ## Quality gates
 
