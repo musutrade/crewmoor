@@ -27,6 +27,12 @@ impl std::fmt::Display for NativeFailure {
     }
 }
 impl std::error::Error for NativeFailure {}
+pub fn code<'a>(error: &'a (dyn std::error::Error + 'static)) -> &'a str {
+    error
+        .downcast_ref::<NativeFailure>()
+        .map(|e| e.code.as_str())
+        .unwrap_or("unknown")
+}
 pub fn require_absent(result: Result<Value>) -> Result<()> {
     match result {
         Ok(_) => Err("native target still exists after removal".into()),

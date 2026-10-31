@@ -71,9 +71,6 @@ fn consumed_tui_objects_match_bundled_schema_field_contracts() {
         &info["process_info"]["foreground_processes"][0],
         &fields["PaneProcessInfoProcess"]
     ));
-    let workspaces = fake.call(&r, &strings(&["workspace", "list"])).unwrap();
-    assert!(field_contract(
-        &workspaces["workspaces"][0],
-        &fields["WorkspaceInfo"]
-    ));
+    let started = fake.agent_info(&r);
+    assert!(field_contract(&started["agent"], &fields["AgentInfo"]));
 }

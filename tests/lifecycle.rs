@@ -1,399 +1,412 @@
-#[path = "support/cleanup_checks.rs"]
-mod cleanup_checks;
 #[path = "support/common.rs"]
 mod common;
 #[path = "support/environment_checks.rs"]
 mod environment_checks;
 #[path = "support/schema_checks.rs"]
 mod schema_checks;
-#[path = "support/start_only_checks.rs"]
-mod start_only_checks;
-#[path = "support/stop_request_checks.rs"]
-mod stop_request_checks;
 use crewmoor::{
-    config::{self, Runtime},
+    config::{self, AgentKind, Runtime},
     core, engine,
     native::{self, Native, Runner, strings},
     process,
     record::Record,
     tui,
 };
-use serde_json::json;
-use std::{fs, os::unix::net::UnixListener};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 #[test]
-fn isolated_core_launch_inspect_and_controlled_terminal_stop() {
-    let (_dir, mut record, fake) = common::launch(Runtime::Core);
-    assert_eq!(record.accepted, Some(true));
-    assert!(record.process_verified);
-    assert!(engine::verified_process(&record).is_ok());
-    engine::inspect(&mut record, &fake).unwrap();
-    engine::stop(&mut record, &fake).unwrap();
-    assert!(*fake.killed.borrow());
-    assert!(
-        fake.calls
-            .borrow()
+fn four_combinations_use_native_handles_and_keep_hook_status_unknown() {
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        for agent in [AgentKind::Codex, AgentKind::Claude] {
+            let (dir, mut cfg, fake) = common::setup(runtime.clone());
+            cfg.agent = agent.clone();
+            cfg.agent_args = match agent {
+                AgentKind::Codex => strings(&["--no-alt-screen"]),
+                AgentKind::Claude => strings(&["--model", "claude-test-model"]),
+            };
+            *fake.minimal_agent.borrow_mut() = agent == AgentKind::Claude;
+            let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+            assert!(r.process_verified);
+            assert_eq!(r.accepted, Some(true));
+            assert_eq!(r.agent_status, "unknown");
+            engine::verified_process(&r).unwrap();
+            let args = match runtime {
+                Runtime::Tui => tui::launch_args(&r).unwrap(),
+                Runtime::Core => core::launch_args(&r),
+            };
+            assert!(fake.calls.borrow().contains(&args));
+            assert_native_contract(&r, &fake);
+            engine::inspect(&mut r, &fake).unwrap();
+            assert_eq!(r.agent_status, "unknown");
+            engine::stop(&mut r, &fake).unwrap();
+            assert_eq!(r.phase, "stopped");
+            assert!(r.binding().is_err());
+            assert!(*fake.stopped.borrow());
+            assert!(process::exited(r.agent_process.as_ref().unwrap()).unwrap());
+        }
+    }
+}
+fn assert_native_contract(r: &Record, fake: &common::Fake) {
+    let calls = fake.calls.borrow();
+    let prefix = match r.config.runtime {
+        Runtime::Tui => "agent",
+        Runtime::Core => "run",
+    };
+    let call = calls
+        .iter()
+        .find(|a| a.first().map(String::as_str) == Some(prefix))
+        .unwrap();
+    let boundary = call.iter().position(|a| a == "--").unwrap();
+    let mut expected = Vec::new();
+    if r.config.runtime == Runtime::Core {
+        expected.push(env!("CARGO_BIN_EXE_transport-fixture").to_owned());
+        if r.config.agent == AgentKind::Codex {
+            expected.push("--no-daemon".into());
+        }
+    } else {
+        assert_eq!(
+            &call[3..7],
+            strings(&["--kind", r.config.agent.name(), "--pane", "w1:p1"])
+        );
+    }
+    expected.extend(r.config.agent_args.clone());
+    assert_eq!(&call[boundary + 1..], expected);
+    if r.config.agent == AgentKind::Claude {
+        let invalid = call
             .iter()
-            .any(|args| args == &strings(&["rm", "t7"]))
-    );
-    assert!(
-        fake.calls
-            .borrow()
-            .iter()
-            .all(|args| !args.iter().any(|arg| arg == "send"))
-    );
+            .any(|a| ["--no-daemon", "--no-alt-screen", "-m"].contains(&a.as_str()));
+        assert!(!invalid);
+    }
 }
 #[test]
-fn isolated_tui_launch_and_stop_preserve_native_identity() {
-    let (_dir, mut record, fake) = common::launch(Runtime::Tui);
-    assert!(record.process_verified);
-    assert_eq!(record.handle.as_deref(), Some("w1:p1"));
-    engine::stop(&mut record, &fake).unwrap();
-    assert!(
-        fake.calls
-            .borrow()
-            .iter()
-            .any(|args| args == &strings(&["workspace", "close", "w1"]))
-    );
-    assert!(
-        fake.calls
-            .borrow()
-            .iter()
-            .all(|args| !args.iter().any(|arg| arg == "prompt"))
-    );
-}
-#[test]
-fn stop_refuses_additional_unowned_resources() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Core);
-    *fake.extra.borrow_mut() = true;
-    assert!(core::stop(&mut r, &fake).is_err());
-    assert!(!*fake.killed.borrow());
-    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
-    *fake.extra.borrow_mut() = true;
-    assert!(tui::stop(&mut r, &fake).is_err());
-}
-#[test]
-fn receipt_binding_generation_and_target_mismatch_fail_closed() {
-    let (dir, record, fake) = common::launch(Runtime::Core);
-    let mut value = fake.terminal(&record);
-    value["labels"]["crewmoor-owner"] = json!("other");
-    assert!(core::verify_target(&record, &value).is_err());
-    value = fake.terminal(&record);
-    value["created_ms"] = json!(43);
-    assert!(core::verify_target(&record, &value).is_err());
-    value = fake.terminal(&record);
-    value["argv"] = json!(["bash"]);
-    assert!(core::verify_target(&record, &value).is_err());
-    assert!(Record::prepare(record.config.clone(), &dir.path().join("other-instance")).is_err());
-    fs::write(record.config.store.join("test-team.json"), "other").unwrap();
-    assert!(record.guard().is_err());
-}
-#[test]
-fn tui_native_identity_mismatch_is_refused() {
+fn official_tui_arguments_do_not_repeat_host_alias_flags_or_poll_state() {
     let (_dir, r, fake) = common::launch(Runtime::Tui);
-    let mut value = fake.call(&r, &strings(&["pane", "get", "w1:p1"])).unwrap()["pane"].clone();
-    value["terminal_id"] = json!("replaced");
-    assert!(tui::verify_target(&r, &value).is_err());
+    assert_eq!(
+        tui::launch_args(&r).unwrap(),
+        strings(&[
+            "agent",
+            "start",
+            "probe",
+            "--kind",
+            "codex",
+            "--pane",
+            "w1:p1",
+            "--timeout",
+            "5000",
+            "--"
+        ])
+    );
+    let starts = fake
+        .calls
+        .borrow()
+        .iter()
+        .filter(|a| a.first().map(String::as_str) == Some("agent"))
+        .count();
+    assert_eq!(starts, 1);
+    let semantic_call = fake
+        .calls
+        .borrow()
+        .iter()
+        .flatten()
+        .any(|a| a == "wait" || a == "prompt");
+    assert!(!semantic_call);
 }
 #[test]
-fn state_root_lock_process_and_socket_mismatches_are_refused() {
+fn ambiguous_start_does_not_resend_and_process_location_is_independent() {
+    let (dir, cfg, fake) = common::setup(Runtime::Tui);
+    *fake.ambiguous.borrow_mut() = true;
+    let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+    assert!(r.request_issued);
+    assert_eq!(r.accepted, None);
+    assert!(r.process_verified);
+    assert_eq!(r.request_error.as_deref(), Some("timeout"));
+    assert_eq!(
+        fake.calls
+            .borrow()
+            .iter()
+            .filter(|a| a.get(1).map(String::as_str) == Some("start"))
+            .count(),
+        1
+    );
+    engine::stop(&mut r, &fake).unwrap();
+}
+#[test]
+fn missing_agent_process_is_not_launch_success_but_owned_native_pane_can_end() {
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        let (dir, cfg, fake) = common::setup(runtime);
+        *fake.no_agent.borrow_mut() = true;
+        let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+        assert!(!r.process_verified);
+        assert!(r.agent_process.is_none());
+        assert_eq!(r.agent_status, "unknown");
+        engine::stop(&mut r, &fake).unwrap();
+        assert_eq!(r.phase, "stopped");
+    }
+}
+#[test]
+fn extra_user_resources_survive_and_prevent_instance_stop_and_binding_release() {
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        let (_dir, mut r, fake) = common::launch(runtime);
+        *fake.extra.borrow_mut() = true;
+        engine::stop(&mut r, &fake).unwrap();
+        assert_eq!(r.phase, "partial-stop");
+        assert!(r.binding().is_ok());
+        assert!(!*fake.stopped.borrow());
+        assert!(process::exited(r.agent_process.as_ref().unwrap()).unwrap());
+        process::same(r.server.as_ref().unwrap()).unwrap();
+    }
+}
+#[test]
+fn native_target_changes_refuse_before_any_close_or_kill() {
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        let (_dir, mut r, fake) = common::launch(runtime);
+        *fake.changed.borrow_mut() = true;
+        assert!(engine::stop(&mut r, &fake).is_err());
+        assert!(!*fake.closed.borrow());
+        assert!(!*fake.finished.borrow());
+        assert!(r.binding().is_ok());
+    }
+}
+#[test]
+fn core_owner_generation_argv_and_cwd_must_match_returned_target() {
+    let (_dir, r, fake) = common::launch(Runtime::Core);
+    for key in ["address", "created_ms", "argv", "cwd", "labels"] {
+        let mut value = fake.terminal(&r);
+        value[key] = Value::Null;
+        assert!(core::verify_target(&r, &value).is_err());
+    }
+}
+#[test]
+fn missing_optional_display_and_process_fields_do_not_become_semantic_state() {
+    let (dir, cfg, fake) = common::setup(Runtime::Core);
+    *fake.omit_name.borrow_mut() = true;
+    let r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+    assert!(r.native_name.is_none());
+    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
+    *fake.missing_process.borrow_mut() = true;
+    engine::inspect(&mut r, &fake).unwrap();
+    assert!(!r.process_verified);
+    assert_eq!(r.agent_status, "unknown");
+    engine::stop(&mut r, &fake).unwrap();
+}
+#[test]
+fn observations_do_not_persist_unrelated_foreground_argv_or_container_status() {
+    let (_dir, r, _fake) = common::launch(Runtime::Tui);
+    let text = fs::read_to_string(r.root.join("record.json")).unwrap();
+    assert!(!text.contains("synthetic-sensitive-unrelated-value"));
+    assert!(!text.contains("interactive_ready"));
+    assert!(!text.contains("agent_status\": \"working"));
+}
+#[test]
+fn actual_exit_and_socket_guards_preserve_binding_on_failed_native_cleanup() {
+    for failure in ["actor", "holder", "socket"] {
+        let (_dir, mut r, fake) = common::launch(Runtime::Core);
+        match failure {
+            "actor" => *fake.leave_actor.borrow_mut() = true,
+            "holder" => *fake.leave_holder.borrow_mut() = true,
+            _ => *fake.leave_socket.borrow_mut() = true,
+        }
+        let result = engine::stop(&mut r, &fake);
+        assert!(engine::preserve(&mut r, result).is_err());
+        assert!(r.binding().is_ok());
+        assert_eq!(Record::load(&r.root).unwrap().phase, "unknown-outcome");
+    }
+}
+#[test]
+fn record_binding_server_socket_and_operation_lock_protect_instance_identity() {
     let (dir, mut r, _fake) = common::launch(Runtime::Core);
     let lock = r.lock().unwrap();
     assert!(r.lock().is_err());
     drop(lock);
-    let loaded = Record::load(&r.root).unwrap();
-    assert_eq!(loaded.owner, r.owner);
-    let wrong = dir.path().join("copy");
-    fs::create_dir(&wrong).unwrap();
-    fs::copy(r.root.join("record.json"), wrong.join("record.json")).unwrap();
-    assert!(Record::load(&wrong).is_err());
-    r.server.as_mut().unwrap().start_ticks = "wrong".into();
-    assert!(r.guard().is_err());
-    assert!(process::start_ticks("invalid").is_err());
-    assert!(process::start_ticks("1 (weird) name) X").is_err());
-    r.server = Some(process::identity(std::process::id()).unwrap());
+    assert!(Record::prepare(r.config.clone(), &dir.path().join("other")).is_err());
     r.socket_inode = Some(0);
     assert!(r.guard().is_err());
-}
-#[test]
-fn failure_is_persisted_without_relaunch_or_assumed_success() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Core);
-    *fake.fail.borrow_mut() = true;
-    let error = engine::inspect(&mut r, &fake);
-    assert!(engine::preserve(&mut r, error).is_err());
-    assert_eq!(Record::load(&r.root).unwrap().phase, "unknown-outcome");
-    assert!(!r.process_verified);
-    assert!(engine::stop(&mut r, &fake).is_err());
-}
-#[test]
-fn configuration_rejects_tasks_and_only_allows_interactive_launch_options() {
-    let dir = common::directory();
-    let mut c = common::config(dir.path(), Runtime::Core);
-    c.validate().unwrap();
-    for args in [
-        vec!["do work"],
-        vec!["exec"],
-        vec!["--model"],
-        vec!["--model", "-bad"],
-    ] {
-        c.agent_args = args.into_iter().map(Into::into).collect();
-        assert!(c.validate().is_err());
-    }
-    c.agent_args = strings(&["--no-alt-screen", "--model", "model-name"]);
-    c.validate().unwrap();
-    assert_eq!(c.argv()[1], "--no-daemon");
-    assert!(config::name("../another-team").is_err());
-    assert!(config::name("").is_err());
-    assert!(config::absolute("relative".as_ref()).is_err());
-}
-#[test]
-fn native_transport_payload_environment_and_version_errors_are_checked() {
-    let dir = common::directory();
-    let c = common::config(dir.path(), Runtime::Core);
-    let r = Record::prepare(c, &dir.path().join("instance")).unwrap();
-    assert_eq!(
-        Native
-            .call(&r, &strings(&["reply", "{\"ok\":true}"]))
-            .unwrap(),
-        json!({"ok":true})
-    );
-    assert!(Native.call(&r, &strings(&["fail"])).is_err());
-    assert!(Native.call(&r, &strings(&["reply", "not-json"])).is_err());
-    assert!(native::payload(json!({"error":"bad"}), &Runtime::Core).is_err());
-    assert_eq!(
-        native::payload(json!({"result":{"ok":1}}), &Runtime::Tui).unwrap(),
-        json!({"ok":1})
-    );
-    assert_eq!(
-        native::version(&r.config.runtime_binary).unwrap(),
-        "fixture 1"
-    );
-    assert!(native::check_runtime_version(&r.config, "wrong").is_err());
-    assert!(native::check_runtime_version(&r.config, "fixture 1").is_ok());
-    let cmd = native::command(&r);
-    let scoped_socket = cmd
-        .get_envs()
-        .any(|(key, value)| key == "HC_SOCKET" && value == Some(r.socket().as_os_str()));
-    assert!(scoped_socket);
-    assert!(native::text(&json!({}), "/missing").is_err());
-    assert!(native::pid(&json!({"pid":-1}), "/pid").is_err());
-}
-#[test]
-fn socket_and_release_are_checked() {
-    let dir = common::directory();
-    let socket = dir.path().join("ready.sock");
-    let _listener = UnixListener::bind(&socket).unwrap();
-    native::wait_socket(&socket).unwrap();
-    let (_dir, r, _fake) = common::launch(Runtime::Core);
-    assert!(native::identity_from(&json!({"pid":std::process::id()})).is_ok());
-    r.release().unwrap();
+    r.server.as_mut().unwrap().start_ticks = "changed".into();
+    assert!(r.guard().is_err());
+    fs::write(r.config.store.join("test-team.json"), "other").unwrap();
     assert!(r.binding().is_err());
 }
 #[test]
-fn cli_invalid_requests_do_not_launch_anything() {
+fn preserved_unknown_errors_never_relaunch_or_erase_process_facts() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Core);
+    let birth = r.agent_process.clone();
+    *fake.fail.borrow_mut() = true;
+    let result = engine::inspect(&mut r, &fake);
+    assert!(engine::preserve(&mut r, result).is_err());
+    assert_eq!(r.agent_process, birth);
+    assert!(!r.process_verified);
+}
+#[test]
+fn kind_configurations_reject_tasks_unknown_agents_and_native_control_bytes() {
+    let dir = common::directory();
+    let mut cfg = common::config(dir.path(), Runtime::Tui);
+    cfg.validate().unwrap();
+    for args in [
+        strings(&["prompt"]),
+        strings(&["--model"]),
+        strings(&["--model", "x\ny"]),
+    ] {
+        cfg.agent_args = args;
+        assert!(cfg.validate().is_err());
+    }
+    cfg.agent = AgentKind::Claude;
+    cfg.agent_args = strings(&["--no-alt-screen"]);
+    assert!(cfg.validate().is_err());
+    cfg.agent_args = strings(&["--model", "model ' ; $(false)"]);
+    cfg.validate().unwrap();
+    let mut value = serde_json::to_value(cfg).unwrap();
+    value["agent"] = json!("hermes");
+    assert!(serde_json::from_value::<config::Config>(value).is_err());
+}
+#[test]
+fn bounded_cli_transport_and_native_protocol_errors_remain_explicit() {
+    let start = Instant::now();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
+    cmd.arg("stall");
+    assert!(crewmoor::transport::output(&mut cmd, Duration::from_millis(30)).is_err());
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(native::payload(json!({"error":{"kind":"bad"}}), &Runtime::Core).is_err());
     assert!(engine::cli(&[]).is_err());
-    assert!(engine::operate("invalid", "/does-not-exist".as_ref()).is_err());
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+    let dir = common::directory();
+    let cfg = common::config(dir.path(), Runtime::Core);
+    native::versions_config(&cfg).unwrap();
+    let r = Record::prepare(cfg, &dir.path().join("i")).unwrap();
+    assert!(Native.call(&r, &strings(&["reply", "not json"])).is_err());
+}
+#[test]
+fn native_absence_requires_not_found_and_pid_reuse_is_not_a_live_recorded_process() {
+    let error = crewmoor::failure::NativeFailure {
+        code: "not_found".into(),
+        message: "absent".into(),
+    };
+    assert!(crewmoor::failure::require_absent(Err(Box::new(error))).is_ok());
+    assert!(crewmoor::failure::require_absent(Ok(json!({}))).is_err());
+    assert!(process::start_ticks("invalid").is_err());
+    let mut identity = process::identity(std::process::id()).unwrap();
+    identity.start_ticks = "old".into();
+    assert!(process::exited(&identity).unwrap());
+}
+
+#[test]
+fn existing_codex_alias_supplies_one_no_daemon_without_running_authentication() {
+    let dir = common::directory();
+    let path = dir.path().join("argv.json");
+    let executable = env!("CARGO_BIN_EXE_transport-fixture");
+    let script = format!("alias codex='{executable} --no-daemon';\ncodex --model 'two words'");
+    let status = Command::new("/bin/bash")
+        .args([
+            "--noprofile",
+            "--norc",
+            "-O",
+            "expand_aliases",
+            "-c",
+            &script,
+        ])
+        .env("CREWMOOR_ARGV_EVIDENCE", &path)
         .status()
         .unwrap();
-    assert!(!status.success());
-}
-
-#[test]
-fn configuration_io_cli_and_version_checks_do_not_start_unverified_programs() {
-    let dir = common::directory();
-    let mut config = common::config(dir.path(), Runtime::Core);
-    config.runtime_version = "wrong-runtime".into();
-    let path = dir.path().join("launch.toml");
-    fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    assert_eq!(engine::read_config(&path).unwrap().team, "test-team");
-    assert!(
-        engine::cli(&strings(&[
-            "launch",
-            path.to_str().unwrap(),
-            "/tmp/cm-never-start"
-        ]))
-        .is_err()
-    );
-    assert!(!std::path::Path::new("/tmp/cm-never-start").exists());
-    config.runtime_version = "fixture 1".into();
-    assert!(native::versions_config(&config).is_ok());
-    config.agent_version = "wrong-agent".into();
-    assert!(native::versions_config(&config).is_err());
-    assert!(native::version("/bin/false".as_ref()).is_err());
-    assert!(native::version("/nonexistent/codex".as_ref()).is_err());
-    assert!(engine::cli(&strings(&["--version"])).is_ok());
-    assert!(engine::cli(&strings(&["nonsense"])).is_err());
-    let (_dir, r, _fake) = common::launch(Runtime::Core);
-    assert!(engine::operate("invalid", &r.root).is_err());
-    assert!(engine::operate("inspect", &r.root).is_err());
-    assert!(engine::operate("stop", &r.root).is_err());
-}
-#[test]
-fn native_boot_failure_is_explicit_and_existing_socket_is_never_reused() {
-    let dir = common::directory();
-    let config = common::config(dir.path(), Runtime::Core);
-    let record = Record::prepare(config, &dir.path().join("instance")).unwrap();
-    assert!(Native.boot(&record).is_err());
+    assert!(status.success());
+    let value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     assert_eq!(
-        fs::read_to_string(record.root.join("config/herdr-core/config.toml")).unwrap(),
-        "notes = false\n"
+        value["argv"],
+        json!([executable, "--no-daemon", "--model", "two words"])
     );
-    let _socket = UnixListener::bind(record.socket()).unwrap();
-    assert!(Native.boot(&record).is_err());
+    assert_eq!(value["argv"], value["kernel_argv"]);
 }
 
 #[test]
-fn tui_transport_startup_failure_retains_an_unknown_receipt() {
-    let dir = common::directory();
-    let config = common::config(dir.path(), Runtime::Tui);
-    let state = dir.path().join("instance");
-    assert!(engine::launch(config, &state, &Native).is_err());
-    let receipt = Record::load(&state).unwrap();
-    assert_eq!(receipt.phase, "unknown-outcome");
-    assert_eq!(receipt.accepted, None);
-    assert!(!receipt.process_verified);
-    assert!(!receipt.socket().exists());
-}
-
-#[test]
-fn compact_core_launch_reply_can_be_completed_only_from_matching_owned_terminal() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Core);
-    assert_eq!(r.created_ms, Some(42));
-    r.created_ms = None;
-    assert!(core::target(&r, &fake).is_err());
-    r.accepted = None;
-    assert!(core::inspect_target(&mut r, &fake).is_err());
-    r.accepted = Some(true);
-    core::inspect_target(&mut r, &fake).unwrap();
-    assert_eq!(r.created_ms, Some(42));
-    assert_eq!(
-        fake.calls
-            .borrow()
-            .iter()
-            .filter(|args| args.first().map(String::as_str) == Some("run"))
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn tui_server_transport_is_not_in_the_callers_process_group() {
-    let dir = common::directory();
-    let record = Record::prepare(
-        common::config(dir.path(), Runtime::Tui),
-        &dir.path().join("instance"),
-    )
-    .unwrap();
-    let mut command = native::server_command(&record).unwrap();
-    let mut child = command
-        .arg("hold")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
-    let (_, rest) = stat.rsplit_once(") ").unwrap();
-    assert_eq!(
-        rest.split_whitespace().nth(2).unwrap(),
-        child.id().to_string()
-    );
-    child.kill().unwrap();
-    child.wait().unwrap();
-}
-
-#[test]
-fn owned_transport_server_survives_its_launch_client_exit() {
-    use std::io::Read;
-    let dir = common::directory();
-    let r = Record::prepare(
-        common::config(dir.path(), Runtime::Tui),
-        &dir.path().join("instance"),
-    )
-    .unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
-        .arg("detach-child")
-        .arg(&r.root)
+fn configuration_cli_versions_and_fake_native_boot_failures_do_not_start_models() {
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .arg("--version")
         .output()
         .unwrap();
     assert!(output.status.success());
-    let pid: u32 = String::from_utf8(output.stdout)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    let identity = process::identity(pid).unwrap();
-    assert_eq!(
-        identity.executable,
-        std::path::PathBuf::from(env!("CARGO_BIN_EXE_transport-fixture"))
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("crewmoor 0.1.0")
     );
-    let mut client =
-        std::os::unix::net::UnixStream::connect(r.root.join("transport.sock")).unwrap();
-    client.read_to_end(&mut Vec::new()).unwrap();
+    let dir = common::directory();
+    let mut cfg = common::config(dir.path(), Runtime::Core);
+    cfg.agent_args = strings(&["--no-daemon"]);
+    cfg.validate().unwrap();
+    assert_eq!(cfg.argv().iter().filter(|a| *a == "--no-daemon").count(), 1);
+    let path = dir.path().join("config.toml");
+    fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+    assert_eq!(engine::read_config(&path).unwrap().team, "test-team");
+    for runtime in [Runtime::Core, Runtime::Tui] {
+        let dir = common::directory();
+        let cfg = common::config(dir.path(), runtime);
+        let record = Record::prepare(cfg, &dir.path().join("i")).unwrap();
+        assert!(Native.boot(&record).is_err());
+    }
 }
 
 #[test]
-fn withheld_tui_request_can_close_only_its_original_empty_shell() {
-    let (dir, config, fake) = common::setup(Runtime::Tui);
-    *fake.omit_foreground.borrow_mut() = true;
-    let mut r = engine::launch(config, &dir.path().join("i"), &fake).unwrap();
-    assert!(!r.request_issued);
-    assert!(r.agent_process.is_none());
-    *fake.omit_foreground.borrow_mut() = false;
-    engine::stop(&mut r, &fake).unwrap();
-    assert_eq!(r.phase, "stopped");
-    assert!(!r.process_verified);
-    assert!(r.binding().is_err());
-}
-
-#[test]
-fn tui_stop_refuses_an_added_or_unconfirmed_foreground_process() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
-    *fake.extra_process.borrow_mut() = true;
-    assert!(engine::stop(&mut r, &fake).is_err());
-    *fake.extra_process.borrow_mut() = false;
-    r.agent_process = None;
-    assert!(engine::stop(&mut r, &fake).is_err());
-    let mutating = fake
-        .calls
-        .borrow()
-        .iter()
-        .any(|args| args == &strings(&["workspace", "close", "w1"]));
-    assert!(!mutating);
-}
-
-#[test]
-fn tui_uses_startup_admission_without_a_readiness_command() {
-    let (_dir, r, _fake) = common::launch(Runtime::Tui);
-    let tui_args = tui::launch_args(&r).unwrap();
-    assert_eq!(&tui_args[..2], &strings(&["pane", "run"]));
-    assert_eq!(tui_args.len(), 4);
+fn public_cli_rejects_version_and_transport_failures_without_relaunch() {
+    let (dir, cfg, _fake) = common::setup(Runtime::Core);
+    let path = dir.path().join("bad-version.toml");
+    fs::write(&path, toml::to_string(&cfg).unwrap()).unwrap();
+    let fresh = dir.path().join("new-state");
+    let args = vec![
+        "launch".into(),
+        path.display().to_string(),
+        fresh.display().to_string(),
+    ];
+    assert!(engine::cli(&args).is_err());
+    assert!(!fresh.exists());
     let (_dir, r, _fake) = common::launch(Runtime::Core);
-    assert_eq!(
-        core::launch_args(&r)
-            .iter()
-            .filter(|arg| *arg == "--no-daemon")
-            .count(),
-        1
-    );
+    for command in ["inspect", "stop", "unsupported"] {
+        assert!(engine::cli(&[command.into(), r.root.display().to_string()]).is_err());
+    }
+    let saved = Record::load(&r.root).unwrap();
+    assert_eq!(saved.phase, "unknown-outcome");
+    assert!(saved.binding().is_ok());
 }
+
 #[test]
-fn absence_requires_a_native_not_found_not_a_timeout_or_live_response() {
-    use crewmoor::failure::{NativeFailure, require_absent};
-    let missing =
-        NativeFailure::decode(&json!({"error":{"code":"pane_not_found","message":"gone"}}));
-    assert!(missing.to_string().contains("pane_not_found"));
-    assert!(require_absent(Err(Box::new(missing))).is_ok());
-    let timeout = NativeFailure::decode(&json!({"error":{"kind":"timeout"}}));
-    assert!(require_absent(Err(Box::new(timeout))).is_err());
-    assert!(require_absent(Ok(json!({"state":"live"}))).is_err());
+fn owned_transport_exec_handshake_and_input_eof_flush_a_real_successful_exit() {
+    use std::io::Read;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+        .arg("hold")
+        .env("CREWMOOR_TRANSPORT_HANDSHAKE", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut marker = [0; 2];
+    child
+        .stdout
+        .as_mut()
+        .unwrap()
+        .read_exact(&mut marker)
+        .unwrap();
+    assert_eq!(&marker, b"R\n");
+    drop(child.stdin.take());
+    assert!(child.wait().unwrap().success());
 }
+
 #[test]
-fn claimed_native_removal_with_a_live_process_keeps_binding_unknown() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Core);
-    *fake.leave_actor.borrow_mut() = true;
-    let result = engine::stop(&mut r, &fake);
-    assert!(engine::preserve(&mut r, result).is_err());
-    assert_eq!(r.phase, "unknown-outcome");
-    assert!(r.binding().is_ok());
-    assert!(!process::exited(r.agent_process.as_ref().unwrap()).unwrap());
+fn each_agent_rejects_wrong_version_and_kernel_executable_without_claiming_launch() {
+    for agent in [AgentKind::Codex, AgentKind::Claude] {
+        let dir = common::directory();
+        let mut cfg = common::config(dir.path(), Runtime::Tui);
+        cfg.agent = agent.clone();
+        cfg.agent_version = "different agent version".into();
+        assert!(native::versions_config(&cfg).is_err());
+        let (dir, mut cfg, fake) = common::setup(Runtime::Tui);
+        cfg.agent = agent;
+        cfg.agent_executable = "/bin/false".into();
+        let root = dir.path().join("i");
+        assert!(engine::launch(cfg, &root, &fake).is_err());
+        let saved = Record::load(&root).unwrap();
+        assert!(!saved.process_verified);
+        assert_eq!(saved.agent_status, "unknown");
+        assert!(saved.binding().is_ok());
+    }
 }

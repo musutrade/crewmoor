@@ -55,6 +55,13 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         name(&self.team)?;
         name(&self.role)?;
+        self.validate_paths()?;
+        if self.runtime == Runtime::Tui {
+            self.validate_tui()?;
+        }
+        validate_args(&self.agent, &self.agent_args)
+    }
+    fn validate_paths(&self) -> Result<()> {
         absolute(&self.cwd)?;
         absolute(&self.store)?;
         validate_endpoint(self.endpoint_dir.as_deref())?;
@@ -63,15 +70,31 @@ impl Config {
         if !self.cwd.is_dir() {
             return Err("cwd is not a directory".into());
         }
-        validate_args(&self.agent, &self.agent_args)
+        Ok(())
     }
     pub fn argv(&self) -> Vec<String> {
         let mut args = vec![self.agent_executable.display().to_string()];
-        if self.agent == AgentKind::Codex {
+        if self.runtime == Runtime::Core
+            && self.agent == AgentKind::Codex
+            && !self.agent_args.iter().any(|a| a == "--no-daemon")
+        {
             args.push("--no-daemon".into());
         }
         args.extend(self.agent_args.clone());
         args
+    }
+    fn validate_tui(&self) -> Result<()> {
+        if !self.role.starts_with(|c: char| c.is_ascii_lowercase()) {
+            return Err("official agent name must start with a lowercase letter".into());
+        }
+        if self
+            .agent_args
+            .iter()
+            .any(|arg| arg.chars().any(char::is_control))
+        {
+            return Err("official agent start rejects control bytes in arguments".into());
+        }
+        Ok(())
     }
 }
 fn validate_endpoint(path: Option<&std::path::Path>) -> Result<()> {
@@ -99,7 +122,7 @@ fn agent_arg<'a>(
     values: &mut impl Iterator<Item = &'a String>,
 ) -> Result<()> {
     match arg {
-        "--no-alt-screen" if *kind == AgentKind::Codex => Ok(()),
+        "--no-alt-screen" | "--no-daemon" if *kind == AgentKind::Codex => Ok(()),
         "--model" => model(values.next()),
         "-m" if *kind == AgentKind::Codex => model(values.next()),
         _ => Err(

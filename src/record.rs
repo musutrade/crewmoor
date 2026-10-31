@@ -24,7 +24,7 @@ pub struct Record {
     pub workspace_id: Option<String>,
     pub created_ms: Option<u64>,
     pub agent_process: Option<Identity>,
-    pub original_shell: Option<Identity>,
+    pub terminal_process: Option<Identity>,
     pub core_holders: Option<Vec<crate::holders::Holder>>,
     pub ending_process: Option<Identity>,
     pub accepted: Option<bool>,
@@ -34,7 +34,7 @@ pub struct Record {
     pub native_name: Option<String>,
     #[serde(default)]
     pub process_verified: bool,
-    pub observations: Vec<serde_json::Value>,
+    pub agent_status: String,
 }
 impl Record {
     pub fn prepare(config: Config, root: &Path) -> Result<Self> {
@@ -60,7 +60,7 @@ impl Record {
             workspace_id: None,
             created_ms: None,
             agent_process: None,
-            original_shell: None,
+            terminal_process: None,
             core_holders: None,
             ending_process: None,
             accepted: None,
@@ -68,7 +68,7 @@ impl Record {
             request_error: None,
             native_name: None,
             process_verified: false,
-            observations: Vec::new(),
+            agent_status: "unknown".into(),
         };
         result.save()?;
         result.bind()?;
@@ -117,19 +117,6 @@ impl Record {
     }
     pub fn lock(&self) -> Result<Lock> {
         Lock::take(&self.root)
-    }
-    pub fn require_uncreated(&self) -> Result<()> {
-        let targets = [&self.handle, &self.terminal_id, &self.workspace_id];
-        if targets.into_iter().any(|value| value.is_some()) {
-            return Err("partial native target identity; refusing server-only cleanup".into());
-        }
-        if self.agent_process.is_some()
-            || self.original_shell.is_some()
-            || self.created_ms.is_some()
-        {
-            return Err("target process/generation exists; refusing server-only cleanup".into());
-        }
-        Ok(())
     }
     fn binding_path(&self) -> PathBuf {
         self.config.store.join(format!("{}.json", self.config.team))

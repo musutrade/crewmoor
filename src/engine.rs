@@ -42,23 +42,28 @@ pub fn inspect(record: &mut Record, runner: &impl Runner) -> Result<()> {
             core::observe(record, value)?;
         }
         Runtime::Tui => {
-            let value = tui::target(record, runner)?;
-            tui::observe(record, value, runner)?;
+            tui::target(record, runner)?;
+            tui::observe(record, runner)?;
         }
     }
     record.phase = "observed".into();
+    record.agent_status = "unknown".into();
     record.save()
 }
 pub fn stop(record: &mut Record, runner: &impl Runner) -> Result<()> {
     record.guard()?;
     record.phase = "stop-intent".into();
     record.save()?;
-    match record.config.runtime {
+    let empty = match record.config.runtime {
         Runtime::Core => core::stop(record, runner)?,
         Runtime::Tui => tui::stop(record, runner)?,
+    };
+    if !empty {
+        record.phase = "partial-stop".into();
+        record.process_verified = false;
+        return record.save();
     }
     confirm_exit(record)?;
-    record.agent_process = None;
     record.process_verified = false;
     record.phase = "stopped".into();
     record.save()?;
@@ -70,7 +75,7 @@ fn confirm_exit(record: &Record) -> Result<()> {
         Some(expected),
         record.ending_process.as_ref(),
         record.agent_process.as_ref(),
-        record.original_shell.as_ref(),
+        record.terminal_process.as_ref(),
     ]
     .into_iter()
     .flatten()
@@ -84,6 +89,18 @@ fn confirm_exit(record: &Record) -> Result<()> {
         process::wait_exited(identity)?;
     }
     socket_absent(record)
+}
+pub fn confirm_target_exit(record: &Record) -> Result<()> {
+    for identity in [
+        record.agent_process.as_ref(),
+        record.terminal_process.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        process::wait_exited(identity)?;
+    }
+    Ok(())
 }
 fn socket_absent(record: &Record) -> Result<()> {
     match fs::symlink_metadata(record.socket()) {

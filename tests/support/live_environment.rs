@@ -34,8 +34,10 @@ pub fn report(root: Option<&String>) -> Result<()> {
 fn secondary(r: &Record) -> Result<Value> {
     match r.config.runtime {
         Runtime::Tui => entry(
-            "original-shell",
-            r.original_shell.as_ref().ok_or("shell unknown")?,
+            "terminal-process",
+            r.terminal_process
+                .as_ref()
+                .ok_or("terminal process unknown")?,
         ),
         Runtime::Core => {
             let list = r.core_holders.as_ref().ok_or("holder inventory unknown")?;

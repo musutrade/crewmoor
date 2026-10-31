@@ -1,5 +1,7 @@
 # Audited v9 real attempts — core passed, TUI input withheld
 
+Historical record: the later minimal implementation directly reuses official agent-start busy handling. The bounded-check/shell-launcher proposals below were not implemented and are superseded; see [current usage](runtime-launch.md) and [the unexecuted minimal proposal](issue-2-minimal-acceptance.md).
+
 Batch `crewmoor-issue-2-001`, repository `musutrade/crewmoor`. Tested source: `769f966023231f65abf3ff2d4b14aed4a67b22a8`, after its independent `CODE_AUDIT=pass`. These are actual Linux runtime attempts, separate from automatic transports. Ready/working/done and App membership are excluded. No opening task, prompt, input retry or additional launch was sent. Both authorized launch invocations are consumed; further real TUI testing needs a specific new authorization and exact-candidate audit.
 
 ## Fixed inputs

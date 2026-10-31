@@ -7,18 +7,13 @@ use crate::{
 use serde_json::Value;
 
 pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    verify_server(r, runner)?;
-    create_workspace(r, runner)?;
-    capture_shell(r, runner)?;
-    start_agent(r, runner)
-}
-fn verify_server(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    let value = runner.call(r, &strings(&["status", "server", "--json"]))?;
-    if value["version"].as_str() != r.config.runtime_version.strip_prefix("herdr ") {
+    let server = runner.call(r, &strings(&["status", "server", "--json"]))?;
+    if server["version"].as_str() != r.config.runtime_version.strip_prefix("herdr ") {
         return Err("TUI server version mismatch".into());
     }
     r.container_id = Some(r.session.clone());
-    Ok(())
+    create_workspace(r, runner)?;
+    request_agent(r, runner)
 }
 fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let value = runner.call(
@@ -33,289 +28,120 @@ fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
             "--no-focus",
         ]),
     )?;
-    r.observations.push(value.clone());
-    r.save()?;
     r.handle = Some(text(&value, "/root_pane/pane_id")?);
     r.terminal_id = Some(text(&value, "/root_pane/terminal_id")?);
     r.workspace_id = Some(text(&value, "/workspace/workspace_id")?);
     r.phase = "workspace-created".into();
     r.save()
 }
-fn start_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
+pub fn launch_args(r: &Record) -> Result<Vec<String>> {
+    let pane = r.handle.as_deref().ok_or("missing returned pane")?;
+    let mut args = strings(&[
+        "agent",
+        "start",
+        &r.config.role,
+        "--kind",
+        r.config.agent.name(),
+        "--pane",
+        pane,
+        "--timeout",
+        "5000",
+        "--",
+    ]);
+    args.extend(r.config.agent_args.clone());
+    Ok(args)
+}
+fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let args = launch_args(r)?;
-    if !can_launch(r, runner)? {
-        r.request_error = Some("startup withheld: original empty shell unconfirmed".into());
-        return r.save();
-    }
-    r.phase = "agent-request-intent".into();
     r.guard()?;
     r.request_issued = true;
-    let saved = r.save();
-    if saved.is_err() {
-        r.request_issued = false;
-    }
-    saved?;
+    r.phase = "agent-request-intent".into();
+    r.save()?;
     match runner.call(r, &args) {
         Ok(value) => {
+            verify_target(r, &value["agent"])?;
             r.accepted = Some(true);
-            r.observations.push(value);
+            r.native_name = crate::native::optional_text(&value["agent"], "name")?.map(Into::into);
         }
-        Err(error) => {
-            r.request_error = Some(error.to_string());
-        }
+        Err(error) => r.request_error = Some(crate::failure::code(error.as_ref()).into()),
     }
     r.save()
-}
-fn can_launch(r: &Record, runner: &impl Runner) -> Result<bool> {
-    r.guard()?;
-    let Some(shell) = r.original_shell.as_ref() else {
-        return Ok(false);
-    };
-    if shell.executable != std::path::Path::new("/bin/bash").canonicalize()? {
-        return Err("TUI startup quoting requires the recorded Bash shell".into());
-    }
-    process::verify_cwd(shell, &r.config.cwd)?;
-    target(r, runner)?;
-    let info = process_info(r, runner)?;
-    verify_original_shell(r, &info)?;
-    Ok(empty_shell(&info))
-}
-fn capture_shell(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    let handle = r.handle.as_deref().ok_or("missing pane")?;
-    let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
-    verify_pane(r, &pane["pane"])?;
-    let info = process_info(r, runner)?;
-    r.original_shell = match info.pointer("/process_info/shell_pid") {
-        None | Some(Value::Null) => None,
-        Some(_) => Some(process::identity(pid(&info, "/process_info/shell_pid")?)?),
-    };
-    r.observations.push(info);
-    r.save()
-}
-pub fn launch_args(r: &Record) -> Result<Vec<String>> {
-    crate::launch::args(r)
 }
 pub fn target(r: &Record, runner: &impl Runner) -> Result<Value> {
-    let handle = r.handle.as_deref().ok_or("missing pane")?;
-    let value = runner.call(r, &strings(&["pane", "get", handle]))?;
+    let pane = r.handle.as_deref().ok_or("missing returned pane")?;
+    let value = runner.call(r, &strings(&["pane", "get", pane]))?;
     verify_target(r, &value["pane"])?;
-    exclusive_workspace(r, runner)?;
     Ok(value)
 }
 pub fn verify_target(r: &Record, value: &Value) -> Result<()> {
-    verify_pane(r, value)
-}
-pub fn observe(r: &mut Record, value: Value, runner: &impl Runner) -> Result<()> {
-    let info = process_info(r, runner)?;
-    let current = if r.request_issued {
-        agent_process(r, &info)?
-    } else {
-        None
-    };
-    r.process_verified = process::remember(&mut r.agent_process, current)?;
-    r.observations.extend([value, info]);
+    if value["pane_id"].as_str() != r.handle.as_deref() {
+        return Err("pane changed".into());
+    }
+    if value["terminal_id"].as_str() != r.terminal_id.as_deref() {
+        return Err("terminal changed".into());
+    }
+    if value["workspace_id"].as_str() != r.workspace_id.as_deref() {
+        return Err("workspace changed".into());
+    }
     Ok(())
 }
-fn process_info(r: &Record, runner: &impl Runner) -> Result<Value> {
-    let handle = r.handle.as_deref().ok_or("missing pane")?;
-    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
-    if info["process_info"]["pane_id"].as_str() != Some(handle) {
+pub fn observe(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    let pane = r.handle.as_deref().ok_or("missing returned pane")?;
+    let value = runner.call(r, &strings(&["pane", "process-info", "--pane", pane]))?;
+    let info = &value["process_info"];
+    if info["pane_id"].as_str() != Some(pane) {
         return Err("process-info pane changed".into());
     }
-    Ok(info)
+    r.terminal_process = shell_process(info);
+    let current = observed_agent(r, info)?;
+    r.process_verified = process::remember(&mut r.agent_process, current)?;
+    // Do not persist unrelated foreground argv or container semantic status.
+    Ok(())
 }
-fn agent_process(r: &Record, info: &Value) -> Result<Option<process::Identity>> {
-    if info["process_info"]["shell_pid"].is_null() {
-        return Ok(None);
-    }
-    verify_original_shell(r, info)?;
-    let Some(agent) = foreground_agent(r, info) else {
+fn shell_process(info: &Value) -> Option<process::Identity> {
+    process::identity(pid(info, "/shell_pid").ok()?).ok()
+}
+fn observed_agent(r: &Record, info: &Value) -> Result<Option<process::Identity>> {
+    let Some(list) = info["foreground_processes"].as_array() else {
         return Ok(None);
     };
+    let mut matches = list
+        .iter()
+        .filter(|value| value["name"] == r.config.agent.name());
+    let Some(value) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err("multiple matching Agent processes; location unknown".into());
+    }
     Ok(Some(process::agent_identity(
-        pid(agent, "/pid")?,
+        pid(value, "/pid")?,
         &r.config.agent_executable,
         &r.config.cwd,
     )?))
 }
-fn foreground_agent<'a>(r: &Record, info: &'a Value) -> Option<&'a Value> {
-    let list = info
-        .pointer("/process_info/foreground_processes")?
-        .as_array()?;
-    if list.len() != 1 {
-        return None;
+pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<bool> {
+    if let Some(pane) = r.handle.clone() {
+        close_target(r, &pane, runner)?;
     }
-    let name = list[0]["name"].as_str()?;
-    let executable = r.config.agent_executable.canonicalize().ok()?;
-    let basename = executable.file_name()?.to_str()?;
-    (name == r.config.agent.name() || name == basename).then_some(&list[0])
-}
-pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    r.guard()?;
-    if r.handle.is_none() {
-        r.require_uncreated()?;
-        return stop_empty(r, runner);
-    }
-    stop_target(r, runner)
-}
-fn stop_target(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    r.original_shell
-        .as_ref()
-        .ok_or("original shell identity unknown")?;
-    r.ending_process = Some(stop_guard(r, runner)?);
-    r.save()?;
-    let id = exclusive_workspace(r, runner)?;
-    close_workspace(r, &id, runner)?;
-    stop_empty(r, runner)
-}
-fn stop_empty(r: &Record, runner: &impl Runner) -> Result<()> {
-    verify_instance(r, runner)?;
     let value = runner.call(r, &strings(&["workspace", "list"]))?;
     let list = value["workspaces"]
         .as_array()
         .ok_or("missing workspace inventory")?;
     if !list.is_empty() {
-        return Err("private TUI contains resources; refusing empty-instance stop".into());
+        return Ok(false);
     }
     r.guard()?;
     runner.call(r, &strings(&["session", "stop", &r.session, "--json"]))?;
-    Ok(())
+    Ok(true)
 }
-fn verify_instance(r: &Record, runner: &impl Runner) -> Result<()> {
-    let value = runner.call(r, &strings(&["status", "server", "--json"]))?;
-    if value["version"].as_str() != r.config.runtime_version.strip_prefix("herdr ") {
-        return Err("TUI server version changed".into());
-    }
-    if r.container_id.as_deref() != Some(&r.session) {
-        return Err("TUI instance identity unknown".into());
-    }
-    Ok(())
-}
-fn close_workspace(r: &mut Record, id: &str, runner: &impl Runner) -> Result<()> {
-    runner.call(r, &strings(&["workspace", "close", id]))?;
-    runner.absent(
-        r,
-        &strings(&["pane", "get", r.handle.as_deref().ok_or("missing pane")?]),
-    )?;
-    r.phase = "workspace-closed".into();
-    r.save()
-}
-fn stop_guard(r: &Record, runner: &impl Runner) -> Result<process::Identity> {
-    let handle = r.handle.as_deref().ok_or("missing pane")?;
-    let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
-    verify_pane(r, &pane["pane"])?;
-    let info = process_info(r, runner)?;
-    verify_original_shell(r, &info)?;
-    if empty_shell(&info) {
-        return verify_unrequested_shell(r, &info);
-    }
-    require_verified_request(r)?;
+fn close_target(r: &mut Record, pane: &str, runner: &impl Runner) -> Result<()> {
     target(r, runner)?;
-    verify_running(r, &info)
-}
-fn require_verified_request(r: &Record) -> Result<()> {
-    if !r.request_issued || !r.process_verified || r.agent_process.is_none() {
-        return Err("requested Agent process unconfirmed; refusing stop".into());
-    }
-    Ok(())
-}
-fn verify_unrequested_shell(r: &Record, info: &Value) -> Result<process::Identity> {
-    if r.request_issued || r.agent_process.is_some() {
-        return Err(
-            "startup request has no confirmed foreground Agent; refusing empty-shell cleanup"
-                .into(),
-        );
-    }
-    verify_shell(r, info)
-}
-fn verify_original_shell(r: &Record, info: &Value) -> Result<()> {
-    let original = r
-        .original_shell
-        .as_ref()
-        .ok_or("original shell identity unknown")?;
-    process::same(original)?;
-    if pid(info, "/process_info/shell_pid")? != original.pid {
-        return Err("native shell replaced; refusing stop".into());
-    }
-    Ok(())
-}
-fn verify_shell(r: &Record, info: &Value) -> Result<process::Identity> {
-    let original = r
-        .original_shell
-        .as_ref()
-        .ok_or("original shell identity unknown")?;
-    process::same(original)?;
-    if sole_foreground(info)? != original.pid {
-        return Err("original shell replaced; refusing stop".into());
-    }
-    Ok(original.clone())
-}
-fn verify_pane(r: &Record, pane: &Value) -> Result<()> {
-    if pane["pane_id"].as_str() != r.handle.as_deref() {
-        return Err("pane changed".into());
-    }
-    if pane["terminal_id"].as_str() != r.terminal_id.as_deref() {
-        return Err("terminal changed".into());
-    }
-    if pane["workspace_id"].as_str() != r.workspace_id.as_deref() {
-        return Err("workspace changed".into());
-    }
-    Ok(())
-}
-fn sole_foreground(info: &Value) -> Result<u32> {
-    let list = info
-        .pointer("/process_info/foreground_processes")
-        .and_then(Value::as_array)
-        .ok_or("foreground unknown")?;
-    if list.len() != 1 {
-        return Err("additional or missing foreground processes".into());
-    }
-    pid(&list[0], "/pid")
-}
-fn empty_shell(info: &Value) -> bool {
-    let shell = pid(info, "/process_info/shell_pid").ok();
-    shell.is_some()
-        && shell == sole_foreground(info).ok()
-        && shell == pid(info, "/process_info/foreground_process_group_id").ok()
-}
-fn verify_running(r: &Record, info: &Value) -> Result<process::Identity> {
-    let expected = r
-        .agent_process
-        .as_ref()
-        .ok_or("Agent process unknown; refusing stop")?;
-    process::same(expected)?;
-    process::agent_identity(expected.pid, &r.config.agent_executable, &r.config.cwd)?;
-    if sole_foreground(info)? != expected.pid {
-        return Err("foreground replaced".into());
-    }
-    if pid(info, "/process_info/foreground_process_group_id")? != expected.pid {
-        return Err("foreground group changed".into());
-    }
-    Ok(expected.clone())
-}
-fn exclusive_workspace(r: &Record, runner: &impl Runner) -> Result<String> {
-    let value = runner.call(r, &strings(&["workspace", "list"]))?;
-    let list = value["workspaces"]
-        .as_array()
-        .ok_or("missing workspace inventory")?;
-    if list.len() != 1 {
-        return Err("private TUI contains additional resources; refusing stop".into());
-    }
-    if list[0]["label"].as_str() != Some(&r.owner) {
-        return Err("workspace ownership mismatch".into());
-    }
-    verify_workspace(r, &list[0])?;
-    text(&list[0], "/workspace_id")
-}
-fn verify_workspace(r: &Record, value: &Value) -> Result<()> {
-    if value["workspace_id"].as_str() != r.workspace_id.as_deref() {
-        return Err("workspace changed".into());
-    }
-    if value["pane_count"].as_u64() != Some(1) {
-        return Err("additional panes exist; refusing stop".into());
-    }
-    if value["tab_count"].as_u64() != Some(1) {
-        return Err("additional tabs exist; refusing stop".into());
-    }
-    Ok(())
+    r.ending_process = r.agent_process.clone();
+    r.save()?;
+    runner.call(r, &strings(&["pane", "close", pane]))?;
+    runner.absent(r, &strings(&["pane", "get", pane]))?;
+    crate::engine::confirm_target_exit(r)?;
+    r.phase = "target-removed".into();
+    r.save()
 }

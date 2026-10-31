@@ -3,7 +3,6 @@ pub mod core;
 pub mod engine;
 pub mod failure;
 pub mod holders;
-pub mod launch;
 pub mod native;
 pub mod process;
 pub mod record;

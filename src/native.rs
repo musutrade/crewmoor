@@ -112,13 +112,6 @@ impl Runner for Native {
             let value = serde_json::from_slice::<Value>(&output.stderr).unwrap_or(Value::Null);
             return Err(crate::failure::NativeFailure::decode(&value).into());
         }
-        if matches!(record.config.runtime, Runtime::Tui)
-            && args.first().map(String::as_str) == Some("pane")
-            && args.get(1).map(String::as_str) == Some("run")
-            && output.stdout.is_empty()
-        {
-            return Ok(Value::Null);
-        }
         let value: Value = serde_json::from_slice(&output.stdout)?;
         payload(value, &record.config.runtime)
     }
@@ -216,12 +209,4 @@ pub fn optional_text<'a>(value: &'a Value, key: &str) -> Result<Option<&'a str>>
         None | Some(Value::Null) => Ok(None),
         Some(value) => Ok(Some(value.as_str().ok_or("invalid optional text")?)),
     }
-}
-pub fn match_optional(value: &Value, key: &str, expected: &str) -> Result<()> {
-    if let Some(actual) = optional_text(value, key)?
-        && actual != expected
-    {
-        return Err(format!("{key} changed").into());
-    }
-    Ok(())
 }
