@@ -6,12 +6,12 @@ Build and validate:
 
 ```sh
 cargo +stable build --locked --bin crewmoor
-cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
+CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
 The root `Cargo.toml` is the business crate. Complete verify checks it with fmt, the source/lint policy, Clippy `-D warnings`, tests, fresh LLVM coverage and all-function CRAP <= 10. Tests use a Rust transport executable and injected native replies. They do not start Herdr, Codex or containers; a transport startup failure uses only the Rust fixture. Real runtime acceptance is separate.
 
-Copy and edit `examples/tui.toml` or `examples/core.toml`, setting absolute cwd, store and installed binary, and exact `--version` outputs. Agent support is deliberately Codex-only. Allowed optional launch arguments are `--no-alt-screen` and `--model NAME`; prompts/subcommands are rejected. `--no-daemon` is always passed to keep Codex inside the selected runtime. Startup may still access credentials, MCP/plugins and network, so obtain the user's launch authorization first.
+Copy and edit `examples/tui.toml` or `examples/core.toml`, setting absolute cwd, store and installed binary, and exact `--version` outputs. Agent support is deliberately Codex-only. Allowed optional launch arguments are `--no-alt-screen` and `--model NAME`; prompts/subcommands are rejected. Core passes `--no-daemon` explicitly. TUI uses its native codex launch path without duplicating that flag: this host's interactive shell already injects it via a codex alias. TUI Agent acceptance remains blocked after two failed real attempts; removing the duplicate is covered by regression, not a third real startup. Startup may still access credentials, MCP/plugins and network, so obtain the user's launch authorization first.
 
 Use different team names and previously nonexistent state roots for the two runtimes:
 
@@ -47,7 +47,7 @@ TUI uses its supported `herdr --session <random> server` flow with a private XDG
 
 Core uses a random `HC_SESSION`, private XDG state/config (`notes=false`) and a private socket. `run --bg --no-parent --no-notify` creates only this Agent. No command changes proxy settings, `~/.codex/.env`, existing runtime configuration or the shared Codex daemon. Agents' normal authentication/config loading remains inherited.
 
-Stop verifies the same server process/socket/binding plus native role, handle, creation generation, cwd/argv and ownership labels (core), or terminal/workspace identity and workspace owner label (TUI). It refuses additional terminals, workspaces, tabs or panes. It ends/removes only the recorded native object, then stops that private server and confirms exit through `/proc` without reconnecting. State and observations are preserved; business cwd/worktrees and shared caches are not removed. Ambiguous outcomes retain the binding and return an error.
+Stop verifies the same server process/socket/binding plus native role, handle, creation generation, cwd/argv and ownership labels (core), or terminal/workspace identity and workspace owner label (TUI). It refuses additional terminals, workspaces, tabs or panes. TUI also requires the recorded Agent foreground PID or the sole original native shell PID/group; an unrecognized replacement or additional foreground process is refused. This permits cleanup of a failed launch that returned to its own empty shell. Native not-found must confirm removal of the terminal/pane, followed by `/proc` exit confirmation for the server and captured ending/Agent identities. Timeouts and transport errors are not absence. PID reuse is distinguished by process start ticks; zombies are terminated programs, not live Agents. State and observations remain, and uncertain outcomes retain the binding. Business cwd/worktrees and shared caches are not removed.
 
 ## Windows App observation through existing SSH
 

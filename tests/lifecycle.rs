@@ -330,3 +330,67 @@ fn owned_transport_server_survives_its_launch_client_exit() {
         std::os::unix::net::UnixStream::connect(r.root.join("transport.sock")).unwrap();
     client.read_to_end(&mut Vec::new()).unwrap();
 }
+
+#[test]
+fn failed_tui_start_can_close_only_its_original_empty_shell() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
+    r.accepted = None;
+    r.agent_process = None;
+    fake.discard_agent().unwrap();
+    engine::stop(&mut r, &fake).unwrap();
+    assert_eq!(r.phase, "stopped");
+    assert_eq!(r.ready, "not-running");
+    assert!(r.binding().is_err());
+}
+
+#[test]
+fn tui_stop_refuses_an_added_or_unconfirmed_foreground_process() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
+    *fake.extra_process.borrow_mut() = true;
+    assert!(engine::stop(&mut r, &fake).is_err());
+    *fake.extra_process.borrow_mut() = false;
+    r.agent_process = None;
+    assert!(engine::stop(&mut r, &fake).is_err());
+    let mutating = fake
+        .calls
+        .borrow()
+        .iter()
+        .any(|args| args == &strings(&["workspace", "close", "w1"]));
+    assert!(!mutating);
+}
+
+#[test]
+fn runtime_specific_daemon_arguments_do_not_duplicate_tui_injection() {
+    let (_dir, r, _fake) = common::launch(Runtime::Tui);
+    let tui_args = tui::launch_args(&r).unwrap();
+    assert!(!tui_args.iter().any(|arg| arg == "--no-daemon"));
+    let (_dir, r, _fake) = common::launch(Runtime::Core);
+    assert_eq!(
+        core::launch_args(&r)
+            .iter()
+            .filter(|arg| *arg == "--no-daemon")
+            .count(),
+        1
+    );
+}
+#[test]
+fn absence_requires_a_native_not_found_not_a_timeout_or_live_response() {
+    use crewmoor::failure::{NativeFailure, require_absent};
+    let missing =
+        NativeFailure::decode(&json!({"error":{"code":"pane_not_found","message":"gone"}}));
+    assert!(missing.to_string().contains("pane_not_found"));
+    assert!(require_absent(Err(Box::new(missing))).is_ok());
+    let timeout = NativeFailure::decode(&json!({"error":{"kind":"timeout"}}));
+    assert!(require_absent(Err(Box::new(timeout))).is_err());
+    assert!(require_absent(Ok(json!({"state":"live"}))).is_err());
+}
+#[test]
+fn claimed_native_removal_with_a_live_process_keeps_binding_unknown() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Core);
+    *fake.leave_actor.borrow_mut() = true;
+    let result = engine::stop(&mut r, &fake);
+    assert!(engine::preserve(&mut r, result).is_err());
+    assert_eq!(r.phase, "unknown-outcome");
+    assert!(r.binding().is_ok());
+    assert!(!process::exited(r.agent_process.as_ref().unwrap()).unwrap());
+}

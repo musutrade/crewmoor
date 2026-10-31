@@ -248,3 +248,34 @@ fn macro_inner_attributes_and_cargo_expect_are_rejected() {
     );
     assert!(config::document("[lints.clippy]\nall='expect'").is_err());
 }
+
+#[test]
+fn cargo_subprocess_inherits_the_explicit_isolated_target_directory() {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .expect("set an absolute per-checkout CARGO_TARGET_DIR for verification");
+    let target = std::path::PathBuf::from(target);
+    assert!(target.is_absolute());
+    let output = gate_metadata_for_target();
+    let actual = std::path::PathBuf::from(output["target_directory"].as_str().unwrap());
+    assert_eq!(
+        actual.canonicalize().unwrap(),
+        target.canonicalize().unwrap()
+    );
+}
+fn gate_metadata_for_target() -> serde_json::Value {
+    serde_json::from_str(
+        &driver::command(&[
+            "metadata".into(),
+            "--locked".into(),
+            "--no-deps".into(),
+            "--format-version=1".into(),
+            "--manifest-path".into(),
+            driver::root()
+                .join("tools/quality/Cargo.toml")
+                .display()
+                .to_string(),
+        ])
+        .unwrap(),
+    )
+    .unwrap()
+}

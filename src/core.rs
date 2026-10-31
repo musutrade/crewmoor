@@ -140,8 +140,10 @@ pub fn readiness(value: &Value) -> String {
         .into()
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    r.guard()?;
     let value = target(r, runner)?;
     exclusive(r, runner)?;
+    prepare_ending(r, &value)?;
     if value["state"].as_str() == Some("live") {
         runner.call(
             r,
@@ -160,10 +162,27 @@ fn finish_terminal(r: &mut Record, runner: &impl Runner) -> Result<()> {
         r,
         &strings(&["rm", r.handle.as_deref().ok_or("missing handle")?]),
     )?;
+    runner.absent(
+        r,
+        &strings(&["get", r.handle.as_deref().ok_or("missing handle")?]),
+    )?;
     r.phase = "terminal-removed".into();
     r.save()?;
     runner.call(r, &strings(&["server", "stop"]))?;
     Ok(())
+}
+fn prepare_ending(r: &mut Record, value: &Value) -> Result<()> {
+    if value["state"].as_str() == Some("live") {
+        crate::engine::verified_process(r)?;
+        let current = process::identity(pid(value, "/pid")?)?;
+        if Some(&current) != r.agent_process.as_ref() {
+            return Err("Agent process changed".into());
+        }
+        r.ending_process = Some(current);
+    } else {
+        r.ending_process = r.agent_process.clone();
+    }
+    r.save()
 }
 fn exclusive(r: &Record, runner: &impl Runner) -> Result<()> {
     let value = runner.call(r, &strings(&["ls", "--all"]))?;

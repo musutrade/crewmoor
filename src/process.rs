@@ -29,3 +29,32 @@ pub fn same(expected: &Identity) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn exited(expected: &Identity) -> Result<bool> {
+    let path = format!("/proc/{}/stat", expected.pid);
+    match fs::read_to_string(path) {
+        Ok(stat) => ended_stat(expected, &stat),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
+}
+pub fn ended_stat(expected: &Identity, stat: &str) -> Result<bool> {
+    if start_ticks(stat)? != expected.start_ticks {
+        return Ok(true);
+    }
+    let (_, rest) = stat.rsplit_once(") ").ok_or("invalid process stat")?;
+    Ok(matches!(rest.split_whitespace().next(), Some("Z" | "X")))
+}
+pub fn wait_exited(expected: &Identity) -> Result<()> {
+    for _ in 0..100 {
+        if exited(expected)? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(format!(
+        "process {} exit unconfirmed; binding retained",
+        expected.pid
+    )
+    .into())
+}

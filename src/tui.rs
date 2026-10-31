@@ -60,7 +60,6 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         "--timeout",
         "30000",
         "--",
-        "--no-daemon",
     ]);
     args.extend(r.config.agent_args.clone());
     Ok(args)
@@ -119,13 +118,75 @@ fn agent_process(info: &Value) -> Option<process::Identity> {
     process::identity(pid(agent, "/pid").ok()?).ok()
 }
 pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    target(r, runner)?;
-    let id = exclusive_workspace(r, runner)?;
-    runner.call(r, &strings(&["workspace", "close", &id]))?;
-    r.phase = "workspace-closed".into();
+    r.guard()?;
+    r.ending_process = Some(stop_guard(r, runner)?);
     r.save()?;
+    let id = exclusive_workspace(r, runner)?;
+    close_workspace(r, &id, runner)?;
     runner.call(r, &strings(&["session", "stop", &r.session, "--json"]))?;
     Ok(())
+}
+fn close_workspace(r: &mut Record, id: &str, runner: &impl Runner) -> Result<()> {
+    runner.call(r, &strings(&["workspace", "close", id]))?;
+    runner.absent(
+        r,
+        &strings(&["pane", "get", r.handle.as_deref().ok_or("missing pane")?]),
+    )?;
+    r.phase = "workspace-closed".into();
+    r.save()
+}
+fn stop_guard(r: &Record, runner: &impl Runner) -> Result<process::Identity> {
+    let handle = r.handle.as_deref().ok_or("missing pane")?;
+    let pane = runner.call(r, &strings(&["pane", "get", handle]))?;
+    verify_pane(r, &pane["pane"])?;
+    let info = runner.call(r, &strings(&["pane", "process-info", "--pane", handle]))?;
+    if empty_shell(&info) {
+        return process::identity(sole_foreground(&info)?);
+    }
+    target(r, runner)?;
+    verify_running(r, &info)
+}
+fn verify_pane(r: &Record, pane: &Value) -> Result<()> {
+    if pane["pane_id"].as_str() != r.handle.as_deref() {
+        return Err("pane changed".into());
+    }
+    if pane["terminal_id"].as_str() != r.terminal_id.as_deref() {
+        return Err("terminal changed".into());
+    }
+    if pane["workspace_id"].as_str() != r.workspace_id.as_deref() {
+        return Err("workspace changed".into());
+    }
+    Ok(())
+}
+fn sole_foreground(info: &Value) -> Result<u32> {
+    let list = info
+        .pointer("/process_info/foreground_processes")
+        .and_then(Value::as_array)
+        .ok_or("foreground unknown")?;
+    if list.len() != 1 {
+        return Err("additional or missing foreground processes".into());
+    }
+    pid(&list[0], "/pid")
+}
+fn empty_shell(info: &Value) -> bool {
+    let shell = pid(info, "/process_info/shell_pid").ok();
+    shell.is_some()
+        && shell == sole_foreground(info).ok()
+        && shell == pid(info, "/process_info/foreground_process_group_id").ok()
+}
+fn verify_running(r: &Record, info: &Value) -> Result<process::Identity> {
+    let expected = r
+        .agent_process
+        .as_ref()
+        .ok_or("Agent process unknown; refusing stop")?;
+    process::same(expected)?;
+    if sole_foreground(info)? != expected.pid {
+        return Err("foreground replaced".into());
+    }
+    if pid(info, "/process_info/foreground_process_group_id")? != expected.pid {
+        return Err("foreground group changed".into());
+    }
+    Ok(expected.clone())
 }
 fn exclusive_workspace(r: &Record, runner: &impl Runner) -> Result<String> {
     let value = runner.call(r, &strings(&["workspace", "list"]))?;

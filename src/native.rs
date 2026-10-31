@@ -15,6 +15,9 @@ use std::{
 pub trait Runner {
     fn call(&self, record: &Record, args: &[String]) -> Result<Value>;
     fn boot(&self, record: &Record) -> Result<Identity>;
+    fn absent(&self, record: &Record, args: &[String]) -> Result<()> {
+        crate::failure::require_absent(self.call(record, args))
+    }
 }
 pub struct Native;
 pub fn strings(args: &[&str]) -> Vec<String> {
@@ -83,11 +86,8 @@ impl Runner for Native {
     fn call(&self, record: &Record, args: &[String]) -> Result<Value> {
         let output = command(record).args(args).output()?;
         if !output.status.success() {
-            return Err(format!(
-                "native request failed (outcome may be unknown): {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
+            let value = serde_json::from_slice::<Value>(&output.stderr).unwrap_or(Value::Null);
+            return Err(crate::failure::NativeFailure::decode(&value).into());
         }
         let value: Value = serde_json::from_slice(&output.stdout)?;
         payload(value, &record.config.runtime)
@@ -115,7 +115,7 @@ pub fn identity_from(value: &Value) -> Result<Identity> {
 }
 pub fn payload(value: Value, runtime: &Runtime) -> Result<Value> {
     if value.get("error").is_some() {
-        return Err("native API error".into());
+        return Err(crate::failure::NativeFailure::decode(&value).into());
     }
     match runtime {
         Runtime::Core => Ok(value),

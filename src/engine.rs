@@ -66,13 +66,17 @@ pub fn stop(record: &mut Record, runner: &impl Runner) -> Result<()> {
 }
 fn confirm_exit(record: &Record) -> Result<()> {
     let expected = record.server.as_ref().ok_or("missing server identity")?;
-    for _ in 0..100 {
-        if !Path::new(&format!("/proc/{}", expected.pid)).exists() {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    for identity in [
+        Some(expected),
+        record.ending_process.as_ref(),
+        record.agent_process.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        process::wait_exited(identity)?;
     }
-    Err("server exit unconfirmed; binding retained".into())
+    Ok(())
 }
 pub fn preserve(record: &mut Record, result: Result<()>) -> Result<()> {
     if let Err(error) = result {
