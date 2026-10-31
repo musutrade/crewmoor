@@ -165,7 +165,7 @@ fn has_suppression(tokens: proc_macro2::TokenStream) -> bool {
 fn attribute_punct(before: bool, ch: char) -> bool {
     ch == '#' || (before && ch == '!')
 }
-fn is_test(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn is_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
         a.path().is_ident("test")
             || (a.path().is_ident("cfg")

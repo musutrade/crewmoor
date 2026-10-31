@@ -3,3 +3,7 @@ name = "quality-fixture"
 version = "0.0.0"
 edition = "2024"
 publish = false
+
+[[bin]]
+name = "root-fixture"
+path = "main.rs"

@@ -18,3 +18,7 @@ mod tests {
 
 #[cfg(test)]
 mod test_support;
+
+#[path = "../external.rs"]
+pub mod external;
+include!("../included.rs");

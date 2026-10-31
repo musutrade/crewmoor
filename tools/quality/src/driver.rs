@@ -1,4 +1,4 @@
-use crate::{Result, config, coverage, source};
+use crate::{Result, config, coverage, inventory::Resolver, source};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -60,6 +60,8 @@ struct Metadata {
 #[derive(Deserialize)]
 struct Package {
     id: String,
+    source: Option<String>,
+    manifest_path: PathBuf,
     targets: Vec<Target>,
 }
 #[derive(Deserialize)]
@@ -84,7 +86,6 @@ fn metadata(manifest: &Path) -> Result<Metadata> {
     let args = vec![
         "metadata".into(),
         "--locked".into(),
-        "--no-deps".into(),
         "--format-version=1".into(),
         "--manifest-path".into(),
         manifest.display().to_string(),
@@ -93,34 +94,21 @@ fn metadata(manifest: &Path) -> Result<Metadata> {
 }
 pub fn inventory(manifest: &Path) -> Result<Inventory> {
     let meta = metadata(manifest)?;
-    let mut files = Inventory::new();
+    let mut resolver = Resolver::default();
     for package in meta.packages {
-        if meta.workspace_members.contains(&package.id) {
-            add_targets(&mut files, package.targets)?;
+        if meta.workspace_members.contains(&package.id) || package.source.is_none() {
+            add_targets(&mut resolver, package.targets)?;
         }
     }
+    let files = resolver.finish();
     if files.is_empty() {
         return Err("empty Rust target inventory".into());
     }
     Ok(files)
 }
-fn add_targets(files: &mut Inventory, targets: Vec<Target>) -> Result<()> {
+fn add_targets(resolver: &mut Resolver, targets: Vec<Target>) -> Result<()> {
     for target in targets {
-        let path = target.src_path.canonicalize()?;
-        let parent = path.parent().ok_or("target has no directory")?;
-        add_sources(files, parent, target.kind == ["test"])?;
-    }
-    Ok(())
-}
-fn add_sources(files: &mut Inventory, directory: &Path, test: bool) -> Result<()> {
-    for entry in walkdir::WalkDir::new(directory)
-        .into_iter()
-        .filter_entry(included)
-    {
-        let path = entry?.into_path();
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            *files.entry(path.canonicalize()?).or_insert(true) &= test;
-        }
+        resolver.target(&target.src_path, target.kind == ["test"])?;
     }
     Ok(())
 }
@@ -136,10 +124,7 @@ pub fn policy(manifest: &Path) -> Result<Inventory> {
 }
 pub fn crap(manifest: &Path, report: &Path) -> Result<()> {
     let files = policy(manifest)?;
-    let coverage = coverage::parse_for(
-        &fs::read_to_string(report)?,
-        &files.keys().cloned().collect::<Vec<_>>(),
-    )?;
+    let coverage = report_for(manifest, report, &files)?;
     let mut count = 0;
     for (path, test) in files {
         let functions = source::analyze(&fs::read_to_string(&path)?, test)?;
@@ -149,6 +134,17 @@ pub fn crap(manifest: &Path, report: &Path) -> Result<()> {
         return Err("no functions measured".into());
     }
     Ok(())
+}
+fn report_for(
+    manifest: &Path,
+    report: &Path,
+    files: &Inventory,
+) -> Result<BTreeMap<PathBuf, coverage::Lines>> {
+    coverage::parse_scoped(
+        &fs::read_to_string(report)?,
+        &files.keys().cloned().collect::<Vec<_>>(),
+        &excluded_sources(manifest)?,
+    )
 }
 pub fn plan(manifest: &Path, report: &Path) -> Vec<Vec<String>> {
     let manifest = manifest.display().to_string();
@@ -167,6 +163,7 @@ pub fn plan(manifest: &Path, report: &Path) -> Vec<Vec<String>> {
         "llvm-cov".into(),
         "--no-rustc-wrapper".into(),
         "--no-default-ignore-filename-regex".into(),
+        "--include-build-script".into(),
     ];
     cov.extend(common);
     cov.extend([
@@ -217,4 +214,40 @@ pub fn verify_with(run: impl Fn(&Path) -> Result<()>) -> Result<()> {
         run(&root().join(manifest))?;
     }
     business(&root())
+}
+
+fn excluded_sources(manifest: &Path) -> Result<Vec<PathBuf>> {
+    let meta = metadata(manifest)?;
+    let mut roots = compiler_sources()?;
+    for package in meta.packages {
+        if package.source.is_some() {
+            roots.push(
+                package
+                    .manifest_path
+                    .parent()
+                    .ok_or("dependency has no directory")?
+                    .canonicalize()?,
+            );
+        }
+    }
+    Ok(roots)
+}
+fn compiler_sources() -> Result<Vec<PathBuf>> {
+    let sysroot = rustc_output("--print=sysroot")?;
+    let version = rustc_output("-vV")?;
+    let hash = version
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .ok_or("missing compiler commit")?;
+    Ok(vec![
+        PathBuf::from(sysroot.trim()).join("lib/rustlib/src/rust"),
+        PathBuf::from("/rustc").join(hash).join("library"),
+    ])
+}
+fn rustc_output(arg: &str) -> Result<String> {
+    let output = Command::new("rustc").arg(arg).output()?;
+    if !output.status.success() {
+        return Err("rustc identity query failed".into());
+    }
+    Ok(String::from_utf8(output.stdout)?)
 }

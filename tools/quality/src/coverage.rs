@@ -43,24 +43,56 @@ pub fn parse(text: &str) -> Result<BTreeMap<PathBuf, Lines>> {
     parse_for(text, &[])
 }
 pub fn parse_for(text: &str, wanted: &[PathBuf]) -> Result<BTreeMap<PathBuf, Lines>> {
+    parse_scoped(text, wanted, &[])
+}
+pub fn parse_scoped(
+    text: &str,
+    wanted: &[PathBuf],
+    excluded: &[PathBuf],
+) -> Result<BTreeMap<PathBuf, Lines>> {
     let report: Report = serde_json::from_str(text)?;
     if report.kind != "llvm.coverage.json.export" || report.data.is_empty() {
         return Err("missing LLVM coverage data".into());
     }
     let mut files = BTreeMap::new();
     for data in report.data {
-        for file in data
-            .files
-            .into_iter()
-            .filter(|f| wanted.is_empty() || wanted.contains(&f.filename))
-        {
-            merge_file(&mut files, file)?;
-        }
+        merge_data(&mut files, data, wanted, excluded)?;
     }
     if files.is_empty() {
         return Err("empty coverage file inventory".into());
     }
     Ok(files)
+}
+fn merge_data(
+    files: &mut BTreeMap<PathBuf, Lines>,
+    data: Data,
+    wanted: &[PathBuf],
+    excluded: &[PathBuf],
+) -> Result<()> {
+    for file in data.files {
+        if selected(&file.filename, wanted, excluded)? {
+            merge_file(files, file)?;
+        }
+    }
+    Ok(())
+}
+fn selected(path: &Path, wanted: &[PathBuf], excluded: &[PathBuf]) -> Result<bool> {
+    let actual = if path.exists() {
+        path.canonicalize()?
+    } else {
+        path.to_path_buf()
+    };
+    if wanted.is_empty() || wanted.contains(&actual) {
+        return Ok(true);
+    }
+    if excluded.iter().any(|root| actual.starts_with(root)) {
+        return Ok(false);
+    }
+    Err(format!(
+        "coverage source missing from AST inventory: {}",
+        path.display()
+    )
+    .into())
 }
 fn merge_file(files: &mut BTreeMap<PathBuf, Lines>, file: File) -> Result<()> {
     let path = file.filename.canonicalize()?;

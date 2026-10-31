@@ -11,6 +11,9 @@ pub fn environment(values: impl Iterator<Item = (String, String)>) -> Result<()>
     Ok(())
 }
 fn forbidden_environment(key: &str, value: &str) -> bool {
+    if key == "RUSTUP_TOOLCHAIN" {
+        return !(value == "stable" || value.starts_with("stable-"));
+    }
     if key.ends_with("RUSTFLAGS") {
         return value.split([' ', '\u{1f}']).any(forbidden_flag);
     }
@@ -152,10 +155,19 @@ pub fn custom_home(home: &Path) -> Result<()> {
     Ok(())
 }
 fn cargo_config(root: &Path) -> Result<()> {
+    ancestor_clippy(root)?;
     for name in [".cargo/config", ".cargo/config.toml"] {
         let path = root.join(name);
         if path.is_file() {
             document(&fs::read_to_string(path)?)?;
+        }
+    }
+    Ok(())
+}
+pub fn ancestor_clippy(root: &Path) -> Result<()> {
+    for name in ["clippy.toml", ".clippy.toml"] {
+        if root.join(name).is_file() {
+            return Err("ancestor Clippy configuration is forbidden".into());
         }
     }
     Ok(())
