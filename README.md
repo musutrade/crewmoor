@@ -63,3 +63,7 @@ Runtime capabilities and semantics differ. Support for either integration, indiv
 CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
 
 Design discussion starts in the repository issues. There are no installation or usage instructions yet because the project is still at the planning stage.
+
+## Quality gates
+
+Rust 质量门禁的规则、度量定义与验证限制见 [docs/quality-gates.md](docs/quality-gates.md)。
