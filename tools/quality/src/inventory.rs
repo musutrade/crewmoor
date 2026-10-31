@@ -124,19 +124,28 @@ impl Edges {
         if let Some((_, items)) = &item.content {
             return self.inline(item, items, explicit, test);
         }
-        let file = self.outline(item, explicit)?;
+        let (file, is_explicit) = self.outline(item, explicit)?;
+        let dir = parent(&file)?;
+        // Unlike ordinary foo.rs modules, #[path] modules resolve children
+        // directly beside the selected source file.
+        let modules = if is_explicit {
+            dir.clone()
+        } else {
+            module_dir(&file)?
+        };
         self.next.push(Context {
-            modules: module_dir(&file)?,
-            paths: parent(&file)?,
+            modules,
+            paths: dir,
             file,
             test,
         });
         Ok(())
     }
-    fn outline(&self, item: &syn::ItemMod, explicit: Option<PathBuf>) -> Result<PathBuf> {
+    fn outline(&self, item: &syn::ItemMod, explicit: Option<PathBuf>) -> Result<(PathBuf, bool)> {
         match explicit {
-            Some(path) => Ok(self.context.paths.join(path).canonicalize()?),
-            None => ordinary_module(&self.context.modules, &item.ident.unraw().to_string()),
+            Some(path) => Ok((self.context.paths.join(path).canonicalize()?, true)),
+            None => ordinary_module(&self.context.modules, &item.ident.unraw().to_string())
+                .map(|file| (file, false)),
         }
     }
     fn inline(

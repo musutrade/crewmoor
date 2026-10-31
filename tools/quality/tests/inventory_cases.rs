@@ -188,3 +188,31 @@ fn uncovered_outside_function_fails_crap() {
     let error = driver::crap(&manifest, &report).unwrap_err().to_string();
     assert!(error.contains("CRAP 20 > 10"), "{error}");
 }
+
+#[test]
+fn explicit_module_children_are_beside_the_selected_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let manifest = package(
+        temp.path(),
+        "#[path=\"custom/thing.rs\"] pub mod foo;\npub mod ordinary;\n",
+    );
+    fs::create_dir_all(temp.path().join("src/custom")).unwrap();
+    fs::create_dir_all(temp.path().join("src/ordinary")).unwrap();
+    fs::write(temp.path().join("src/custom/thing.rs"), "pub mod child;\n").unwrap();
+    let explicit_child = temp.path().join("src/custom/child.rs");
+    fs::write(&explicit_child, "pub fn explicit_value() -> u8 { 1 }\n").unwrap();
+    fs::write(temp.path().join("src/ordinary.rs"), "pub mod child;\n").unwrap();
+    let ordinary_child = temp.path().join("src/ordinary/child.rs");
+    fs::write(&ordinary_child, "pub fn ordinary_value() -> u8 { 2 }\n").unwrap();
+    let files = driver::inventory(&manifest).unwrap();
+    assert_eq!(files.get(&explicit_child), Some(&false));
+    assert_eq!(files.get(&ordinary_child), Some(&false));
+    assert!(driver::policy(&manifest).is_ok());
+    driver::command(&[
+        "check".into(),
+        "--locked".into(),
+        "--manifest-path".into(),
+        manifest.display().to_string(),
+    ])
+    .unwrap();
+}
