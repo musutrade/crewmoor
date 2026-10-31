@@ -4,6 +4,8 @@ mod cleanup_checks;
 mod common;
 #[path = "support/environment_checks.rs"]
 mod environment_checks;
+#[path = "support/schema_checks.rs"]
+mod schema_checks;
 use crewmoor::{
     config::{self, Runtime},
     core, engine,

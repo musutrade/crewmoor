@@ -57,15 +57,16 @@ fn instance_status(r: &Record, runner: &impl Runner) -> Result<Value> {
     }
     Ok(value)
 }
-fn verify_holders(r: &Record, runner: &impl Runner) -> Result<()> {
+fn verify_holders(r: &Record, runner: &impl Runner) -> Result<usize> {
     let expected = r
         .core_holders
         .as_ref()
         .ok_or("holder ownership unknown; refusing stop/query")?;
-    if *expected != holders::read(&instance_status(r, runner)?)? {
+    let current = holders::read(&instance_status(r, runner)?)?;
+    if *expected != current {
         return Err("holder identity changed; refusing stop/query".into());
     }
-    Ok(())
+    Ok(current.len())
 }
 pub fn launch_args(r: &Record) -> Vec<String> {
     let mut args = strings(&[
@@ -115,8 +116,11 @@ fn bind_generation(r: &mut Record, value: &Value) -> Result<()> {
     r.save()
 }
 fn fetch_target(r: &Record, runner: &impl Runner) -> Result<Value> {
-    verify_holders(r, runner)?;
+    if verify_holders(r, runner)? != 1 {
+        return Err("target requires one recorded current holder".into());
+    }
     let handle = r.handle.as_deref().ok_or("missing terminal handle")?;
+    exclusive(r, runner)?;
     let value = runner.call(r, &strings(&["get", handle]))?;
     Ok(value)
 }
@@ -151,17 +155,6 @@ fn verify_command(r: &Record, value: &Value) -> Result<()> {
     }
     if value["argv"] != serde_json::to_value(r.config.argv())? {
         return Err("program changed".into());
-    }
-    verify_terminal_holder(r, value)
-}
-fn verify_terminal_holder(r: &Record, value: &Value) -> Result<()> {
-    let holder = r
-        .core_holders
-        .as_ref()
-        .and_then(|list| list.first())
-        .ok_or("terminal holder unknown")?;
-    if value["holder"].as_str() != Some(&holder.instance) {
-        return Err("terminal holder changed".into());
     }
     Ok(())
 }

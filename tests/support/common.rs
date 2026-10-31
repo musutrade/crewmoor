@@ -88,10 +88,11 @@ impl Fake {
         };
         json!({"address":"t7","name":r.config.role,"created_ms":42,"cwd":r.config.cwd,
             "argv":r.config.argv(),"state":state,"pid":child_pid(&self.agent),
-            "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"reported":false,"holder":"owned-holder"})
+            "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},"reported":false,
+            "screen":"exact","cols":80,"rows":24})
     }
     pub fn agent(&self, r: &Record) -> Value {
-        json!({"agent":{"pane_id":"w1:p1","terminal_id":"term-own","agent":"codex","name":r.config.role,"interactive_ready":true,"agent_status":"idle"}})
+        json!({"agent":{"pane_id":"w1:p1","terminal_id":"term-own","agent":"codex","name":r.config.role,"interactive_ready":true,"agent_status":"idle","workspace_id":"w1","tab_id":"w1:t1","focused":false,"revision":1}})
     }
     fn core(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.first().map(String::as_str) {
@@ -122,7 +123,7 @@ impl Fake {
         )
     }
     fn get_core(&self, r: &Record) -> Result<Value> {
-        if *self.removed.borrow() {
+        if *self.removed.borrow() || !*self.created.borrow() {
             return Err(missing("not_found"));
         }
         Ok(self.terminal(r))
@@ -169,11 +170,13 @@ impl Fake {
             return Err(missing("pane_not_found"));
         }
         if args.get(1).map(String::as_str) == Some("get") {
-            return Ok(
-                json!({"pane":{"pane_id":"w1:p1","terminal_id":"term-own","workspace_id":"w1"}}),
-            );
+            let pane = self.pane_info();
+            return Ok(json!({"pane":pane}));
         }
         Ok(self.processes())
+    }
+    fn pane_info(&self) -> Value {
+        json!({"pane_id":"w1:p1","terminal_id":"term-own","workspace_id":"w1","tab_id":"w1:t1","focused":false,"agent_status":"unknown","revision":1})
     }
     fn processes(&self) -> Value {
         let shell = child_pid(&self.shell);
@@ -186,7 +189,7 @@ impl Fake {
         if *self.extra_process.borrow() {
             processes.push(json!({"name":"other","pid":1}));
         }
-        json!({"process_info":{"shell_pid":shell,"foreground_process_group_id":foreground,"foreground_processes":processes}})
+        json!({"process_info":{"pane_id":"w1:p1","shell_pid":shell,"foreground_process_group_id":foreground,"foreground_processes":processes}})
     }
     fn workspace(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.get(1).map(String::as_str) {
@@ -203,9 +206,9 @@ impl Fake {
                 }
                 *self.shell.borrow_mut() = Some(spawn()?);
                 *self.created.borrow_mut() = true;
-                Ok(
-                    json!({"workspace":{"workspace_id":"w1"},"root_pane":{"pane_id":"w1:p1","terminal_id":"term-own"}}),
-                )
+                let workspace = self.workspaces(r)["workspaces"][0].clone();
+                let pane = self.pane_info();
+                Ok(json!({"workspace":workspace,"root_pane":pane}))
             }
         }
     }
@@ -213,7 +216,7 @@ impl Fake {
         let mut workspaces = Vec::new();
         if *self.created.borrow() && !*self.closed.borrow() {
             workspaces
-                .push(json!({"workspace_id":"w1","label":r.owner,"pane_count":1,"tab_count":1}));
+                .push(json!({"workspace_id":"w1","label":r.owner,"pane_count":1,"tab_count":1,"number":1,"focused":false,"active_tab_id":"w1:t1","agent_status":"unknown"}));
         }
         if *self.extra.borrow() {
             workspaces.push(json!({"workspace_id":"unowned"}));
@@ -235,8 +238,11 @@ impl Fake {
             return Ok(json!({}));
         }
         let holders = self.holders();
+        let live = self.live_count();
+        let finished =
+            usize::from(*self.created.borrow() && *self.killed.borrow() && !*self.removed.borrow());
         Ok(
-            json!({"version":"0.1.15","core":{"id":"own-core"},"pid":child_pid(&self.child),"holder":holders.first(),"holders":holders}),
+            json!({"version":"0.1.15","core":{"id":"own-core","name":"fixture"},"pid":child_pid(&self.child),"holder":holders.first(),"holders":holders,"uptime_ms":1,"live":live,"finished":finished}),
         )
     }
     fn holders(&self) -> Vec<Value> {
@@ -247,12 +253,17 @@ impl Fake {
             } else {
                 "owned-holder"
             };
-            list.push(json!({"pid":pid,"instance":instance,"current":true,"terminals":1}));
+            let terminals = self.live_count();
+            list.push(json!({"pid":pid,"instance":instance,"current":true,"terminals":terminals}));
             if *self.multiple_holders.borrow() {
-                list.push(json!({"pid":pid,"instance":"other","current":false}));
+                list.push(json!({"pid":pid,"instance":"other","current":false,"terminals":0}));
             }
         }
         list
+    }
+    fn live_count(&self) -> usize {
+        usize::from(*self.created.borrow() && !*self.killed.borrow() && !*self.removed.borrow())
+            + usize::from(*self.extra.borrow())
     }
     fn close_endpoint(&self, r: &Record) -> Result<()> {
         if !*self.leave_socket.borrow() {
