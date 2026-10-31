@@ -13,11 +13,14 @@ pub fn command(argv: &[String]) -> Result<String> {
     if argv.is_empty() {
         return Err("empty launch argv".into());
     }
+    if !std::path::Path::new(&argv[0]).is_absolute() {
+        return Err("startup executable must be absolute".into());
+    }
     let words: Vec<String> = argv
         .iter()
         .map(|value| word(value))
         .collect::<Result<_>>()?;
-    Ok(format!("command {}", words.join(" ")))
+    Ok(words.join(" "))
 }
 pub fn args(r: &Record) -> Result<Vec<String>> {
     let pane = r.handle.clone().ok_or("missing pane")?;

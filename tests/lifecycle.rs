@@ -8,6 +8,8 @@ mod environment_checks;
 mod schema_checks;
 #[path = "support/start_only_checks.rs"]
 mod start_only_checks;
+#[path = "support/stop_request_checks.rs"]
+mod stop_request_checks;
 use crewmoor::{
     config::{self, Runtime},
     core, engine,
@@ -330,11 +332,13 @@ fn owned_transport_server_survives_its_launch_client_exit() {
 }
 
 #[test]
-fn failed_tui_start_can_close_only_its_original_empty_shell() {
-    let (_dir, mut r, fake) = common::launch(Runtime::Tui);
-    r.accepted = None;
-    r.agent_process = None;
-    fake.discard_agent().unwrap();
+fn withheld_tui_request_can_close_only_its_original_empty_shell() {
+    let (dir, config, fake) = common::setup(Runtime::Tui);
+    *fake.omit_foreground.borrow_mut() = true;
+    let mut r = engine::launch(config, &dir.path().join("i"), &fake).unwrap();
+    assert!(!r.request_issued);
+    assert!(r.agent_process.is_none());
+    *fake.omit_foreground.borrow_mut() = false;
     engine::stop(&mut r, &fake).unwrap();
     assert_eq!(r.phase, "stopped");
     assert!(!r.process_verified);

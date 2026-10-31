@@ -225,7 +225,9 @@ fn shell_quoting_preserves_both_agent_argv_including_control_bytes_and_metachara
         assert!(!line.contains('\n'));
         assert!(!line.contains('\t'));
         assert!(!line.contains('\u{3}'));
-        let script = format!("alias codex=false; alias claude=false;\n{line}");
+        let script = format!(
+            "alias codex=false; alias claude=false; function command() {{ return 97; }};\n{line}"
+        );
         let status = Command::new("/bin/bash")
             .args([
                 "--noprofile",

@@ -42,6 +42,7 @@ fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.save()
 }
 fn start_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    let args = launch_args(r)?;
     if !can_launch(r, runner)? {
         r.request_error = Some("startup withheld: original empty shell unconfirmed".into());
         return r.save();
@@ -49,8 +50,12 @@ fn start_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.phase = "agent-request-intent".into();
     r.guard()?;
     r.request_issued = true;
-    r.save()?;
-    match runner.call(r, &launch_args(r)?) {
+    let saved = r.save();
+    if saved.is_err() {
+        r.request_issued = false;
+    }
+    saved?;
+    match runner.call(r, &args) {
         Ok(value) => {
             r.accepted = Some(true);
             r.observations.push(value);
@@ -202,10 +207,26 @@ fn stop_guard(r: &Record, runner: &impl Runner) -> Result<process::Identity> {
     let info = process_info(r, runner)?;
     verify_original_shell(r, &info)?;
     if empty_shell(&info) {
-        return verify_shell(r, &info);
+        return verify_unrequested_shell(r, &info);
     }
+    require_verified_request(r)?;
     target(r, runner)?;
     verify_running(r, &info)
+}
+fn require_verified_request(r: &Record) -> Result<()> {
+    if !r.request_issued || !r.process_verified || r.agent_process.is_none() {
+        return Err("requested Agent process unconfirmed; refusing stop".into());
+    }
+    Ok(())
+}
+fn verify_unrequested_shell(r: &Record, info: &Value) -> Result<process::Identity> {
+    if r.request_issued || r.agent_process.is_some() {
+        return Err(
+            "startup request has no confirmed foreground Agent; refusing empty-shell cleanup"
+                .into(),
+        );
+    }
+    verify_shell(r, info)
 }
 fn verify_original_shell(r: &Record, info: &Value) -> Result<()> {
     let original = r

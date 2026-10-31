@@ -57,10 +57,12 @@ pub struct Fake {
     pub omit_name: RefCell<bool>,
     pub null_name: RefCell<bool>,
     pub missing_process: RefCell<bool>,
+    pub omit_foreground: RefCell<bool>,
     pub null_process: RefCell<bool>,
     pub omit_pid: RefCell<bool>,
     pub minimal_terminal: RefCell<bool>,
     pub ambiguous_start: RefCell<bool>,
+    pub failed_start: RefCell<bool>,
 }
 fn spawn(cwd: &Path) -> Result<Child> {
     use std::io::Read;
@@ -230,6 +232,11 @@ impl Fake {
         Ok(self.processes(r))
     }
     fn start_tui(&self, r: &Record) -> Result<Value> {
+        let saved = Record::load(&r.root)?;
+        assert!(saved.request_issued);
+        if *self.failed_start.borrow() {
+            return Ok(Value::Null);
+        }
         *self.agent.borrow_mut() = Some(spawn(&r.config.cwd)?);
         if *self.ambiguous_start.borrow() {
             return Err(Box::new(crewmoor::failure::NativeFailure {
@@ -264,7 +271,14 @@ impl Fake {
         if *self.extra_process.borrow() {
             processes.push(json!({"name":"other","pid":1}));
         }
-        json!({"process_info":{"pane_id":"w1:p1","shell_pid":shell,"foreground_process_group_id":foreground,"foreground_processes":processes}})
+        let mut value = json!({"process_info":{"pane_id":"w1:p1","shell_pid":shell,"foreground_process_group_id":foreground,"foreground_processes":processes}});
+        if *self.omit_foreground.borrow() {
+            value["process_info"]
+                .as_object_mut()
+                .unwrap()
+                .remove("foreground_processes");
+        }
+        value
     }
     fn workspace(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.get(1).map(String::as_str) {

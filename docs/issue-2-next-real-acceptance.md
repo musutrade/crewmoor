@@ -1,6 +1,6 @@
 # Bounded startup acceptance — exact revised audit pending
 
-Batch `crewmoor-issue-2-001`. The user retained authorization for one new isolated TUI Codex and one new isolated core Codex startup/check/owned stop. Neither attempt has been consumed. Rejected v6/v7 must not run. Execute only after independent pass for the exact simplified candidate and the v8 artifact/config hashes in the external `next-real-plan.json`. Implementation now supports Codex and Claude, but this authorization does not expand to Claude or four attempts.
+Batch `crewmoor-issue-2-001`. The user retained authorization for one new isolated TUI Codex and one new isolated core Codex startup/check/owned stop. Neither attempt has been consumed. Rejected v6/v7/v8 must not run. Execute only after independent pass for the exact revised candidate and the v9 artifact/config hashes in the external `next-real-plan.json`. Implementation supports Codex and Claude, but this authorization does not expand to Claude or four attempts.
 
 The minimum acceptance is: report request admission accurately, prove actual Agent PID/start/executable/cwd, locate instance/logical-role/native handle and safely end only owned resources. Ready/idle/working/done and App Agents membership are not criteria; Agent feedback belongs to another issue. No feedback protocol or messages are implemented.
 
@@ -18,18 +18,18 @@ Before execution verify all exact hashes/versions, unused state roots/team bindi
 With artifact directory `/home/gem/.local/state/crewmoor/crewmoor-issue-2-001`:
 
 ```text
-.../crewmoor-run-v8 launch .../tui-r3.toml /tmp/cm-i2-tui3
-.../crewmoor-run-v8 inspect /tmp/cm-i2-tui3
-.../crewmoor-evidence-v8 environment-evidence /tmp/cm-i2-tui3
-.../crewmoor-run-v8 stop /tmp/cm-i2-tui3
+.../crewmoor-run-v9 launch .../tui-r3.toml /tmp/cm-i2-tui3
+.../crewmoor-run-v9 inspect /tmp/cm-i2-tui3
+.../crewmoor-evidence-v9 environment-evidence /tmp/cm-i2-tui3
+.../crewmoor-run-v9 stop /tmp/cm-i2-tui3
 
-.../crewmoor-run-v8 launch .../core-r2.toml /tmp/cm-i2-core2
-.../crewmoor-run-v8 inspect /tmp/cm-i2-core2
-.../crewmoor-evidence-v8 environment-evidence /tmp/cm-i2-core2
-.../crewmoor-run-v8 stop /tmp/cm-i2-core2
+.../crewmoor-run-v9 launch .../core-r2.toml /tmp/cm-i2-core2
+.../crewmoor-run-v9 inspect /tmp/cm-i2-core2
+.../crewmoor-evidence-v9 environment-evidence /tmp/cm-i2-core2
+.../crewmoor-run-v9 stop /tmp/cm-i2-core2
 ```
 
-Each launch has one startup mutation. TUI now uses official `pane run` on its proved original empty Bash shell, with one Rust-encoded `command <absolute executable> <argv>` string. Bash hex quoting transports whitespace/quotes/control bytes/metacharacters as data. Codex receives `--no-daemon` exactly once and `--no-alt-screen`; no opening task/prompt. Core uses direct argv with that same canonical executable. There is no Agent ready wait or state polling. Native CLI calls have a 10-second limit plus at most one second to reap a timed-out owned CLI child.
+Each launch has one startup mutation. TUI uses official `pane run` on its proved original empty Bash shell, with one Rust-encoded `<absolute executable> <argv>` string. It directly invokes the canonical path without `command`, PATH or alias resolution. Bash hex quoting transports whitespace/quotes/control bytes/metacharacters as data. Local shell configuration remains trusted, and kernel executable/cwd/foreground checks independently prove the resulting process. Codex receives `--no-daemon` exactly once and `--no-alt-screen`; no opening task/prompt. Core uses direct argv with that same canonical executable. There is no Agent ready wait or state polling. Native CLI calls have a 10-second limit plus at most one second to reap a timed-out owned CLI child.
 
 Admission and process are separate: TUI exit 0/empty stdout acknowledges input admission only; a failure/timeout leaves `accepted=null` and never resends. One process observation may still prove the exact Agent. If it does not, report unknown/unconfirmed; do not add waits, loops, another process or another launch. Optional native display fields do not become fake identity or semantic state.
 
@@ -37,7 +37,7 @@ The read-only Rust evidence probe reads only guarded receipt-owned PIDs, verifie
 
 ## End only proved resources
 
-Stop requires the receipt's server/socket/binding, exact native ids/owner and exclusive inventory. Missing original shell, Agent PID/foreground or holder proof refuses; no discovery/adoption during stop. Unknown admission does not by itself prevent stop when all ownership/process evidence is complete. Missing optional display name does not weaken or block that proof.
+Stop requires the receipt's server/socket/binding, exact native ids/owner and exclusive inventory. Missing original shell, Agent PID/foreground or holder proof refuses; no discovery/adoption during stop. Unknown admission does not by itself prevent stop when all ownership/process evidence is complete. Missing optional display name does not weaken or block that proof. After TUI request intent is persisted and the call begins, a missing/unverified/disappeared Agent or empty shell refuses cleanup and retains the recorded fingerprint/binding. Previously observed Agent exit is conservatively refused too; no separate known-exit cleanup path is implemented. Empty-shell cleanup is limited to a never-issued request with no recorded Agent and a fully verified original shell. Argument construction failures remain known-unsent; native call failures never authorize resend.
 
 Success must show native target not-found, actual server/Agent/ending/original-shell/holder exit as applicable, API socket absence and binding release. Preserve state/logs. A failure without any target may end only its verified empty inventory using recorded server/socket/container/holder identity. Unknown metadata, replacement, extra resources or timeout preserves binding/evidence and is reported; no force cleanup or retry.
 
