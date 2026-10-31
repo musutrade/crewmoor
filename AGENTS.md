@@ -28,7 +28,9 @@ Herdr TUI 的 LLM 索引当前位于站点根路径，不要猜成 `/tui/llms.tx
 
 Agent 的所有状态以 Agent hooks 提供的状态为准；直接复用 Codex、Claude 已有的 hooks 能力，不从终端输出、进程存活或容器状态推断 Agent 状态，也不为不同容器另建状态适配。hooks 未提供状态时只报告未知，不补猜状态。容器句柄、进程启动与退出事实仅用于资源定位和安全结束，不代替 hooks 状态。
 
-hooks 状态接入由单独 Issue 处理；Issue #2 只负责启动、定位和自有资源安全结束，不增加 ready 门槛、状态反馈协议或 hooks 实现。
+只记录实际版本的 hooks 能提供且语义明确的状态，不为凑齐状态增加容器推断或 ready 门槛。Agent 的业务进展和完成结果仍由 Agent/skill 主动反馈；会话启动、轮次结束或进程退出不等于业务完成。
+
+hooks 状态接入见 [Issue #4](https://github.com/musutrade/crewmoor/issues/4)；Issue #2 只负责启动、定位和自有资源安全结束，不增加 ready 门槛、状态反馈协议或 hooks 实现。
 
 ## 已有实施约束
 
