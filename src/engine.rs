@@ -38,7 +38,7 @@ pub fn inspect(record: &mut Record, runner: &impl Runner) -> Result<()> {
     record.guard()?;
     match record.config.runtime {
         Runtime::Core => {
-            let value = core::target(record, runner)?;
+            let value = core::inspect_target(record, runner)?;
             core::observe(record, value)?;
         }
         Runtime::Tui => {

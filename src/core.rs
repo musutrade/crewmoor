@@ -24,11 +24,6 @@ pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     r.observations.push(value.clone());
     r.save()?;
     r.handle = Some(text(&value, "/address")?);
-    r.created_ms = Some(
-        value["created_ms"]
-            .as_u64()
-            .ok_or("missing creation identity")?,
-    );
     r.save()
 }
 pub fn launch_args(r: &Record) -> Vec<String> {
@@ -53,16 +48,51 @@ pub fn launch_args(r: &Record) -> Vec<String> {
     args
 }
 pub fn target(r: &Record, runner: &impl Runner) -> Result<Value> {
+    let value = fetch_target(r, runner)?;
+    verify_target(r, &value)?;
+    Ok(value)
+}
+pub fn inspect_target(r: &mut Record, runner: &impl Runner) -> Result<Value> {
+    let value = fetch_target(r, runner)?;
+    verify_identity(r, &value)?;
+    bind_generation(r, &value)?;
+    verify_target(r, &value)?;
+    Ok(value)
+}
+fn bind_generation(r: &mut Record, value: &Value) -> Result<()> {
+    if r.created_ms.is_some() {
+        return Ok(());
+    }
+    if r.accepted != Some(true) {
+        return Err("unconfirmed request cannot establish a new generation".into());
+    }
+    r.created_ms = Some(
+        value["created_ms"]
+            .as_u64()
+            .ok_or("missing creation identity")?,
+    );
+    r.save()
+}
+fn fetch_target(r: &Record, runner: &impl Runner) -> Result<Value> {
     let value = status(r, runner)?;
     if r.container_id.as_deref() != Some(text(&value, "/core/id")?.as_str()) {
         return Err("core instance changed".into());
     }
     let handle = r.handle.as_deref().ok_or("missing terminal handle")?;
     let value = runner.call(r, &strings(&["get", handle]))?;
-    verify_target(r, &value)?;
     Ok(value)
 }
 pub fn verify_target(r: &Record, value: &Value) -> Result<()> {
+    verify_identity(r, value)?;
+    if value["created_ms"].as_u64() != r.created_ms {
+        return Err("terminal generation changed".into());
+    }
+    if r.created_ms.is_none() {
+        return Err("terminal generation unknown".into());
+    }
+    Ok(())
+}
+fn verify_identity(r: &Record, value: &Value) -> Result<()> {
     if Some(text(value, "/address")?) != r.handle {
         return Err("terminal handle mismatch".into());
     }
@@ -77,9 +107,6 @@ pub fn verify_target(r: &Record, value: &Value) -> Result<()> {
 fn verify_command(r: &Record, value: &Value) -> Result<()> {
     if value["name"].as_str() != Some(&r.config.role) {
         return Err("role mismatch".into());
-    }
-    if value["created_ms"].as_u64() != r.created_ms {
-        return Err("terminal generation changed".into());
     }
     if value["cwd"].as_str() != r.config.cwd.to_str() {
         return Err("cwd mismatch".into());

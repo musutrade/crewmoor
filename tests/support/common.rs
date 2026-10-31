@@ -65,7 +65,10 @@ impl Fake {
     fn core(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.first().map(String::as_str) {
             Some("server") => self.server(args),
-            Some("run" | "get") => Ok(self.terminal(r)),
+            Some("run") => Ok(
+                json!({"address":"t7","agent":"codex","cwd":r.config.cwd,"name":r.config.role,"state":"live","turn":0}),
+            ),
+            Some("get") => Ok(self.terminal(r)),
             Some("ls") => Ok(self.inventory(r)),
             Some("kill") => {
                 *self.killed.borrow_mut() = true;

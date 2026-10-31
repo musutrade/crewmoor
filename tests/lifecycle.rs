@@ -255,3 +255,24 @@ fn tui_transport_startup_failure_retains_an_unknown_receipt() {
     assert_eq!(receipt.ready, "unknown");
     assert!(!receipt.socket().exists());
 }
+
+#[test]
+fn compact_core_launch_reply_can_be_completed_only_from_matching_owned_terminal() {
+    let (_dir, mut r, fake) = common::launch(Runtime::Core);
+    assert_eq!(r.created_ms, Some(42));
+    r.created_ms = None;
+    assert!(core::target(&r, &fake).is_err());
+    r.accepted = None;
+    assert!(core::inspect_target(&mut r, &fake).is_err());
+    r.accepted = Some(true);
+    core::inspect_target(&mut r, &fake).unwrap();
+    assert_eq!(r.created_ms, Some(42));
+    assert_eq!(
+        fake.calls
+            .borrow()
+            .iter()
+            .filter(|args| args.first().map(String::as_str) == Some("run"))
+            .count(),
+        1
+    );
+}
