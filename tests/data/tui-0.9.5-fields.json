@@ -1,0 +1,125 @@
+{
+  "version": "herdr 0.9.5",
+  "schema_sha256": "9e2af207e9aa8183d4aeca5fde9cc48e7909bb40cdbd7cf21608a6d3ea78075b",
+  "contracts": {
+    "AgentInfo": {
+      "required": [
+        "terminal_id",
+        "agent_status",
+        "workspace_id",
+        "tab_id",
+        "pane_id",
+        "focused",
+        "revision"
+      ],
+      "properties": [
+        "agent",
+        "agent_session",
+        "agent_status",
+        "completion_seq",
+        "cwd",
+        "display_agent",
+        "focused",
+        "foreground_cwd",
+        "interactive_ready",
+        "launch_pending",
+        "name",
+        "pane_id",
+        "revision",
+        "screen_detection_skipped",
+        "state_change_seq",
+        "state_labels",
+        "tab_id",
+        "terminal_id",
+        "terminal_title",
+        "terminal_title_stripped",
+        "title",
+        "tokens",
+        "workspace_id"
+      ]
+    },
+    "PaneInfo": {
+      "required": [
+        "pane_id",
+        "terminal_id",
+        "workspace_id",
+        "tab_id",
+        "focused",
+        "agent_status",
+        "revision"
+      ],
+      "properties": [
+        "agent",
+        "agent_session",
+        "agent_status",
+        "cwd",
+        "display_agent",
+        "focused",
+        "foreground_cwd",
+        "label",
+        "pane_id",
+        "restore_error",
+        "revision",
+        "scroll",
+        "state_labels",
+        "tab_id",
+        "terminal_id",
+        "terminal_title",
+        "terminal_title_stripped",
+        "title",
+        "tokens",
+        "workspace_id"
+      ]
+    },
+    "PaneProcessInfo": {
+      "required": [
+        "pane_id"
+      ],
+      "properties": [
+        "foreground_process_group_id",
+        "foreground_processes",
+        "pane_id",
+        "shell_pid",
+        "tty"
+      ]
+    },
+    "PaneProcessInfoProcess": {
+      "required": [
+        "pid",
+        "name"
+      ],
+      "properties": [
+        "argv",
+        "argv0",
+        "cmdline",
+        "cwd",
+        "name",
+        "pid"
+      ]
+    },
+    "WorkspaceInfo": {
+      "required": [
+        "workspace_id",
+        "number",
+        "label",
+        "focused",
+        "pane_count",
+        "tab_count",
+        "active_tab_id",
+        "agent_status"
+      ],
+      "properties": [
+        "active_tab_id",
+        "agent_status",
+        "focused",
+        "label",
+        "number",
+        "pane_count",
+        "tab_count",
+        "tokens",
+        "workspace_id",
+        "worktree"
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # crewmoor quality gates
 
-Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。当前没有业务 crate；`tools/quality` 是 Rust 质量 CLI，`fixtures/quality` 是隔离验收 fixture。
+Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。根 `Cargo.toml` 是 CrewMoor 业务 crate；`tools/quality` 是 Rust 质量 CLI，`fixtures/quality` 是隔离验收 fixture。
 
 ## 本地与 CI 的统一入口
 
@@ -8,10 +8,12 @@ Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。当�
 rustup update stable
 rustup component add --toolchain stable clippy rustfmt llvm-tools-preview
 cargo +stable install cargo-llvm-cov --version 0.9.0 --locked
-cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
+CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
-CI 最后一步使用相同 `verify` 命令。所有调度、配置检查、源码检查、CRAP 计算和验收测试均为 Rust；YAML 仅声明安装及 Cargo 调用。
+CI 最后一步使用相同 `verify` 命令，job 显式设置 `CARGO_TARGET_DIR=${{ github.workspace }}/target`。所有调度、配置检查、源码检查、CRAP 计算和验收测试均为 Rust；YAML 仅声明安装及 Cargo 调用。
+
+并行开发/审计必须在各自调用中设置不同的绝对 `CARGO_TARGET_DIR`，并让完整 verify 的全部 Cargo/LLVM 子进程继承它；不要共享同项目不同 checkout 的 target，也不要修改全局 Cargo/代理配置或 clean 共享目录。报告记录准确 SHA、target、命令及日志；覆盖率源码映射出现另一 checkout 时必须失败，不能忽略 unknown coverage source。Issue #2 中旧共享 target 下的通过结论已撤回，不作为验收依据。
 
 `verify` 依次检查工具自身、fixture，然后判断根目录业务 Cargo.toml：没有业务 crate 时明确输出 N/A；有业务 crate 时运行同一完整检查。工具自身也执行 fmt、策略检查、Clippy `--workspace --all-targets --all-features -- -D warnings`、真实测试覆盖率及全部命名函数的 CRAP，包括测试源码。每个子进程必须成功，不吞失败。
 
@@ -58,6 +60,6 @@ Rust 集成测试涵盖 CRAP 边界、无效/缺失度量、生产/测试/raw un
 
 inventory 回归验证：外部 `#[path]`/include 文件中的 suppression、unwrap 被拒，外部 CC=4/零覆盖率的合成报告按 CRAP=20 拒绝，未知报告文件失败；build.rs 和包根 binary 不会改变 integration-test helper 的测试上下文。永久 fixture 同时包含外部模块、include 文件、build.rs、根级 binary 和 integration test，在完整 verify 中实际编译、运行并计量。
 
-本机完整 `verify` 已通过。远端 GitHub Actions 尚未执行，当前业务验收 N/A，不以工具自测代替业务验收。
+根业务 crate 必须执行完整门禁，不能报告 N/A。Issue #2 的最终验证回报绑定准确提交、独立 target 绝对路径、命令和日志；旧共享 target 的结果无效。远端 GitHub Actions 尚未执行；自动门禁、真实容器生命周期和用户 App 观察分别验收。
 
 来源：[Rust 1.99.1 官方公告](https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/)、[LLVM coverage export](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export)、[Rust 模块与 path 属性规则](https://doc.rust-lang.org/reference/items/modules.html)。

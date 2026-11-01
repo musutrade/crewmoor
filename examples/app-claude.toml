@@ -1,0 +1,20 @@
+# Template only: replace explicit user-confirmed existing core/layout and paths.
+team = "app-team"
+role = "app-claude"
+runtime = "core"
+cwd = "/absolute/existing/workspace"
+store = "/absolute/crewmoor/bindings"
+runtime_binary = "/absolute/herdr-core"
+runtime_version = "hc 0.1.15"
+agent = "claude"
+agent_executable = "/absolute/canonical/claude"
+agent_version = "2.1.316 (Claude Code)"
+agent_args = []
+
+[app]
+session = "user-session"
+socket = "/absolute/existing/core.sock"
+core_id = "user-confirmed-core-id"
+machine = "user-machine"
+space_id = "existing-local-space-id"
+tab_id = "existing-local-tab-id"

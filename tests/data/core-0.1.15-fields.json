@@ -1,0 +1,99 @@
+{
+  "version": "hc 0.1.15",
+  "schema_sha256": "42b43a1bf63f87f785b5ad20a79e22484bd51f81bdca3729fde1a17e3f993ee3",
+  "contracts": {
+    "CoreInfo": {
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": [
+        "id",
+        "name"
+      ]
+    },
+    "HolderInfo": {
+      "required": [
+        "pid",
+        "instance",
+        "current",
+        "terminals"
+      ],
+      "properties": [
+        "current",
+        "instance",
+        "pid",
+        "terminals"
+      ]
+    },
+    "StatusResult": {
+      "required": [
+        "core",
+        "version",
+        "pid",
+        "uptime_ms",
+        "holders",
+        "live",
+        "finished"
+      ],
+      "properties": [
+        "core",
+        "finished",
+        "holder",
+        "holders",
+        "installed_by",
+        "live",
+        "pid",
+        "uptime_ms",
+        "version"
+      ]
+    },
+    "Terminal": {
+      "required": [
+        "address",
+        "labels",
+        "argv",
+        "cwd",
+        "state",
+        "created_ms",
+        "screen",
+        "cols",
+        "rows"
+      ],
+      "properties": [
+        "address",
+        "argv",
+        "cols",
+        "created_ms",
+        "cwd",
+        "die_with_parent",
+        "exit_code",
+        "finished_ms",
+        "foreground",
+        "identity",
+        "keep",
+        "labels",
+        "name",
+        "notify",
+        "parent",
+        "paste_gap_ms",
+        "pid",
+        "reason",
+        "records",
+        "reported",
+        "rm",
+        "rows",
+        "screen",
+        "signal",
+        "state",
+        "status",
+        "status_ms",
+        "stop",
+        "submit",
+        "template",
+        "title",
+        "turn"
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+team = "sample-core-claude"
+role = "probe"
+runtime = "core"
+cwd = "/absolute/project"
+store = "/absolute/crewmoor-bindings"
+runtime_binary = "/home/gem/.local/bin/herdr-core"
+runtime_version = "hc 0.1.15"
+agent = "claude"
+agent_executable = "/home/gem/.local/bin/claude"
+agent_version = "2.1.316 (Claude Code)"
+agent_args = []

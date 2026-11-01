@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status: planning.** The workflow and capabilities below describe the intended direction. They are not yet implemented or available to install.
+> **Project status: minimal launch implementation under validation.** Codex/Claude use official TUI/core interfaces and owned cleanup. [App project placement](docs/app-launch.md) selects a confirmed connection plus cwd, persists project IDs and reuses native automatic Space adoption; explicit existing-space binding remains. No manual Space setup, GUI framework or Agent status inference is added. [Evidence is separated](docs/issue-2-current-evidence.md): a1's explicit App Claude case passed real acceptance, native auto-Space probes are capability evidence, and this new entrypoint/TUI still need exact-candidate acceptance. See [usage](docs/runtime-launch.md) and [remaining steps](docs/issue-2-minimal-acceptance.md). The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 
@@ -54,7 +54,7 @@ CrewMoor does not need to turn every handoff into a fixed workflow state machine
 The initial direction is to learn from the existing [herdr-flow-rust](https://github.com/musutrade/herdr-flow-rust) TUI workflow, then support separate integrations for:
 
 - **Herdr TUI**, using its own agent and terminal interfaces.
-- **herdr-core**, the runtime behind Herdr App. Agent control should not require an App window; App-specific presentation can be considered separately.
+- **herdr-core**, the runtime behind Herdr App. Agent startup works without an App window; an optional explicit App binding uses the official keep/space/tab labels so a connected UI can adopt that same terminal and accept user input.
 
 Runtime capabilities and semantics differ. Support for either integration, individual agents, or specific recovery features must be verified rather than assumed. The existing TUI project remains independent and useful; replacement or migration is not a prerequisite.
 
@@ -62,7 +62,7 @@ Runtime capabilities and semantics differ. Support for either integration, indiv
 
 CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
 
-Design discussion starts in the repository issues. There are no installation or usage instructions yet because the project is still at the planning stage.
+Design discussion starts in the repository issues. The first prototype's supported setup and acceptance steps are in [docs/runtime-launch.md](docs/runtime-launch.md).
 
 ## Quality gates
 

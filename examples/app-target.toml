@@ -1,0 +1,8 @@
+# Save a confirmed existing connection once; do not guess a machine-to-core mapping.
+# Template only: fill the actual socket/core identity from read-only confirmation.
+session = "default"
+socket = "/absolute/existing/core.sock"
+core_id = "confirmed-core-id"
+machine = "vps"
+# Omit both space_id/tab_id for automatic project placement.
+# Or provide both to retain explicit existing-space placement.

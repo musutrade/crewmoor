@@ -1,0 +1,13 @@
+team = "project-codex"
+role = "dev-codex"
+runtime = "core"
+cwd = "/absolute/project"
+store = "/absolute/crewmoor/bindings"
+app_target = "/absolute/crewmoor/targets/vps.toml"
+runtime_binary = "/absolute/herdr-core"
+runtime_version = "hc 0.1.15"
+agent = "codex"
+agent_executable = "/absolute/canonical/codex"
+agent_version = "codex-cli 0.166.0"
+agent_args = []
+# The core branch adds --no-daemon exactly once, with no shell alias.

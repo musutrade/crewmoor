@@ -197,9 +197,12 @@ pub fn check(manifest: &Path) -> Result<()> {
     crap(manifest, &report)
 }
 pub fn business(root: &Path) -> Result<()> {
+    business_with(root, check)
+}
+fn business_with(root: &Path, run: impl Fn(&Path) -> Result<()>) -> Result<()> {
     let manifest = root.join("Cargo.toml");
     if manifest.is_file() {
-        return check(&manifest);
+        return run(&manifest);
     }
     println!(
         "Business acceptance: N/A — no business Cargo.toml; quality tool and fixtures checked separately."
@@ -213,7 +216,7 @@ pub fn verify_with(run: impl Fn(&Path) -> Result<()>) -> Result<()> {
     for manifest in ["tools/quality/Cargo.toml", "fixtures/quality/Cargo.toml"] {
         run(&root().join(manifest))?;
     }
-    business(&root())
+    business_with(&root(), run)
 }
 
 fn excluded_sources(manifest: &Path) -> Result<Vec<PathBuf>> {

@@ -1,0 +1,203 @@
+use crate::{
+    Result,
+    config::{Config, Runtime},
+    core,
+    native::{Native, Runner},
+    process,
+    record::Record,
+    tui,
+};
+use std::{fs, path::Path};
+
+pub fn launch(mut config: Config, root: &Path, runner: &impl Runner) -> Result<Record> {
+    config.resolve_target()?;
+    let mut record = Record::prepare(config, root)?;
+    let _lock = record.lock()?;
+    let result = start(&mut record, runner);
+    preserve(&mut record, result)?;
+    Ok(record)
+}
+fn start(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    connect_instance(record, runner)?;
+    create(record, runner)?;
+    inspect(record, runner)
+}
+fn connect_instance(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    record.phase = if record.server_owned {
+        "server-request-intent"
+    } else {
+        "host-connect-intent"
+    }
+    .into();
+    record.save()?;
+    record.server = Some(runner.boot(record)?);
+    record.save()?;
+    capture_endpoint(record)?;
+    record.phase = if record.server_owned {
+        "server-started"
+    } else {
+        "host-connected"
+    }
+    .into();
+    record.save()
+}
+fn capture_endpoint(record: &mut Record) -> Result<()> {
+    if record.server_owned {
+        crate::native::wait_socket(&record.socket())?;
+    }
+    record.capture_socket()
+}
+fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    match r.config.runtime {
+        Runtime::Core => core::create(r, runner),
+        Runtime::Tui => tui::create(r, runner),
+    }
+}
+pub fn inspect(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    record.guard()?;
+    match record.config.runtime {
+        Runtime::Core => {
+            let value = core::inspect_target(record, runner)?;
+            core::observe(record, value)?;
+        }
+        Runtime::Tui => {
+            tui::target(record, runner)?;
+            tui::observe(record, runner)?;
+        }
+    }
+    record.phase = "observed".into();
+    record.agent_status = "unknown".into();
+    record.save()
+}
+pub fn stop(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    record.guard()?;
+    record.phase = "stop-intent".into();
+    record.save()?;
+    let empty = match record.config.runtime {
+        Runtime::Core => core::stop(record, runner)?,
+        Runtime::Tui => tui::stop(record, runner)?,
+    };
+    finish_stop(record, empty)
+}
+fn finish_stop(record: &mut Record, empty: bool) -> Result<()> {
+    if !record.server_owned {
+        record.process_verified = false;
+        record.phase = "target-stopped-host-retained".into();
+        record.save()?;
+        return record.release();
+    }
+    if !empty {
+        record.phase = "partial-stop".into();
+        record.process_verified = false;
+        return record.save();
+    }
+    confirm_exit(record)?;
+    record.process_verified = false;
+    record.phase = "stopped".into();
+    record.save()?;
+    record.release()
+}
+fn confirm_exit(record: &Record) -> Result<()> {
+    let expected = record.server.as_ref().ok_or("missing server identity")?;
+    for identity in [
+        Some(expected),
+        record.ending_process.as_ref(),
+        record.agent_process.as_ref(),
+        record.terminal_process.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(
+        record
+            .core_holders
+            .iter()
+            .flatten()
+            .map(|holder| &holder.process),
+    ) {
+        process::wait_exited(identity)?;
+    }
+    socket_absent(record)
+}
+pub fn confirm_target_exit(record: &Record) -> Result<()> {
+    for identity in [
+        record.agent_process.as_ref(),
+        record.terminal_process.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        process::wait_exited(identity)?;
+    }
+    Ok(())
+}
+fn socket_absent(record: &Record) -> Result<()> {
+    match fs::symlink_metadata(record.socket()) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("native socket remains; binding retained".into()),
+    }
+}
+pub fn preserve(record: &mut Record, result: Result<()>) -> Result<()> {
+    if let Err(error) = result {
+        record.phase = "unknown-outcome".into();
+        record.process_verified = false;
+        record.save()?;
+        return Err(error);
+    }
+    Ok(())
+}
+pub fn read_config(path: &Path) -> Result<Config> {
+    Ok(toml::from_str(&fs::read_to_string(path)?)?)
+}
+pub fn launch_native(mut config: Config, root: &Path) -> Result<Record> {
+    config.resolve_target()?;
+    config.validate()?;
+    config.agent_executable = config.agent_executable.canonicalize()?;
+    crate::native::versions_config(&config)?;
+    launch(config, root, &Native)
+}
+pub fn operate(command: &str, root: &Path) -> Result<Record> {
+    let mut record = Record::load(root)?;
+    let _lock = record.lock()?;
+    let result = operation(command, &mut record);
+    preserve(&mut record, result)?;
+    Ok(record)
+}
+fn operation(command: &str, record: &mut Record) -> Result<()> {
+    match command {
+        "inspect" => inspect(record, &Native),
+        "stop" => stop(record, &Native),
+        _ => Err("unknown command".into()),
+    }
+}
+pub fn cli(args: &[String]) -> Result<()> {
+    match args {
+        [cmd] => single(cmd),
+        [cmd, config, root] if cmd == "launch" => print(&launch_native(
+            read_config(Path::new(config))?,
+            Path::new(root),
+        )?),
+        [cmd, root] => print(&operate(cmd, Path::new(root))?),
+        _ => Err("usage: crewmoor launch CONFIG STATE | inspect STATE | stop STATE".into()),
+    }
+}
+fn single(command: &str) -> Result<()> {
+    if command != "--version" {
+        return Err("unknown command".into());
+    }
+    println!("crewmoor {}", env!("CARGO_PKG_VERSION"));
+    Ok(())
+}
+fn print(record: &Record) -> Result<()> {
+    let encoded = serde_json::to_string_pretty(record)?;
+    println!("{encoded}");
+    Ok(())
+}
+pub fn verified_process(record: &Record) -> Result<()> {
+    process::same(
+        record
+            .agent_process
+            .as_ref()
+            .ok_or("agent process unknown")?,
+    )
+}

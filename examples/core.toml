@@ -1,0 +1,13 @@
+team = "sample-core"
+role = "probe"
+runtime = "core"
+cwd = "/absolute/project"
+store = "/absolute/crewmoor-bindings"
+runtime_binary = "/home/gem/.local/bin/herdr-core"
+runtime_version = "hc 0.1.15"
+agent = "codex"
+agent_executable = "/home/gem/.local/bin/codex"
+agent_version = "codex-cli 0.166.0"
+agent_args = ["--no-alt-screen"]
+# Optional: native named socket directory, for SSH clients using --session.
+# endpoint_dir = "/run/user/1000/herdr-core"
