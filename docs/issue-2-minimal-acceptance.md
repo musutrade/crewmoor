@@ -1,4 +1,6 @@
-# Minimum next real acceptance — not authorized
+# Historical minimum real-acceptance proposal — completed
+
+The two bd4/v13 cases below were subsequently specifically authorized and completed. PR #5 merged and Issue #2 closed; see [final evidence](issue-2-current-evidence.md). The following proposal is retained as history and grants no new launch permission.
 
 Implementing/reviewing project placement grants no new real launch. Earlier App and native probes are complete; their permissions cannot be replayed. Exact new SHA/artifact/config hashes and full commands are supplied outside the repository after automatic validation. Execute only after that exact candidate passes independent review and the user explicitly chooses the named action(s). No automatic task, input, trust/auth answer or retry.
 

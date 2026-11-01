@@ -172,6 +172,7 @@ fn operation(command: &str, record: &mut Record) -> Result<()> {
 }
 pub fn cli(args: &[String]) -> Result<()> {
     match args {
+        [cmd, rest @ ..] if cmd == "feedback" => crate::feedback::cli(rest),
         [cmd] => single(cmd),
         [cmd, config, root] if cmd == "launch" => print(&launch_native(
             read_config(Path::new(config))?,

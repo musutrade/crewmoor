@@ -1,0 +1,10 @@
+{
+  "team":"example-team",
+  "role":"developer",
+  "task":"example-task",
+  "cwd":"/absolute/project",
+  "agent":"codex",
+  "agent_version":"codex-cli 0.166.0",
+  "evidence":"synthetic",
+  "native_session_id":null
+}

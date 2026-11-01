@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status: minimal launch implementation under validation.** Codex/Claude use official TUI/core interfaces and owned cleanup. [App project placement](docs/app-launch.md) selects a confirmed connection plus cwd, persists project IDs and reuses native automatic Space adoption; explicit existing-space binding remains. No manual Space setup, GUI framework or Agent status inference is added. [Evidence is separated](docs/issue-2-current-evidence.md): a1's explicit App Claude case passed real acceptance, native auto-Space probes are capability evidence, and this new entrypoint/TUI still need exact-candidate acceptance. See [usage](docs/runtime-launch.md) and [remaining steps](docs/issue-2-minimal-acceptance.md). The broader workflow below remains the intended direction.
+> **Project status:** Issue #2 startup/location/owned cleanup is accepted and merged. Codex/Claude use official TUI/core interfaces; [App project placement](docs/app-launch.md) reuses native Space adoption. [Recorded real evidence](docs/issue-2-current-evidence.md) distinguishes user UI confirmation from process and cleanup facts. Issue #4 adds [user-level native Hooks and explicit Agent/skill business feedback](docs/agent-feedback.md), with synthetic and actual Agent evidence kept separate. There is no container-derived Agent state, queue or workflow state machine. The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 

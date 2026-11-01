@@ -3,6 +3,7 @@ pub mod config;
 pub mod core;
 pub mod engine;
 pub mod failure;
+pub mod feedback;
 pub mod holders;
 pub mod native;
 pub mod process;
