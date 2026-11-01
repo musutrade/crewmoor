@@ -51,7 +51,7 @@ pub fn ingest(registry: &Path, instance: &str, agent: &AgentKind, bytes: &[u8]) 
     journal::append(
         registry,
         &context,
-        Event {
+        &Event {
             received_ms: journal::now()?,
             source: "native-hook".into(),
             event: input.hook_event_name,
@@ -133,6 +133,16 @@ pub fn report(
     summary: &str,
 ) -> Result<()> {
     let context = model::load(registry, instance)?;
+    recorded_report(registry, context, session, source, kind, summary).map(|_| ())
+}
+pub(super) fn recorded_report(
+    registry: &Path,
+    context: super::Context,
+    session: &str,
+    source: &str,
+    kind: &str,
+    summary: &str,
+) -> Result<(super::Context, Event)> {
     if !["agent", "skill"].contains(&source)
         || !["ready", "progress", "complete", "blocked"].contains(&kind)
     {
@@ -141,17 +151,14 @@ pub fn report(
     if summary.trim().is_empty() || summary.len() > 2048 {
         return Err("business summary must have 1..2048 bytes".into());
     }
-    journal::append(
-        registry,
-        &context,
-        Event {
-            received_ms: journal::now()?,
-            source: format!("{source}-report"),
-            event: kind.into(),
-            native_session_id: session.into(),
-            native: json!({}),
-            summary: Some(summary.into()),
-        },
-        false,
-    )
+    let event = Event {
+        received_ms: journal::now()?,
+        source: format!("{source}-report"),
+        event: kind.into(),
+        native_session_id: session.into(),
+        native: json!({}),
+        summary: Some(summary.into()),
+    };
+    journal::append(registry, &context, &event, false)?;
+    Ok((context, event))
 }

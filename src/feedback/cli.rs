@@ -15,8 +15,23 @@ fn records(args: &[String]) -> Result<()> {
         "hook" => receive_command(rest),
         "show" => show(rest),
         "report" => report(rest),
+        "report-to" => report_to(rest),
         _ => Err("unknown feedback command".into()),
     }
+}
+fn report_to(args: &[String]) -> Result<()> {
+    let [binding, session, source, kind, summary] = args else {
+        return Err("usage: feedback report-to BINDING SESSION agent|skill TYPE SUMMARY".into());
+    };
+    let binding = serde_json::from_slice(&fs::read(binding)?)?;
+    print(&super::report_to(
+        &binding,
+        session,
+        source,
+        kind,
+        summary,
+        &crate::message::Native,
+    )?)
 }
 fn register(args: &[String]) -> Result<()> {
     match args {

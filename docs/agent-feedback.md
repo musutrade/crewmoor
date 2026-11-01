@@ -71,6 +71,11 @@ crewmoor feedback show /absolute/registry INSTANCE
 
 Allowed report types are `ready`, `progress`, `complete`, `blocked`; sources are `agent` or `skill`. Unknown/mismatched session, unsupported native event or missing evidence does not become successful business completion. Registration distinguishes operator-declared `synthetic` and `native` evidence; a declaration alone does not prove a real model ran. Audit/acceptance must identify the actual native invocation and authored report separately. No queue, continuous monitoring, workflow state machine, container-specific semantic state or automatic task retry is involved.
 
+Issue #6's [first-step report forwarding entry](feedback-forward.md) explicitly
+records one new authored report and transfers that exact fact to the bound
+dispatcher. Ordinary reports and native Hook callbacks stay local; no global
+forwarding is enabled, and dispatcher follow-up handling remains outside this step.
+
 ## Recorded real Claude path
 
 Tested source `15f73eae66ea71c5bba02cca178da5114ebbeeaf`, tree `279bdbb937da476719e5d2771347a4888b125216`, independently passed code/automatic audit (460 functions, max CRAP10, 25 quality +58 business tests). Its exact stable callback SHA256 is `bb277dde4366145175158b3439bfacb89de379289706df4464c3c31370b7e497`. It was atomically installed; native Hook definitions, Herdr/Orca entries and Codex trust configuration stayed unchanged.
