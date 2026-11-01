@@ -85,7 +85,6 @@ fn metadata(input: &Input) -> Result<Value> {
         ("reason", &input.reason),
         ("tool_name", &input.tool_name),
         ("notification_type", &input.notification_type),
-        ("error", &input.error),
         ("agent_id", &input.agent_id),
     ] {
         if let Some(value) = value {
@@ -96,7 +95,34 @@ fn metadata(input: &Input) -> Result<Value> {
     if let Some(value) = input.stop_hook_active {
         result["stop_hook_active"] = json!(value);
     }
+    error_metadata(input, &mut result);
     Ok(result)
+}
+fn error_metadata(input: &Input, result: &mut Value) {
+    match input.hook_event_name.as_str() {
+        "PostToolUseFailure" => result["error_present"] = json!(input.error.is_some()),
+        "StopFailure" => result["error"] = json!(stop_failure_kind(input.error.as_deref())),
+        _ => {}
+    }
+}
+fn stop_failure_kind(value: Option<&str>) -> &str {
+    const KINDS: &[&str] = &[
+        "rate_limit",
+        "overloaded",
+        "authentication_failed",
+        "oauth_org_not_allowed",
+        "account_on_hold",
+        "billing_error",
+        "invalid_request",
+        "model_not_found",
+        "server_error",
+        "max_output_tokens",
+        "cloud_credential_error",
+        "unknown",
+    ];
+    value
+        .filter(|value| KINDS.contains(value))
+        .unwrap_or("unknown")
 }
 pub fn report(
     registry: &Path,

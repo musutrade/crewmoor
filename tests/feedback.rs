@@ -383,3 +383,87 @@ fn main_binding_requires_expected_session_and_subagent_facts_never_create_an_ins
         1
     );
 }
+
+#[test]
+fn free_form_tool_failure_error_never_reaches_disk_or_show() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = registration(dir.path());
+    config.native_session_id = Some("claude-native-1".into());
+    let context = feedback::register(dir.path(), config).unwrap();
+    for error in [
+        Some("command failed: fake_secret=PRIVATE_TOOL_OUTPUT".to_owned()),
+        Some("PRIVATE_TOOL_OUTPUT\n".repeat(512)),
+        None,
+    ] {
+        let mut input = payload(dir.path(), "PostToolUseFailure");
+        input["error"] = json!(error);
+        input["error_details"] = json!("PRIVATE_DETAILS");
+        feedback::ingest(
+            dir.path(),
+            &context.instance,
+            &AgentKind::Claude,
+            &serde_json::to_vec(&input).unwrap(),
+        )
+        .unwrap();
+        let view = feedback::show(dir.path(), &context.instance).unwrap();
+        let event = view["events"].as_array().unwrap().last().unwrap();
+        assert_eq!(event["native"]["error_present"], error.is_some());
+        assert!(event["native"].get("error").is_none());
+        let disk = std::fs::read_to_string(
+            dir.path()
+                .join("instances")
+                .join(&context.instance)
+                .join("events.jsonl"),
+        )
+        .unwrap();
+        assert!(!disk.contains("PRIVATE_"));
+        assert!(!view.to_string().contains("PRIVATE_"));
+    }
+}
+#[test]
+fn stop_failure_error_accepts_only_documented_kinds_and_other_events_ignore_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = registration(dir.path());
+    config.native_session_id = Some("claude-native-1".into());
+    let context = feedback::register(dir.path(), config).unwrap();
+    for (kind, expected) in [
+        (Some("rate_limit"), "rate_limit"),
+        (Some("cloud_credential_error"), "cloud_credential_error"),
+        (Some("PRIVATE_API_ERROR=fake_secret"), "unknown"),
+        (None, "unknown"),
+    ] {
+        let mut input = payload(dir.path(), "StopFailure");
+        input["error"] = json!(kind);
+        input["error_details"] = json!("PRIVATE_DETAILS");
+        feedback::ingest(
+            dir.path(),
+            &context.instance,
+            &AgentKind::Claude,
+            &serde_json::to_vec(&input).unwrap(),
+        )
+        .unwrap();
+        let view = feedback::show(dir.path(), &context.instance).unwrap();
+        assert_eq!(view["latest_native_event"]["native"]["error"], expected);
+        assert!(view["latest_business_report"].is_null());
+    }
+    let mut input = payload(dir.path(), "Stop");
+    input["error"] = json!("PRIVATE_UNEXPECTED_FIELD");
+    feedback::ingest(
+        dir.path(),
+        &context.instance,
+        &AgentKind::Claude,
+        &serde_json::to_vec(&input).unwrap(),
+    )
+    .unwrap();
+    let view = feedback::show(dir.path(), &context.instance).unwrap();
+    assert!(view["latest_native_event"]["native"].get("error").is_none());
+    let disk = std::fs::read_to_string(
+        dir.path()
+            .join("instances")
+            .join(&context.instance)
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(!disk.contains("PRIVATE_"));
+    assert!(!view.to_string().contains("PRIVATE_"));
+}

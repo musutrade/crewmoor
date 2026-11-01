@@ -57,6 +57,8 @@ Without that marker, the global callback returns `{}` without reading stdin or o
 
 The callback reads native JSON on stdin, keeps only event name/native session and bounded source/reason/turn/tool/error-kind metadata, and appends a short JSON record with receipt time. It drops prompt, last assistant message, transcript paths, tool inputs, background task contents and all other fields. Failed/unassociated feedback returns neutral `{}` with no decision, replay or completion output. Failures may print a generic diagnostic; work is not replayed. A busy local record lock fails this one callback rather than starting a queue or recovery loop.
 
+Error handling is event-specific: `PostToolUseFailure.error` is free-form tool output and is never recorded; only `error_present` is kept. For `StopFailure`, only the documented kinds `rate_limit`, `overloaded`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown` are stored. Missing/unrecognized kinds become the fixed value `unknown`; error details and rendered error text are discarded. An `error` field on any other event is ignored.
+
 ## Explicit business reports and viewing
 
 Agents and skills report only facts they can substantiate; an explicit `complete` report is their assertion, not a conclusion inferred by CrewMoor. Summaries are supplied intentionally and must not contain credentials or full conversations.
