@@ -56,6 +56,7 @@ fn sanitize(cmd: &mut Command) {
         "HC_SCOPE",
         "HC_RUNTIME",
         "HERDR_ENV",
+        "CREWMOOR_FEEDBACK_INSTANCE",
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",
         "CODEX_TOOL_CALL_ID",
@@ -78,6 +79,12 @@ fn sanitize(cmd: &mut Command) {
     ] {
         cmd.env_remove(name);
     }
+}
+pub fn endpoint_command(binary: &std::path::Path, socket: &std::path::Path) -> Command {
+    let mut cmd = Command::new(binary);
+    sanitize(&mut cmd);
+    cmd.env("HERDR_SOCKET_PATH", socket);
+    cmd
 }
 pub fn version(binary: &std::path::Path) -> Result<String> {
     let mut cmd = Command::new(binary);

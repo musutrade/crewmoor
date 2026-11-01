@@ -60,6 +60,11 @@ Runtime capabilities and semantics differ. Support for either integration, indiv
 
 ## Scope
 
+Issue #9 provides a [minimal message entry](docs/messages.md) for one fixed
+dispatcher/worker pair in one existing Herdr TUI instance. The recipient actively
+replies through the same entry; transport acceptance, actual receipt and business
+completion remain separate facts.
+
 CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
 
 Design discussion starts in the repository issues. The first prototype's supported setup and acceptance steps are in [docs/runtime-launch.md](docs/runtime-launch.md).
