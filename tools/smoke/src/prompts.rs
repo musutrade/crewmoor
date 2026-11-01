@@ -34,6 +34,10 @@ echo $? > {w}/lead-reply.exit . Do not resend or retry. Until that message arriv
         b = p.binding,
     )
 }
+/// The worker's first prompt: it starts the Codex session, so SessionStart fires.
+pub fn worker_first() -> String {
+    "You are role worker in the Issue 15 smoke team. Do nothing until an operator instruction arrives.".into()
+}
 /// Sent once to the worker after bind.
 pub fn worker(p: &Paths) -> String {
     format!(

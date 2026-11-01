@@ -123,31 +123,46 @@ fn team_cmd(run: &Run, team: &Team, args: &[&str]) -> Result<Vec<String>> {
     argv.insert(3, team.dir.display().to_string());
     Ok(argv)
 }
+/// Item 2: the worker starts without an initial prompt, so it has no session yet and
+/// the first bind must be refused. The driver then sends its first prompt.
 fn bind(run: &Run, team: &Team) -> Result<()> {
+    let lead = run.wait("session-start-lead", LONG, || {
+        team.session("lead").is_ok_and(|s| s.is_some())
+    })?;
     let before = json!({"lead":team.session("lead")?,"worker":team.session("worker")?});
     run.save("sessions-before-early-bind.json", &before)?;
-    run.exec(
+    let (early, _, error) = run.exec_full(
         "team-bind-early",
         &team_cmd(run, team, &["bind", "worker"])?,
     )?;
-    let registered = || {
-        matches!(
-            (team.session("lead"), team.session("worker")),
-            (Ok(Some(_)), Ok(Some(_)))
-        )
-    };
-    if !run.wait("session-start-both", LONG, registered)? {
-        return Err("SessionStart not registered for both roles".into());
+    let binding = team.dir.join("roles/worker/binding.json");
+    run.save(
+        "early-bind.json",
+        &json!({"lead_registered":lead,
+        "worker_registered_before":before["worker"],"exit":early,"stderr":error,
+        "refused_unregistered":early != 0 && error.contains("not registered"),
+        "binding_written":binding.exists()}),
+    )?;
+    if early == 0 {
+        return Err("early bind was not refused; item 2 is not covered as planned".into());
+    }
+    prompt(
+        run,
+        team,
+        "worker",
+        "prompt-worker-first",
+        &prompts::worker_first(),
+    )?;
+    let registered = || matches!(team.session("worker"), Ok(Some(_)));
+    if !run.wait("session-start-worker", LONG, registered)? {
+        return Err("worker SessionStart not registered".into());
     }
     let after = json!({"lead":team.session("lead")?,"worker":team.session("worker")?,
         "lead_journal":team.journal("lead")?,"worker_journal":team.journal("worker")?});
     run.save("sessions-registered.json", &after)?;
-    let binding = team.dir.join("roles/worker/binding.json");
-    if !binding.exists() {
-        let (code, _) = run.exec("team-bind", &team_cmd(run, team, &["bind", "worker"])?)?;
-        if code != 0 {
-            return Err("team bind failed after registration".into());
-        }
+    let (code, _) = run.exec("team-bind", &team_cmd(run, team, &["bind", "worker"])?)?;
+    if code != 0 {
+        return Err("team bind failed after registration".into());
     }
     Ok(())
 }
@@ -200,7 +215,7 @@ fn compactions(session: &str) -> usize {
         .matches("\"type\":\"compacted\"")
         .count()
 }
-fn probe(run: &Run, binding: &str, id: &str, label: &str) -> Result<i32> {
+fn probe(run: &Run, binding: &str, id: &str, label: &str) -> Result<(i32, String)> {
     let message = json!({"id":id,"from":"lead","to":"worker","reply_to":null,
         "content":"Operator probe through the lead binding (driver-authored). Reply only OK; run no commands."});
     let path = run.work.join(format!("{id}.json"));
@@ -212,7 +227,8 @@ fn probe(run: &Run, binding: &str, id: &str, label: &str) -> Result<i32> {
         binding.into(),
         path.display().to_string(),
     ];
-    Ok(run.exec(label, &argv)?.0)
+    let (code, _, error) = run.exec_full(label, &argv)?;
+    Ok((code, error))
 }
 fn compact(run: &Run, team: &Team, binding: &str) -> Result<()> {
     let session = team.session("worker")?.ok_or("worker session unknown")?;
@@ -231,7 +247,7 @@ fn compact(run: &Run, team: &Team, binding: &str) -> Result<()> {
         team.journal("worker")
             .is_ok_and(|j| j.lines().count() > lines + 1)
     })?;
-    let probe = probe(
+    let (probe, probe_stderr) = probe(
         run,
         binding,
         "smoke15-probe-after-compact",
@@ -241,15 +257,14 @@ fn compact(run: &Run, team: &Team, binding: &str) -> Result<()> {
         "compact.json",
         &json!({"compacted":compacted,"before":before,"after":compactions(&session),
         "hook_recorded":hooked,"session_after":team.session("worker")?,"probe_exit":probe,
+        "probe_stderr":probe_stderr,
         "journal":team.journal("worker")?}),
     )
 }
+/// Item 4: Codex records the new session only with the next prompt after /clear,
+/// so the rejection is awaited after that prompt; then one lead→worker send.
 fn clear(run: &Run, team: &Team, p: &prompts::Paths, binding: &str) -> Result<()> {
     prompt(run, team, "worker", "prompt-clear", "/clear")?;
-    let rejected = run.wait("hook-rejection", 120, || {
-        team.journal("worker")
-            .is_ok_and(|j| j.contains("session-rejected"))
-    })?;
     prompt(
         run,
         team,
@@ -257,11 +272,17 @@ fn clear(run: &Run, team: &Team, p: &prompts::Paths, binding: &str) -> Result<()
         "prompt-after-clear",
         &prompts::after_clear(p),
     )?;
+    let hook = |j: &str| {
+        j.contains("\"source\":\"session-rejected\"") && j.contains("\"from\":\"native-hook\"")
+    };
+    let rejected = run.wait("hook-rejection", LONG, || {
+        team.journal("worker").is_ok_and(|j| hook(&j))
+    })?;
     let work = run.work.clone();
     run.wait("report-after-clear", LONG, || {
         work.join("worker-report-after-clear.exit").exists()
     })?;
-    let probe = probe(
+    let (code, error) = probe(
         run,
         binding,
         "smoke15-probe-after-clear",
@@ -277,7 +298,8 @@ fn clear(run: &Run, team: &Team, p: &prompts::Paths, binding: &str) -> Result<()
     run.exec("feedback-show-worker", &show)?;
     run.save(
         "clear.json",
-        &json!({"hook_rejection_recorded":rejected,"probe_exit":probe,
+        &json!({"hook_rejection_recorded":rejected,"send_exit":code,
+        "send_stderr":error,"halted_by_hook":code != 0 && error.contains("team halted"),
         "journal":team.journal("worker")?}),
     )
 }

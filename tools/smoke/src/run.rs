@@ -49,6 +49,11 @@ impl Run {
     }
     /// Run one command once and save argv, exit code, stdout and stderr.
     pub fn exec(&self, label: &str, argv: &[String]) -> Result<(i32, String)> {
+        self.exec_full(label, argv)
+            .map(|(code, out, _)| (code, out))
+    }
+    /// As `exec`, also returning stderr.
+    pub fn exec_full(&self, label: &str, argv: &[String]) -> Result<(i32, String, String)> {
         let n = self.step.get() + 1;
         self.step.set(n);
         let output = Command::new("timeout")
@@ -60,11 +65,12 @@ impl Run {
             .output()?;
         let code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let record = json!({"step":n,"label":label,"argv":argv,"exit":code,
-            "stdout":stdout,"stderr":String::from_utf8_lossy(&output.stderr)});
+            "stdout":stdout,"stderr":stderr});
         self.save(&format!("{n:02}-{label}.json"), &record)?;
         println!("step {n:02} {label}: exit {code}");
-        Ok((code, stdout))
+        Ok((code, stdout, stderr))
     }
     pub fn save(&self, name: &str, value: &Value) -> Result<()> {
         fs::write(self.evidence.join(name), serde_json::to_vec_pretty(value)?)?;

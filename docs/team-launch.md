@@ -207,9 +207,12 @@ synthetic. The real TUI run is recorded in [Issue #15 real acceptance](issue-15-
 `tools/smoke` is a separate Rust crate, outside the root package, CI and
 `verify`. It runs only when `CREWMOOR_SMOKE_APPROVED` equals the SHA-256 of the
 approved `plan.json`. It refuses a crewmoor binary whose hash differs from the
-plan. It runs the real acceptance sequence once: team start, early bind, bounded
-wait for both SessionStart records, bind, one report-to and one dispatcher reply
-(authored and sent by the Agents), compaction, `/clear`, `feedback show`, and
+plan. It runs the real acceptance sequence once: team start, an early bind before the
+worker has a session (the worker starts without an initial prompt, so this bind
+must be refused), the worker's first prompt, a bounded wait for its SessionStart
+record, bind, one report-to and one dispatcher reply
+(authored and sent by the Agents), compaction, `/clear` followed by one prompt and
+one lead→worker send whose refusal must be the Hook halt, `feedback show`, and
 `team stop`. Each external call's argv, exit code and output go to a fresh evidence
 directory with `SHA256SUMS`. Nothing is retried. Team stop is always attempted
 once if a team directory was created. Waits read only Hook journals and files
