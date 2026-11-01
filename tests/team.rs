@@ -531,3 +531,107 @@ fn a_new_binding_is_refused_once_the_hook_reported_a_changed_session() {
     assert!(error.to_string().contains("team halted"));
     assert!(!setup.team_dir().join("roles/worker/binding.json").exists());
 }
+/// Bound team whose worker has no container session; returns the worker's journal root.
+fn bound(setup: &Setup) -> (Binding, std::path::PathBuf) {
+    setup.start().unwrap();
+    setup.native_state();
+    assert!(setup.session_start("lead", AgentKind::Claude, "lead-session", "startup"));
+    assert!(setup.session_start("worker", AgentKind::Codex, "worker-session", "startup"));
+    team::bind(&setup.team_dir(), "worker", &Native).unwrap();
+    let path = setup.team_dir().join("roles/worker/binding.json");
+    let binding = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let root = setup.base().join("registry/instances");
+    (binding, root.join(setup.instance("worker")))
+}
+fn request(id: &str) -> Message {
+    Message {
+        id: id.into(),
+        from: "lead".into(),
+        to: "worker".into(),
+        reply_to: None,
+        content: "same registered session".into(),
+    }
+}
+#[test]
+fn the_session_check_reads_while_a_hook_append_holds_the_journal_lock() {
+    let setup = Setup::new();
+    let (binding, root) = bound(&setup);
+    let held = crewmoor::record::Lock::take(&root).unwrap();
+    message::send(&binding, &request("during-hook"), &Native).unwrap();
+    drop(held);
+    assert!(!root.join("operation.lock").exists());
+}
+#[test]
+fn a_hook_append_during_the_session_check_is_recorded_and_seen() {
+    use std::process::Command;
+    let setup = Setup::new();
+    let (binding, root) = bound(&setup);
+    let journal = root.join("events.jsonl");
+    let saved = fs::read(&journal).unwrap();
+    fs::remove_file(&journal).unwrap();
+    // A FIFO holds the check inside its journal read until the Hook's append arrives.
+    assert!(
+        Command::new("mkfifo")
+            .arg(&journal)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let registry = setup.base().join("registry");
+    let path = setup.team_dir().join("roles/worker/context.json");
+    let context: feedback::Context = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let reader = std::thread::spawn(move || {
+        feedback::require_unchanged(&registry, &context).map_err(|e| e.to_string())
+    });
+    let input = json!({"session_id":"after-clear","cwd":setup.base(),
+        "hook_event_name":"SessionStart","source":"clear"});
+    let registry = setup.base().join("registry");
+    let bytes = serde_json::to_vec(&input).unwrap();
+    let hook = feedback::ingest(
+        &registry,
+        &setup.instance("worker"),
+        &AgentKind::Codex,
+        &bytes,
+    );
+    let hook = hook.unwrap_err().to_string();
+    if !hook.contains("rejection recorded") {
+        // The Hook was refused before writing: release the waiting reader, then fail.
+        drop(fs::OpenOptions::new().write(true).open(&journal).unwrap());
+    }
+    let checked = reader.join().unwrap();
+    assert!(hook.contains("rejection recorded"), "{hook}");
+    assert!(checked.unwrap_err().contains("team halted"));
+    fs::remove_file(&journal).unwrap();
+    fs::write(&journal, saved).unwrap();
+    assert!(!setup.session_start("worker", AgentKind::Codex, "after-clear", "clear"));
+    let error = message::send(&binding, &request("after-clear"), &Native).unwrap_err();
+    assert!(error.to_string().contains("team halted"));
+}
+#[test]
+fn the_session_check_skips_an_unfinished_last_line_but_not_corrupt_records() {
+    use std::io::Write;
+    let setup = Setup::new();
+    let (_binding, root) = bound(&setup);
+    let registry = setup.base().join("registry");
+    let path = setup.team_dir().join("roles/worker/context.json");
+    let context: feedback::Context = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let journal = root.join("events.jsonl");
+    let append = |bytes: &[u8]| {
+        let mut file = fs::OpenOptions::new().append(true).open(&journal).unwrap();
+        file.write_all(bytes).unwrap();
+    };
+    append(br#"{"received_ms":1,"source":"session-rejec"#);
+    feedback::require_unchanged(&registry, &context).unwrap();
+    append(
+        b"ted\",\"event\":\"SessionStart\",\"native_session_id\":\"x\",\
+\"native\":{\"from\":\"native-hook\"},\"summary\":null}\n{\"partial\":",
+    );
+    let error = feedback::require_unchanged(&registry, &context).unwrap_err();
+    assert!(error.to_string().contains("team halted"));
+    append(b"1}\nnot json\n");
+    let error = feedback::require_unchanged(&registry, &context).unwrap_err();
+    assert!(!error.to_string().contains("team halted"));
+    fs::remove_file(&journal).unwrap();
+    fs::create_dir(&journal).unwrap();
+    assert!(feedback::require_unchanged(&registry, &context).is_err());
+}

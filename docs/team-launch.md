@@ -141,7 +141,10 @@ explicit report arrives with a different session, the journal appends one record
  "native":{"source":"clear","from":"native-hook","associated_session":"OLD"}}
 ```
 
-Once the Agent's own Hook has produced such a record for a role, `message bind`,
+The check reads the journal without taking the journal lock, so a Hook append is
+never refused because of it. It uses only completed (newline-terminated) records;
+an unfinished last line is left for the next read, while a corrupt completed
+record or a read error is an error. Once the Agent's own Hook has produced such a record for a role, `message bind`,
 `team bind` and every `message send` (and so `report-to` forwarding) involving
 that role are refused with "team halted". The refusal is read-only: the saved
 binding and the associated session are kept, and the new session is never
@@ -212,6 +215,8 @@ directory with `SHA256SUMS`. Nothing is retried. Team stop is always attempted
 once if a team directory was created. Waits read only Hook journals and files
 written by the Agents. They never read terminal output or container state.
 The driver derives the team directory `<state>/teams/<team>` from the approved
-config before start. It refuses to run if that directory already exists. When it
+config before start, decoding the team name with the same `toml` parser as the
+real launch; a config without one decodable single-component name is refused
+before start. It refuses to run if that directory already exists. When it
 created the directory, the driver keeps the path even if `team start` fails part
 way, so the single stop still runs. It never scans other teams.

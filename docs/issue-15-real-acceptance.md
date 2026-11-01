@@ -15,6 +15,13 @@ returned needs-fix, and four fixes were made after this run:
 - the smoke driver keeps the path of a team it created, even after a partial
   start.
 
+Audit AUDIT_RESULT-002 led to three more fixes:
+
+- the session check now reads the journal without its lock, so it cannot make a
+  Hook append fail;
+- the smoke driver now decodes the team name with the `toml` parser;
+- the smoke test double is now Rust.
+
 These fixes have synthetic regression tests only. The real results below
 describe `f645a32`, not the fixed candidate.
 

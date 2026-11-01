@@ -73,10 +73,10 @@ pub fn registered_session(registry: &Path, context: &Context) -> Result<Option<S
 }
 /// Refuse when the Agent's own Hook already reported a different session for this
 /// instance. Read-only: the association is kept and the new session is never adopted.
+/// Takes no lock, so a concurrent Hook append is never refused because of this check.
 pub fn require_unchanged(registry: &Path, context: &Context) -> Result<()> {
     let root = model::instance_dir(registry, &context.instance)?;
-    let _lock = crate::record::Lock::take(&root)?;
-    let changed = read_events(&root)?
+    let changed = completed_events(&root)?
         .into_iter()
         .any(|e| e.source == REJECTED && e.native["from"] == "native-hook");
     if changed {
@@ -123,6 +123,23 @@ pub fn show(registry: &Path, instance: &str) -> Result<Value> {
         json!({"context":context,"agent_state":"unknown","latest_native_event":last_hook,
         "latest_business_report":last_report,"latest_session_rejection":rejected,"events":events}),
     )
+}
+/// Snapshot of fully appended records: an unterminated last line is an append still in
+/// progress and is left for the next read. Every completed line must parse.
+fn completed_events(root: &Path) -> Result<Vec<Event>> {
+    let bytes = match fs::read(root.join("events.jsonl")) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let complete = bytes
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |end| end + 1);
+    std::str::from_utf8(&bytes[..complete])?
+        .lines()
+        .map(|line| Ok(serde_json::from_str(line)?))
+        .collect()
 }
 fn read_events(root: &Path) -> Result<Vec<Event>> {
     match fs::read_to_string(root.join("events.jsonl")) {

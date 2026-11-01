@@ -1,11 +1,7 @@
 //! Issue #15 real smoke run. Runs only with an approved plan:
 //! `CREWMOOR_SMOKE_APPROVED=<sha256 of plan.json> crewmoor-smoke PLAN.json`.
 //! Every external call is saved as evidence; nothing is retried.
-mod flow;
-mod prompts;
-mod run;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use crewmoor_smoke::{Result, flow, run};
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

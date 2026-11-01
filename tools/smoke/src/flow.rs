@@ -25,7 +25,7 @@ fn role_value(dir: &Path, role: &str, file: &str, pointer: &str) -> Result<Strin
         .ok_or("missing team record field")?
         .into())
 }
-struct Team {
+pub struct Team {
     dir: PathBuf,
     registry: PathBuf,
 }
@@ -76,18 +76,21 @@ fn preflight(run: &Run) -> Result<()> {
         &json!({"path":callback,"sha256":crate::run::sha256(&callback)?}),
     )
 }
-/// The team directory this run will create: `<state>/teams/<team>` from the approved
-/// team config. Owned only if it did not exist before this run's `team start`.
-fn expected_dir(run: &Run) -> Result<PathBuf> {
-    let config = fs::read_to_string(run.get("team_toml")?)?;
-    let name = config
-        .lines()
-        .find_map(|l| l.strip_prefix("team = \""))
-        .and_then(|rest| rest.strip_suffix('"'))
-        .ok_or("team config has no top-level team name")?;
+#[derive(serde::Deserialize)]
+struct TeamName {
+    team: String,
+}
+/// The team directory this run will create: `<state>/teams/<team>`, with the team name
+/// decoded by the same TOML parser as the real launch. Owned only if absent before start.
+pub fn expected_dir(run: &Run) -> Result<PathBuf> {
+    let config: TeamName = toml::from_str(&fs::read_to_string(run.get("team_toml")?)?)?;
+    let name = Path::new(&config.team);
+    if name.components().count() != 1 || name.file_name().is_none() {
+        return Err("team name is not a single directory name".into());
+    }
     Ok(PathBuf::from(run.get("state")?).join("teams").join(name))
 }
-fn start(run: &Run) -> Result<Team> {
+pub fn start(run: &Run) -> Result<Team> {
     let expected = expected_dir(run)?;
     if expected.exists() {
         return Err("team directory already exists before start; not owned by this run".into());
@@ -293,57 +296,4 @@ pub fn finish(run: &Run) -> Result<()> {
     run.exec("agent-list-after", &s(&["herdr", "agent", "list"]))?;
     run.exec("workspace-list-after", &s(&["herdr", "workspace", "list"]))?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::os::unix::fs::PermissionsExt;
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("crewmoor-smoke-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-    /// A stand-in `crewmoor` that creates the team directory, then fails like a
-    /// partial `team start` (error on stderr, no JSON on stdout).
-    fn partial_start(dir: &Path) -> PathBuf {
-        let script = dir.join("partial-crewmoor");
-        fs::write(
-            &script,
-            "#!/bin/sh\nmkdir -p \"$4/teams/smoke\"\necho 'role worker start failed' >&2\nexit 1\n",
-        )
-        .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
-        script
-    }
-    fn plan(dir: &Path, crewmoor: &Path) -> Value {
-        fs::write(
-            dir.join("team.toml"),
-            "team = \"smoke\"\nruntime = \"tui\"\n",
-        )
-        .unwrap();
-        json!({"evidence":dir.join("evidence"),"crewmoor":crewmoor,"team_toml":dir.join("team.toml"),
-            "state":dir,"host_socket":dir.join("synthetic.sock")})
-    }
-    #[test]
-    fn partial_start_keeps_the_owned_team_path_for_one_stop() {
-        let dir = scratch("partial");
-        let run = Run::create(plan(&dir, &partial_start(&dir)), "synthetic").unwrap();
-        assert!(start(&run).is_err());
-        assert_eq!(run.team_dir.borrow().clone(), Some(dir.join("teams/smoke")));
-        fs::remove_dir_all(dir).unwrap();
-    }
-    #[test]
-    fn an_existing_team_directory_is_never_claimed() {
-        let dir = scratch("existing");
-        fs::create_dir_all(dir.join("teams/smoke")).unwrap();
-        let run = Run::create(plan(&dir, &partial_start(&dir)), "synthetic").unwrap();
-        assert!(start(&run).is_err());
-        assert_eq!(run.team_dir.borrow().clone(), None);
-        assert!(!run.evidence.join("01-team-start.json").exists());
-        fs::remove_dir_all(dir).unwrap();
-    }
 }
