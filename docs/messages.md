@@ -54,6 +54,18 @@ identity, following Issue #2's explicit container/handle rule. The private bindi
 is created once and never overwrites an existing file. This is a fixed pair,
 without dynamic role discovery or a registration framework.
 
+### Identity after Issue #15
+
+Bind now reads the session registered by the Agent's own SessionStart Hook
+(`native-session.json`), or the explicit registration session; an unregistered
+role fails immediately. A peer may supply `agent_executable`; for TUI, bind then
+locates the pane's single Agent-kind foreground process via `pane process-info`
+and stores its kernel identity, re-checked before and after every send. Herdr's
+`agent_session` is an additional check: when present it must equal the
+registered session; when absent, the bound process identity is required. Saved
+bindings without `native_session`/`process` remain readable. Core has no
+container session field and keeps its existing terminal/process checks.
+
 ## Send and actively reply
 
 The sender/skill creates a short JSON message. IDs are caller-chosen nonempty

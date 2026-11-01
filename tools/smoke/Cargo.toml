@@ -1,0 +1,9 @@
+[package]
+name = "crewmoor-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Real Issue #15 smoke run. Never part of CI or `verify`; needs an approved plan.
+[dependencies]
+serde_json = "1"

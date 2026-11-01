@@ -2,7 +2,7 @@
 
 A lightweight workspace for coordinating AI agents across different runtime environments.
 
-> **Project status:** Issue #2 startup/location/owned cleanup is accepted and merged. Codex/Claude use official TUI/core interfaces; [App project placement](docs/app-launch.md) reuses native Space adoption. [Recorded real evidence](docs/issue-2-current-evidence.md) distinguishes user UI confirmation from process and cleanup facts. Issue #4 adds [user-level native Hooks and explicit Agent/skill business feedback](docs/agent-feedback.md), with synthetic and actual Agent evidence kept separate. There is no container-derived Agent state, queue or workflow state machine. The broader workflow below remains the intended direction.
+> **Project status:** Issue #2 startup/location/owned cleanup is accepted and merged. Codex/Claude use official TUI/core interfaces; [App project placement](docs/app-launch.md) reuses native Space adoption. [Recorded real evidence](docs/issue-2-current-evidence.md) distinguishes user UI confirmation from process and cleanup facts. Issue #4 adds [user-level native Hooks and explicit Agent/skill business feedback](docs/agent-feedback.md), with synthetic and actual Agent evidence kept separate. Issue #6 [step 1](docs/feedback-forward.md) forwards one authored worker report to its dispatcher, and [step 2](docs/issue-6-step2-acceptance.md) records one real dispatcher judgement reply. Issue #15 adds [team start/bind/stop](docs/team-launch.md) in the user's existing Herdr TUI server: each role gets its own workspace with the feedback marker, bind uses the session registered by the Agent's own Hook, and a session change halts the team with a visible rejection record. The core team entry is tracked in #16. There is no container-derived Agent state, queue or workflow state machine. The broader workflow below remains the intended direction.
 
 CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
 
@@ -69,6 +69,11 @@ completion remain separate facts.
 Issue #6's [first step](docs/feedback-forward.md) explicitly forwards one
 worker-authored feedback record to its fixed dispatcher through that message
 path. This step leaves #6 open; dispatcher follow-up handling is separate.
+
+Issue #15's [team entries](docs/team-launch.md) start a dispatcher and workers,
+bind each worker to the dispatcher after their SessionStart, and stop only the
+team's own panes and workspaces. The same page lists the capabilities each
+container must provide.
 
 CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
 

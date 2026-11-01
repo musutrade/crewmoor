@@ -1,0 +1,30 @@
+# Issue #15 team in the user's existing Herdr server. Copy and replace /absolute/project.
+team = "sample-team"
+task = "sample-task"
+runtime = "tui"
+runtime_binary = "/home/gem/.local/bin/herdr"
+runtime_version = "herdr 0.9.5"
+# Must be the registry the user-level Hook callback was installed with.
+feedback_registry = "/home/gem/.local/state/crewmoor/feedback"
+evidence = "native"
+dispatcher = "lead"
+
+[host]
+socket = "/home/gem/.config/herdr/herdr.sock"
+server_version = "0.9.4"
+
+[[roles]]
+role = "lead"
+cwd = "/absolute/project"
+agent = "claude"
+agent_executable = "/home/gem/.local/bin/claude"
+agent_version = "2.1.316 (Claude Code)"
+
+[[roles]]
+role = "worker"
+cwd = "/absolute/project"
+agent = "codex"
+agent_executable = "/home/gem/.local/bin/codex"
+agent_version = "codex-cli 0.166.0"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "You are the worker. Wait for a team message before acting."

@@ -309,6 +309,8 @@ fn team_configuration_declares_runtime_once_and_needs_an_existing_tui_host() {
     );
     fs::write(&path, per_role).unwrap();
     assert!(team::read(&path).is_err());
+    let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/team-tui.toml");
+    team::read(&example).unwrap().validate().unwrap();
     let mut team = setup.team();
     team.host = None;
     assert!(team.validate().is_err());

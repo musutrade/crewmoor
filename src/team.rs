@@ -48,7 +48,10 @@ impl Team {
         model::identifier(&self.task)?;
         crate::config::absolute(&self.feedback_registry)?;
         if self.runtime != Runtime::Tui || self.host.is_none() {
-            return Err("team start currently needs runtime=tui with an existing host".into());
+            return Err(
+                "team start supports runtime=tui with an existing host; core team entry: see #16"
+                    .into(),
+            );
         }
         let mut names: Vec<_> = self.roles.iter().map(|r| r.role.as_str()).collect();
         names.sort_unstable();

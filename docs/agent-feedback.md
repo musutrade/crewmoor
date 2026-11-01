@@ -59,6 +59,15 @@ The callback reads native JSON on stdin, keeps only event name/native session an
 
 Error handling is event-specific: `PostToolUseFailure.error` is free-form tool output and is never recorded; only `error_present` is kept. For `StopFailure`, only the documented kinds `rate_limit`, `overloaded`, `authentication_failed`, `oauth_org_not_allowed`, `account_on_hold`, `billing_error`, `invalid_request`, `model_not_found`, `server_error`, `max_output_tokens`, `cloud_credential_error`, `unknown` are stored. Missing/unrecognized kinds become the fixed value `unknown`; error details and rendered error text are discarded. An `error` field on any other event is ignored.
 
+### Session change record (Issue #15)
+
+When an event or explicit report for a registered instance carries a different
+session, the event is still refused and one `source: session-rejected` record is
+appended with the new session id, the native `source` (for example `clear`),
+which entry it came from and the associated session. `feedback show` exposes it as
+`latest_session_rejection`; it is never a business report and never changes the
+associated session. `latest_business_report` now selects only `*-report` records.
+
 ## Explicit business reports and viewing
 
 Agents and skills report only facts they can substantiate; an explicit `complete` report is their assertion, not a conclusion inferred by CrewMoor. Summaries are supplied intentionally and must not contain credentials or full conversations.
