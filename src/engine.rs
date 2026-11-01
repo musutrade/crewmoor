@@ -30,8 +30,11 @@ fn connect_instance(record: &mut Record, runner: &impl Runner) -> Result<()> {
     }
     .into();
     record.save()?;
-    record.server = Some(runner.boot(record)?);
-    record.save()?;
+    // An external TUI host is located by its socket only; CrewMoor never boots or owns it.
+    if record.config.host.is_none() {
+        record.server = Some(runner.boot(record)?);
+        record.save()?;
+    }
     capture_endpoint(record)?;
     record.phase = if record.server_owned {
         "server-started"
@@ -174,6 +177,7 @@ pub fn cli(args: &[String]) -> Result<()> {
     match args {
         [cmd, rest @ ..] if cmd == "feedback" => crate::feedback::cli(rest),
         [cmd, rest @ ..] if cmd == "message" => crate::message::cli(rest),
+        [cmd, rest @ ..] if cmd == "team" => crate::team::cli(rest),
         _ => lifecycle_cli(args),
     }
 }

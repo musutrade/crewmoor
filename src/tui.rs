@@ -8,26 +8,44 @@ use serde_json::Value;
 
 pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     let server = runner.call(r, &strings(&["status", "server", "--json"]))?;
-    if server["version"].as_str() != r.config.runtime_version.strip_prefix("herdr ") {
+    if server["version"].as_str() != Some(expected_version(r)?) {
         return Err("TUI server version mismatch".into());
     }
-    r.container_id = Some(r.session.clone());
+    r.container_id = Some(container(r, &server)?);
     create_workspace(r, runner)?;
     request_agent(r, runner)
 }
+fn expected_version(r: &Record) -> Result<&str> {
+    if let Some(host) = &r.config.host {
+        return Ok(&host.server_version);
+    }
+    Ok(r.config
+        .runtime_version
+        .strip_prefix("herdr ")
+        .ok_or("TUI runtime version must start with herdr")?)
+}
+/// Private mode: our own session. Host mode: the existing server's socket, never owned.
+fn container(r: &Record, server: &Value) -> Result<String> {
+    let Some(host) = &r.config.host else {
+        return Ok(r.session.clone());
+    };
+    if server["socket"].as_str() != host.socket.to_str() {
+        return Err("TUI host socket differs from configured host".into());
+    }
+    Ok(host.socket.display().to_string())
+}
+pub fn workspace_args(r: &Record) -> Vec<String> {
+    let mut args = strings(&["workspace", "create", "--cwd"]);
+    args.push(r.config.cwd.display().to_string());
+    args.extend(strings(&["--label", &r.owner, "--no-focus"]));
+    if let Some(instance) = &r.config.feedback_instance {
+        args.push("--env".into());
+        args.push(format!("{}={instance}", crate::feedback::INSTANCE_ENV));
+    }
+    args
+}
 fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
-    let value = runner.call(
-        r,
-        &strings(&[
-            "workspace",
-            "create",
-            "--cwd",
-            &r.config.cwd.display().to_string(),
-            "--label",
-            &r.owner,
-            "--no-focus",
-        ]),
-    )?;
+    let value = runner.call(r, &workspace_args(r))?;
     r.handle = Some(text(&value, "/root_pane/pane_id")?);
     r.terminal_id = Some(text(&value, "/root_pane/terminal_id")?);
     r.workspace_id = Some(text(&value, "/workspace/workspace_id")?);
@@ -49,6 +67,7 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         "--",
     ]);
     args.extend(r.config.agent_args.clone());
+    args.extend(r.config.initial_prompt.clone());
     Ok(args)
 }
 fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -125,6 +144,9 @@ pub fn stop(r: &mut Record, runner: &impl Runner) -> Result<bool> {
         let may_close = workspace_may_close(r, runner)?;
         close_target(r, &pane, runner)?;
         close_empty_workspace(r, runner, may_close)?;
+    }
+    if !r.server_owned {
+        return Ok(false);
     }
     stop_empty(r, runner)
 }

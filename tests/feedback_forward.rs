@@ -185,7 +185,12 @@ fn source_session_type_and_summary_errors_create_no_report_or_submission() {
             .is_err()
         );
     }
-    assert_eq!(fixture.view()["events"], json!([]));
+    let view = fixture.view();
+    let events = view["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["source"], feedback::REJECTED);
+    assert_eq!(events[0]["native_session_id"], "dispatcher-session");
+    assert_eq!(view["latest_business_report"], Value::Null);
     assert_eq!(fixture.trace.submissions.get(), 0);
 }
 #[test]

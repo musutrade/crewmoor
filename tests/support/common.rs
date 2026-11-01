@@ -30,6 +30,9 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         agent_args: Vec::new(),
         app: None,
         app_target: None,
+        host: None,
+        feedback_instance: None,
+        initial_prompt: None,
     }
 }
 #[derive(Default)]
@@ -61,6 +64,10 @@ pub struct Fake {
     pub leave_holder: RefCell<bool>,
     pub leave_socket: RefCell<bool>,
     pub app_doc: RefCell<Option<Value>>,
+    /// Distinguishes several roles' panes in one shared host (0 keeps the original ids).
+    pub index: usize,
+    /// Socket a host status reports instead of the configured one.
+    pub reported_socket: RefCell<Option<std::path::PathBuf>>,
 }
 fn spawn(r: &Record) -> Result<Child> {
     use std::io::Read;
@@ -99,7 +106,7 @@ fn close(slot: &RefCell<Option<Child>>) -> Result<()> {
     }
     Ok(())
 }
-fn child_pid(slot: &RefCell<Option<Child>>) -> Option<u32> {
+pub fn child_pid(slot: &RefCell<Option<Child>>) -> Option<u32> {
     slot.borrow().as_ref().map(Child::id)
 }
 fn missing() -> Box<dyn std::error::Error> {
@@ -213,7 +220,7 @@ impl Fake {
     }
     fn tui(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.first().map(String::as_str) {
-            Some("status") => Ok(json!({"version":"0.9.5"})),
+            Some("status") => Ok(self.status(r)),
             Some("workspace") => self.workspace(r, args),
             Some("agent") => {
                 self.start(r)?;
@@ -225,6 +232,28 @@ impl Fake {
                 Ok(json!({}))
             }
             _ => Err("unexpected TUI call".into()),
+        }
+    }
+    fn status(&self, r: &Record) -> Value {
+        match &r.config.host {
+            Some(host) => {
+                let reported = self.reported_socket.borrow().clone();
+                let socket = reported.unwrap_or_else(|| host.socket.clone());
+                json!({"version":host.server_version,"running":true,"socket":socket})
+            }
+            None => json!({"version":"0.9.5"}),
+        }
+    }
+    pub fn workspace_id(&self) -> String {
+        format!("w{}", self.index + 1)
+    }
+    pub fn pane_id(&self) -> String {
+        format!("{}:p1", self.workspace_id())
+    }
+    pub fn terminal_id(&self) -> String {
+        match self.index {
+            0 => "term-own".into(),
+            n => format!("term-own-{n}"),
         }
     }
     pub fn agent_info(&self, r: &Record) -> Value {
@@ -240,11 +269,11 @@ impl Fake {
     }
     fn pane_info(&self) -> Value {
         let terminal = if *self.changed.borrow() {
-            "replaced"
+            "replaced".into()
         } else {
-            "term-own"
+            self.terminal_id()
         };
-        json!({"pane_id":"w1:p1","terminal_id":terminal,"workspace_id":"w1","tab_id":"w1:t1",
+        json!({"pane_id":self.pane_id(),"terminal_id":terminal,"workspace_id":self.workspace_id(),"tab_id":"w1:t1",
             "focused":false,"agent_status":"working","revision":1})
     }
     fn pane(&self, r: &Record, args: &[String]) -> Result<Value> {
@@ -266,20 +295,20 @@ impl Fake {
     }
     fn processes(&self, r: &Record) -> Value {
         if *self.missing_process.borrow() {
-            return json!({"process_info":{"pane_id":"w1:p1"}});
+            return json!({"process_info":{"pane_id":self.pane_id()}});
         }
         let mut list = Vec::new();
         if let Some(pid) = child_pid(&self.agent) {
             list.push(json!({"pid":pid,"name":r.config.agent.name(),"argv":["synthetic-sensitive-unrelated-value"]}));
         }
-        json!({"process_info":{"pane_id":"w1:p1","shell_pid":child_pid(&self.shell),"foreground_processes":list}})
+        json!({"process_info":{"pane_id":self.pane_id(),"shell_pid":child_pid(&self.shell),"foreground_processes":list}})
     }
     fn workspace(&self, r: &Record, args: &[String]) -> Result<Value> {
         match args.get(1).map(String::as_str) {
             Some("create") => self.create_workspace(r),
             Some("get") => Ok(json!({"workspace":self.workspace_info(r)})),
             Some("close") => {
-                assert_eq!(args.get(2).map(String::as_str), Some("w1"));
+                assert_eq!(args.get(2), Some(&self.workspace_id()));
                 if !*self.leave_workspace.borrow() {
                     *self.workspace_closed.borrow_mut() = true;
                 }
@@ -297,7 +326,7 @@ impl Fake {
     fn workspace_info(&self, r: &Record) -> Value {
         let panes = usize::from(!*self.closed.borrow()) + usize::from(*self.extra_pane.borrow());
         let tabs = 1 + usize::from(*self.extra_tab.borrow());
-        json!({"workspace_id":"w1","number":1,"label":r.owner,"focused":false,
+        json!({"workspace_id":self.workspace_id(),"number":1,"label":r.owner,"focused":false,
             "pane_count":panes,"tab_count":tabs,"active_tab_id":"w1:t1","agent_status":"unknown"})
     }
     fn workspaces(&self, r: &Record) -> Value {

@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
 pub fn dispatch(args: &[String]) -> Option<Result<()>> {
-    if args.get(1).map(String::as_str) != Some("agent") {
+    if !matches!(args.get(1).map(String::as_str), Some("agent" | "pane")) {
         return None;
     }
     Some(call(args))
@@ -24,6 +24,9 @@ fn call(args: &[String]) -> Result<()> {
     respond(args, &socket, &state)
 }
 fn respond(args: &[String], socket: &std::path::Path, state: &Value) -> Result<()> {
+    if args.get(1).map(String::as_str) == Some("pane") {
+        return process_info(args, state);
+    }
     let handle = args.get(3).ok_or("missing target")?;
     let mut agent = state[handle].clone();
     let kind = match args.get(2).map(String::as_str) {
@@ -61,5 +64,16 @@ fn record_prompt(args: &[String], socket: &std::path::Path) -> Result<()> {
         socket.with_extension("submitted"),
         serde_json::to_vec(&json!({"args":args,"inherited":inherited}))?,
     )?;
+    Ok(())
+}
+/// `pane process-info --pane HANDLE`: foreground processes from `processes.HANDLE`.
+fn process_info(args: &[String], state: &Value) -> Result<()> {
+    let handle = args.get(4).ok_or("missing pane")?;
+    let list = state["processes"][handle].clone();
+    println!(
+        "{}",
+        json!({"id":"fixture","result":{"type":"pane_process_info",
+            "process_info":{"pane_id":handle,"foreground_processes":list}}})
+    );
     Ok(())
 }

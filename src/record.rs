@@ -43,18 +43,12 @@ pub struct Record {
 impl Record {
     pub fn prepare(config: Config, root: &Path) -> Result<Self> {
         config.validate()?;
-        crate::config::absolute(root)?;
-        if root.as_os_str().len() > 45 {
-            return Err("state root must be <=45 bytes for native Unix sockets".into());
-        }
+        root_length(&config, root)?;
         fs::DirBuilder::new().mode(0o700).create(root)?;
         let owner = uuid::Uuid::new_v4().simple().to_string();
-        let server_owned = config.app.is_none();
-        let session = config
-            .app
-            .as_ref()
-            .map(|a| a.session.clone())
-            .unwrap_or_else(|| format!("cm-{}", &owner[..12]));
+        let server_owned = config.app.is_none() && config.host.is_none();
+        let session = session(&config, &owner);
+        let binding_scope = scope(&config, server_owned).into();
         let result = Self {
             crewmoor_version: env!("CARGO_PKG_VERSION").into(),
             session,
@@ -80,7 +74,7 @@ impl Record {
             process_verified: false,
             agent_status: "unknown".into(),
             server_owned,
-            binding_scope: if server_owned { "instance" } else { "terminal" }.into(),
+            binding_scope,
             app_terminal: None,
             project: None,
         };
@@ -105,6 +99,9 @@ impl Record {
         if let Some(app) = &self.config.app {
             return app.socket.clone();
         }
+        if let Some(host) = &self.config.host {
+            return host.socket.clone();
+        }
         match self.config.runtime {
             crate::config::Runtime::Core => self
                 .config
@@ -125,20 +122,34 @@ impl Record {
         Ok(())
     }
     pub fn guard(&self) -> Result<()> {
-        if self.server_owned != self.config.app.is_none() {
+        if self.server_owned != (self.config.app.is_none() && self.config.host.is_none()) {
             return Err("server ownership disagrees with launch mode".into());
         }
         self.binding()?;
-        crate::process::same(self.server.as_ref().ok_or("missing server identity")?)?;
+        self.same_server()?;
         if Some(fs::metadata(self.socket())?.ino()) != self.socket_inode {
             return Err("socket instance changed".into());
         }
         Ok(())
     }
+    /// An external TUI host has no recorded process; its socket inode is the identity.
+    fn same_server(&self) -> Result<()> {
+        if self.config.host.is_some() {
+            return Ok(());
+        }
+        crate::process::same(self.server.as_ref().ok_or("missing server identity")?)
+    }
     pub fn lock(&self) -> Result<Lock> {
         Lock::take(&self.root)
     }
+    /// Host mode shares one server per team, so the binding is per role inside the team's store.
     fn binding_path(&self) -> PathBuf {
+        if self.config.host.is_some() {
+            return self
+                .config
+                .store
+                .join(format!("{}.{}.json", self.config.team, self.config.role));
+        }
         self.config.store.join(format!("{}.json", self.config.team))
     }
     fn binding_bytes(&self) -> Result<Vec<u8>> {
@@ -165,6 +176,32 @@ impl Record {
         self.binding()?;
         fs::remove_file(self.binding_path())?;
         Ok(())
+    }
+}
+/// Private sockets live under the state root; an external host's socket does not.
+fn root_length(config: &Config, root: &Path) -> Result<()> {
+    crate::config::absolute(root)?;
+    if config.host.is_none() && root.as_os_str().len() > 45 {
+        return Err("state root must be <=45 bytes for native Unix sockets".into());
+    }
+    Ok(())
+}
+fn session(config: &Config, owner: &str) -> String {
+    if let Some(app) = &config.app {
+        return app.session.clone();
+    }
+    if config.host.is_some() {
+        return "host".into();
+    }
+    format!("cm-{}", &owner[..12])
+}
+fn scope(config: &Config, server_owned: bool) -> &'static str {
+    if server_owned {
+        "instance"
+    } else if config.host.is_some() {
+        "workspace"
+    } else {
+        "terminal"
     }
 }
 pub struct Lock {

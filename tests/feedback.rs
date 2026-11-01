@@ -375,13 +375,13 @@ fn main_binding_requires_expected_session_and_subagent_facts_never_create_an_ins
         )
         .is_err()
     );
-    assert_eq!(
-        feedback::show(dir.path(), &context.instance).unwrap()["events"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    let view = feedback::show(dir.path(), &context.instance).unwrap();
+    let events = view["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["source"], feedback::REJECTED);
+    assert_eq!(events[0]["native"]["associated_session"], "expected");
+    assert_eq!(events[1]["source"], "native-hook");
+    assert_eq!(view["latest_business_report"], Value::Null);
 }
 
 #[test]

@@ -295,3 +295,75 @@ fn public_cli_binds_once_and_uses_literal_argv_with_isolated_routing_environment
         assert!(message::cli(&args).is_err());
     }
 }
+#[test]
+fn saved_pre_issue15_bindings_stay_readable_and_container_session_is_only_additive() {
+    let fixture = Fixture::new();
+    let mut saved = serde_json::to_value(fixture.binding()).unwrap();
+    for role in ["dispatcher", "worker"] {
+        let member = saved[role].as_object_mut().unwrap();
+        member.remove("native_session");
+        member.remove("process");
+    }
+    let legacy: Binding = serde_json::from_value(saved.clone()).unwrap();
+    assert_eq!(legacy.worker.native_session, None);
+    message::send(&legacy, &request(), &Native).unwrap();
+    // Without a container session, a binding that never located a process is refused.
+    let mut state = json!({
+        "w1:p1": agent("codex", "codex-1", "w1:p1", "term_one"),
+        "w1:p2": agent("claude", "claude-1", "w1:p2", "term_two")
+    });
+    state["w1:p2"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent_session");
+    fixture.state(&state);
+    let error = message::send(&legacy, &request(), &Native).unwrap_err();
+    assert!(error.to_string().contains("no container session"));
+    state["w1:p2"]["agent_session"] = json!({"kind":"id","value":"other"});
+    fixture.state(&state);
+    let error = message::send(&legacy, &request(), &Native).unwrap_err();
+    assert!(error.to_string().contains("native session changed"));
+    state["w1:p2"]["agent_session"] = json!({"kind":"id","value":"claude-1"});
+    state["w1:p2"]["agent"] = json!("codex");
+    fixture.state(&state);
+    let error = message::send(&legacy, &request(), &Native).unwrap_err();
+    assert!(error.to_string().contains("kind changed"));
+    let mut relative = serde_json::to_value(&fixture.config).unwrap();
+    relative["worker"]["agent_executable"] = json!("relative/agent");
+    assert!(Binding::bind(serde_json::from_value(relative).unwrap(), &Native).is_err());
+}
+#[test]
+fn tui_process_location_rejects_missing_duplicate_or_moved_panes() {
+    let fixture = Fixture::new();
+    let mut config = serde_json::to_value(&fixture.config).unwrap();
+    config["worker"]["agent_executable"] = json!(env!("CARGO_BIN_EXE_transport-fixture"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
+        .arg("hold")
+        .current_dir(fixture.dir.path())
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut state = json!({
+        "w1:p1": agent("codex", "codex-1", "w1:p1", "term_one"),
+        "w1:p2": agent("claude", "claude-1", "w1:p2", "term_two"),
+        "processes": {"w1:p2": []}
+    });
+    let cases = [
+        json!([]),
+        json!([{"name":"claude","pid":child.id()},{"name":"claude","pid":child.id()}]),
+    ];
+    for list in cases {
+        state["processes"]["w1:p2"] = list;
+        fixture.state(&state);
+        let config = serde_json::from_value(config.clone()).unwrap();
+        assert!(Binding::bind(config, &Native).is_err());
+    }
+    state["processes"]["w1:p2"] = json!([{"name":"claude","pid":child.id()}]);
+    fixture.state(&state);
+    let binding = Binding::bind(serde_json::from_value(config).unwrap(), &Native).unwrap();
+    assert_eq!(binding.worker.process.as_ref().unwrap().pid, child.id());
+    message::send(&binding, &request(), &Native).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(message::send(&binding, &request(), &Native).is_err());
+}
