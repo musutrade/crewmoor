@@ -136,7 +136,10 @@ pub fn decode(reply: Value) -> Result<Value> {
     if let Some(error) = reply.get("error") {
         return Err(Box::new(crate::failure::NativeFailure {
             code: error["data"]["kind"].as_str().unwrap_or("unknown").into(),
-            message: "App core RPC failed".into(),
+            message: error["message"]
+                .as_str()
+                .unwrap_or("core RPC failed")
+                .into(),
         }));
     }
     Ok(reply

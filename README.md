@@ -61,7 +61,8 @@ Runtime capabilities and semantics differ. Support for either integration, indiv
 ## Scope
 
 Issue #9 provides a [minimal message entry](docs/messages.md) for one fixed
-dispatcher/worker pair in one existing Herdr TUI instance. The recipient actively
+dispatcher/worker pair in one existing Herdr TUI instance. Issue #11 adds the
+same entry on an existing herdr-core socket used by App. The recipient actively
 replies through the same entry; transport acceptance, actual receipt and business
 completion remain separate facts.
 

@@ -1,5 +1,6 @@
 use crewmoor::{
     config::AgentKind,
+    config::Runtime,
     feedback::{self, Evidence, Registration},
     message::{self, Binding, Config, Message, Native, Peer},
 };
@@ -19,14 +20,19 @@ impl Fixture {
         let dispatcher = register(dir.path(), "dispatcher", AgentKind::Codex, Some("codex-1"));
         let worker = register(dir.path(), "worker", AgentKind::Claude, Some("claude-1"));
         let config = Config {
+            runtime: Runtime::Tui,
+            core_id: None,
+            core_version: None,
             runtime_binary: env!("CARGO_BIN_EXE_transport-fixture").into(),
             socket,
             feedback_registry: dir.path().into(),
             dispatcher: Peer {
+                agent_executable: None,
                 instance: dispatcher,
                 handle: "w1:p1".into(),
             },
             worker: Peer {
+                agent_executable: None,
                 instance: worker,
                 handle: "w1:p2".into(),
             },
