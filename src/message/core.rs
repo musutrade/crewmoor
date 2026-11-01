@@ -31,11 +31,6 @@ pub fn instance(config: &Config, transport: &impl Transport) -> Result<()> {
     Ok(())
 }
 pub fn capture(context: Context, peer: &Peer, value: &Value) -> Result<Member> {
-    context
-        .registration
-        .native_session_id
-        .as_deref()
-        .ok_or("explicit native session association required")?;
     if text(value, "/address")? != peer.handle {
         return Err("use the exact local core address".into());
     }
@@ -46,6 +41,8 @@ pub fn capture(context: Context, peer: &Peer, value: &Value) -> Result<Member> {
         terminal_id: None,
         workspace_id: None,
         core: Some(identity),
+        native_session: None,
+        process: None,
     };
     verify(&member, value)?;
     Ok(member)

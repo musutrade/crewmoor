@@ -111,9 +111,13 @@ fn run_params(r: &Record) -> Result<Value> {
     if let Some(project) = &r.project {
         labels["crewmoor-project"] = json!(project.id);
     }
+    let mut env = json!({});
+    if let Some(instance) = &r.config.feedback_instance {
+        env[crate::feedback::INSTANCE_ENV] = json!(instance);
+    }
     Ok(
         json!({"argv":r.config.argv(),"cwd":r.config.cwd,"name":r.config.role,
-        "keep":true,"no_parent":true,"no_notify":true,"wait":false,"env":{},
+        "keep":true,"no_parent":true,"no_notify":true,"wait":false,"env":env,
         "labels":labels}),
     )
 }

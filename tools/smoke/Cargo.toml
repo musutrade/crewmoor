@@ -1,0 +1,23 @@
+[package]
+name = "crewmoor-smoke"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Real Issue #15 smoke run. Never part of CI or `verify`; needs an approved plan.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "crewmoor-smoke"
+path = "src/main.rs"
+
+# Test double for a `crewmoor team start` that fails part way. Never used for real runs.
+[[bin]]
+name = "partial-start-fixture"
+path = "tests/support/partial_start.rs"

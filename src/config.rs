@@ -40,6 +40,16 @@ pub struct Config {
     pub agent_args: Vec<String>,
     pub app: Option<crate::app::Binding>,
     pub app_target: Option<PathBuf>,
+    pub host: Option<Host>,
+    pub feedback_instance: Option<String>,
+    pub initial_prompt: Option<String>,
+}
+/// An existing TUI server that CrewMoor connects to but never owns or stops.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Host {
+    pub socket: PathBuf,
+    pub server_version: String,
 }
 pub fn name(value: &str) -> Result<()> {
     if value.is_empty() || value.len() > 24 {
@@ -75,7 +85,32 @@ impl Config {
         if self.runtime == Runtime::Tui {
             self.validate_tui()?;
         }
-        validate_args(&self.agent, &self.agent_args)
+        self.validate_options()
+    }
+    fn validate_options(&self) -> Result<()> {
+        self.validate_host()?;
+        self.validate_marker()?;
+        validate_args(&self.agent, &self.agent_args)?;
+        initial_prompt(&self.agent, self.initial_prompt.as_deref())
+    }
+    fn validate_host(&self) -> Result<()> {
+        let Some(host) = &self.host else {
+            return Ok(());
+        };
+        if self.runtime != Runtime::Tui {
+            return Err("external host mode requires tui".into());
+        }
+        absolute(&host.socket)?;
+        crate::feedback::model::identifier(&host.server_version)
+    }
+    fn validate_marker(&self) -> Result<()> {
+        let Some(instance) = &self.feedback_instance else {
+            return Ok(());
+        };
+        if self.runtime == Runtime::Core && self.app.is_none() {
+            return Err("core feedback marker needs an existing App/core target".into());
+        }
+        crate::feedback::model::instance_dir(std::path::Path::new("/"), instance).map(|_| ())
     }
     fn validate_paths(&self) -> Result<()> {
         absolute(&self.cwd)?;
@@ -97,6 +132,7 @@ impl Config {
             args.push("--no-daemon".into());
         }
         args.extend(self.agent_args.clone());
+        args.extend(self.initial_prompt.clone());
         args
     }
     fn validate_tui(&self) -> Result<()> {
@@ -150,6 +186,23 @@ fn model(value: Option<&String>) -> Result<()> {
     let value = value.ok_or("missing model")?;
     if value.is_empty() || value.starts_with('-') || value.contains('\0') {
         return Err("invalid model".into());
+    }
+    Ok(())
+}
+/// Codex's native `codex [PROMPT]`: exactly one startup task; Claude takes none.
+pub fn initial_prompt(kind: &AgentKind, prompt: Option<&str>) -> Result<()> {
+    let Some(prompt) = prompt else {
+        return Ok(());
+    };
+    if *kind != AgentKind::Codex {
+        return Err("initial prompt is only accepted for Codex".into());
+    }
+    if prompt.trim().is_empty()
+        || prompt.starts_with('-')
+        || prompt.len() > 4096
+        || prompt.chars().any(char::is_control)
+    {
+        return Err("initial prompt must be 1..4096 bytes and not an option".into());
     }
     Ok(())
 }

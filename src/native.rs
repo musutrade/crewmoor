@@ -24,6 +24,11 @@ pub fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).into()).collect()
 }
 pub fn command(record: &Record) -> Command {
+    if let Some(host) = &record.config.host {
+        let mut cmd = endpoint_command(&record.config.runtime_binary, &host.socket);
+        cmd.current_dir(&record.config.cwd);
+        return cmd;
+    }
     let mut cmd = Command::new(&record.config.runtime_binary);
     sanitize(&mut cmd);
     cmd.current_dir(&record.config.cwd);

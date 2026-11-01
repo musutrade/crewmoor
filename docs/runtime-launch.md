@@ -16,7 +16,7 @@ TUI calls `agent start ROLE --kind codex|claude --pane RETURNED_PANE --timeout 5
 
 The official start request runs the kind's executable name plus passed arguments ([server implementation](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/agents.rs#L185)); it has no executable-path override. Configuration pins an executable/version for preflight and checks the resulting kernel executable/cwd once. An unexpected executable is not adopted.
 
-On this machine the existing Codex alias already supplies `--no-daemon`. The TUI example passes only `--no-alt-screen`; it does not repeat the alias flag. A plain installation without that alias can explicitly configure `--no-daemon`. Core invokes the configured canonical executable directly and adds `--no-daemon` once. Claude never receives Codex flags. Only model selection and these supported Codex flags are allowed; no task/prompt, shell startup mutation or authentication command is generated. TUI rejects control bytes as its official API does. The container performs argument quoting; CrewMoor no longer builds shell command strings.
+On this machine the existing Codex alias already supplies `--no-daemon`. The TUI example passes only `--no-alt-screen`; it does not repeat the alias flag. A plain installation without that alias can explicitly configure `--no-daemon`. Core invokes the configured canonical executable directly and adds `--no-daemon` once. Claude never receives Codex flags. Only model selection, these supported Codex flags and Issue #15's single Codex `initial_prompt` are allowed; no other task/prompt, shell startup mutation or authentication command is generated. TUI rejects control bytes as its official API does. The container performs argument quoting; CrewMoor no longer builds shell command strings.
 
 ## Build and use
 
@@ -40,6 +40,17 @@ crewmoor stop /tmp/fresh-state
 State must be new, absolute and ≤45 bytes for Unix socket paths. Private mode binds each team to one randomly named instance. Optional [App binding](app-launch.md) selects a confirmed existing target (inline or `app_target` file) and owns only its terminal. With both space/tab IDs omitted, core-id + canonical cwd identifies the persisted project placement; no manual Space setup or ID lookup is needed. Explicit existing IDs remain supported. Keep one store per installation. The receipt records team/role, project ownership/IDs, container/native handle, admission and verified process facts; configured role is not invented native evidence.
 
 A startup intent is saved before the single native startup call. Native/version calls have a ten-second bound plus at most one second to reap their own timed-out CLI. Native error/timeout is unknown admission and never triggers another CrewMoor startup call. TUI performs one process-info observation even after the CLI reports a startup error; core uses its returned address and a full get. Neither command exit 0 nor `accepted=true` proves an Agent process. `process_verified` is only resource evidence. No terminal content, unrelated foreground argv or native semantic status is stored.
+
+## External TUI host (Issue #15)
+
+With `host = { socket, server_version }`, a TUI launch uses the user's existing
+server instead of a private one: no boot, `server_owned=false`,
+`binding_scope=workspace`, and the owner binding is `<store>/<team>.<role>.json`
+so several roles of one team share the server. With `feedback_instance`,
+`workspace create` adds `--env CREWMOOR_FEEDBACK_INSTANCE=...`; on an App/core
+target the same key goes into `terminal.run` `env`. Codex may take one
+`initial_prompt`. Stop closes only the own pane and empty own workspace and never
+calls `session stop`. See [team launch](team-launch.md).
 
 ## End only this target
 

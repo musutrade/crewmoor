@@ -36,6 +36,12 @@ pub struct Member {
     pub terminal_id: Option<String>,
     pub workspace_id: Option<String>,
     pub core: Option<super::core::Identity>,
+    /// Hook-registered session at bind time; absent in bindings saved before #15.
+    #[serde(default)]
+    pub native_session: Option<String>,
+    /// TUI Agent process located at bind time; absent in bindings saved before #15.
+    #[serde(default)]
+    pub process: Option<crate::process::Identity>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +60,12 @@ impl Config {
         }
         if self.dispatcher.handle == self.worker.handle {
             return Err("dispatcher and worker must have distinct terminal handles".into());
+        }
+        for path in [&self.dispatcher, &self.worker]
+            .into_iter()
+            .filter_map(|peer| peer.agent_executable.as_ref())
+        {
+            crate::config::absolute(path)?;
         }
         self.validate_core()?;
         Ok(())
@@ -116,9 +128,12 @@ impl Binding {
         }
         Ok(())
     }
+    /// The Agent's Hook facts come first; container fields are only an extra check.
     pub fn check(&self, member: &Member, transport: &impl Transport) -> Result<()> {
+        crate::feedback::require_unchanged(&self.config.feedback_registry, &member.context)?;
         let value = get(&self.config, &member.handle, transport)?;
-        self.verify(member, &value)
+        self.verify(member, &value)?;
+        super::tui::check_process(&self.config, member, transport)
     }
     pub fn verify(&self, member: &Member, value: &serde_json::Value) -> Result<()> {
         if self.config.runtime == Runtime::Core {
@@ -127,7 +142,7 @@ impl Binding {
         if member.terminal_id.is_none() || member.workspace_id.is_none() {
             return Err("missing bound TUI location".into());
         }
-        session(&member.context, value)?;
+        super::tui::session_matches(member, value)?;
         if text(value, "/pane_id")? != member.handle
             || value["terminal_id"].as_str() != member.terminal_id.as_deref()
             || value["workspace_id"].as_str() != member.workspace_id.as_deref()
@@ -148,25 +163,17 @@ fn same_team(dispatcher: &Context, worker: &Context) -> Result<()> {
 }
 fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<Member> {
     let context = model::load(&config.feedback_registry, &peer.instance)?;
+    // The Agent's own SessionStart (or explicit registration) is the identity; no wait loop.
+    let session = crate::feedback::registered_session(&config.feedback_registry, &context)?
+        .ok_or("native session not registered yet; bind after the Agent's SessionStart")?;
+    crate::feedback::require_unchanged(&config.feedback_registry, &context)?;
     let value = get(config, &peer.handle, transport)?;
     if config.runtime == Runtime::Core {
-        return super::core::capture(context, peer, &value);
+        let mut member = super::core::capture(context, peer, &value)?;
+        member.native_session = Some(session);
+        return Ok(member);
     }
-    capture_tui(context, peer, &value)
-}
-fn capture_tui(context: Context, peer: &Peer, agent: &serde_json::Value) -> Result<Member> {
-    session(&context, agent)?;
-    let handle = text(agent, "/pane_id")?;
-    if peer.handle != handle {
-        return Err("use the exact returned pane handle".into());
-    }
-    Ok(Member {
-        context,
-        handle,
-        terminal_id: Some(text(agent, "/terminal_id")?),
-        workspace_id: Some(text(agent, "/workspace_id")?),
-        core: None,
-    })
+    super::tui::capture(config, context, session, peer, &value, transport)
 }
 fn default_runtime() -> Runtime {
     Runtime::Tui
@@ -182,18 +189,4 @@ pub(super) fn get(
         }
         Runtime::Core => transport.call(config, &strings(&["get", handle])),
     }
-}
-fn session(context: &Context, value: &serde_json::Value) -> Result<()> {
-    let expected = context
-        .registration
-        .native_session_id
-        .as_deref()
-        .ok_or("message binding requires an explicit native session id")?;
-    if text(value, "/agent")? != context.registration.agent.name()
-        || text(value, "/agent_session/kind")? != "id"
-        || text(value, "/agent_session/value")? != expected
-    {
-        return Err("bound Agent kind or native session changed".into());
-    }
-    Ok(())
 }

@@ -2,6 +2,7 @@ mod binding;
 mod cli;
 mod core;
 mod transport;
+mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
