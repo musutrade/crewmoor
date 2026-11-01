@@ -635,3 +635,20 @@ fn the_session_check_skips_an_unfinished_last_line_but_not_corrupt_records() {
     fs::create_dir(&journal).unwrap();
     assert!(feedback::require_unchanged(&registry, &context).is_err());
 }
+#[test]
+fn the_hook_halt_is_reported_before_a_changed_container_session() {
+    let setup = Setup::new();
+    let (binding, _root) = bound(&setup);
+    assert!(!setup.session_start("worker", AgentKind::Codex, "after-clear", "clear"));
+    // Herdr reports the new session too, as it does after a real /clear.
+    let path = setup.socket.with_extension("json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let pane = setup.fakes[1].pane_id();
+    state[&pane]["agent_session"] = json!({"kind":"id","value":"after-clear"});
+    fs::write(&path, state.to_string()).unwrap();
+    let error = message::send(&binding, &request("after-clear"), &Native).unwrap_err();
+    let error = error.to_string();
+    assert!(error.contains("team halted"), "{error}");
+    assert!(!error.contains("native session changed"), "{error}");
+    assert!(!setup.socket.with_extension("submitted").exists());
+}

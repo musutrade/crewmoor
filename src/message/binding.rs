@@ -128,11 +128,12 @@ impl Binding {
         }
         Ok(())
     }
+    /// The Agent's Hook facts come first; container fields are only an extra check.
     pub fn check(&self, member: &Member, transport: &impl Transport) -> Result<()> {
+        crate::feedback::require_unchanged(&self.config.feedback_registry, &member.context)?;
         let value = get(&self.config, &member.handle, transport)?;
         self.verify(member, &value)?;
-        super::tui::check_process(&self.config, member, transport)?;
-        crate::feedback::require_unchanged(&self.config.feedback_registry, &member.context)
+        super::tui::check_process(&self.config, member, transport)
     }
     pub fn verify(&self, member: &Member, value: &serde_json::Value) -> Result<()> {
         if self.config.runtime == Runtime::Core {
