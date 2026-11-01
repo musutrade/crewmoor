@@ -25,10 +25,11 @@ pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     capture_holders(r, runner)
 }
 fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    let args = launch_args(r)?;
     r.request_issued = true;
     r.phase = "agent-request-intent".into();
     r.save()?;
-    let value = runner.call(r, &launch_args(r))?;
+    let value = runner.call(r, &args)?;
     r.accepted = Some(true);
     let handle = text(&value, "/address")?;
     if let Some(app) = &r.config.app {
@@ -49,7 +50,7 @@ fn instance_status(r: &Record, runner: &impl Runner) -> Result<Value> {
     }
     Ok(value)
 }
-pub fn launch_args(r: &Record) -> Vec<String> {
+pub fn launch_args(r: &Record) -> Result<Vec<String>> {
     let mut args = strings(&[
         "run",
         "--bg",
@@ -67,17 +68,24 @@ pub fn launch_args(r: &Record) -> Vec<String> {
         &format!("crewmoor-team={}", r.config.team),
     ]));
     if let Some(app) = &r.config.app {
+        let (space, tab) = app.local_ids()?;
         args.extend(strings(&[
             "--keep",
             "--label",
-            &format!("herdr.space={}", app.space_local()),
+            &format!("herdr.space={space}"),
             "--label",
-            &format!("herdr.tab={}", app.tab_local()),
+            &format!("herdr.tab={tab}"),
+        ]));
+    }
+    if let Some(project) = &r.project {
+        args.extend(strings(&[
+            "--label",
+            &format!("crewmoor-project={}", project.id),
         ]));
     }
     args.push("--".into());
     args.extend(r.config.argv());
-    args
+    Ok(args)
 }
 pub fn target(r: &Record, runner: &impl Runner) -> Result<Value> {
     let handle = r.handle.as_deref().ok_or("missing returned terminal")?;

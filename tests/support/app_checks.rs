@@ -14,14 +14,14 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-fn binding(base: &std::path::Path) -> Binding {
+pub(super) fn binding(base: &std::path::Path) -> Binding {
     Binding {
         session: "app-stable".into(),
         socket: base.join("existing.sock"),
         core_id: "own-core".into(),
         machine: "user-machine".into(),
-        space_id: "user-machine/sp-existing".into(),
-        tab_id: "tb-existing".into(),
+        space_id: Some("user-machine/sp-existing".into()),
+        tab_id: Some("tb-existing".into()),
     }
 }
 #[test]
@@ -39,7 +39,7 @@ fn app_both_agents_use_keep_local_labels_and_preserve_external_host_even_when_em
             assert_eq!(r.binding_scope, "terminal");
             assert_eq!(r.app_terminal.as_deref(), Some("user-machine/t7"));
             assert!(r.process_verified);
-            let args = crewmoor::core::launch_args(&r);
+            let args = crewmoor::core::launch_args(&r).unwrap();
             assert!(args.contains(&"--keep".to_owned()));
             assert!(args.contains(&"herdr.space=sp-existing".to_owned()));
             assert!(args.contains(&"herdr.tab=tb-existing".to_owned()));
@@ -212,7 +212,7 @@ fn app_missing_layout_or_wrong_space_tab_withholds_without_creating_layout() {
     }
     let (dir, mut cfg, fake) = common::setup(Runtime::Core);
     let mut app = binding(dir.path());
-    app.tab_id = "wrong-existing-target".into();
+    app.tab_id = Some("wrong-existing-target".into());
     cfg.app = Some(app);
     let root = dir.path().join("i");
     assert!(engine::launch(cfg, &root, &fake).is_err());
@@ -247,21 +247,32 @@ fn wrong_existing_core_rpc_identity_refuses_before_run() {
 
 #[test]
 fn native_app_path_uses_real_json_rpc_socket_without_cli_spawn_or_host_shutdown() {
+    native_transport(AgentKind::Codex, false);
+}
+pub(super) fn native_transport(kind: AgentKind, auto: bool) {
     let dir = common::directory();
     let mut cfg = common::config(dir.path(), Runtime::Core);
     cfg.runtime_version = "hc 0.1.15".into();
     cfg.runtime_binary = "/no-cli-spawn-allowed".into();
     cfg.app = Some(binding(dir.path()));
+    cfg.agent = kind;
+    if auto {
+        let app = cfg.app.as_mut().unwrap();
+        app.space_id = None;
+        app.tab_id = None;
+    }
     let listener = UnixListener::bind(&cfg.app.as_ref().unwrap().socket).unwrap();
     let mut server = clean_child(dir.path(), false);
     let mut holder = clean_child(dir.path(), false);
     let server_pid = server.id();
     let holder_pid = holder.id();
     let cwd = dir.path().to_path_buf();
-    let fixture = std::thread::spawn(move || rpc_fixture(listener, &cwd, server_pid, holder_pid));
+    let fixture =
+        std::thread::spawn(move || rpc_fixture(listener, &cwd, server_pid, holder_pid, auto));
     let mut r = engine::launch(cfg, &dir.path().join("i"), &Native).unwrap();
     assert!(r.process_verified);
     assert_eq!(r.accepted, Some(true));
+    assert_eq!(r.project.is_some(), auto);
     engine::stop(&mut r, &Native).unwrap();
     assert_eq!(r.phase, "target-stopped-host-retained");
     assert!(r.binding().is_err());
@@ -278,6 +289,7 @@ fn rpc_fixture(
     cwd: &std::path::Path,
     server: u32,
     holder: u32,
+    auto: bool,
 ) -> Vec<String> {
     let mut calls = Vec::new();
     let mut agent = None;
@@ -299,7 +311,7 @@ fn rpc_fixture(
         let result = match method {
             "doc.get" => {
                 assert_eq!(request["params"], json!({"name":"herdr-app"}));
-                json!({"version":1,"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"tb-existing"}]}]}})
+                rpc_document(auto)
             }
             "server.status" => {
                 json!({"version":"0.1.15","pid":server,"core":{"id":"own-core","name":"fixture"},
@@ -329,6 +341,13 @@ fn rpc_fixture(
     }
     assert!(removed);
     calls
+}
+fn rpc_document(auto: bool) -> Value {
+    if auto {
+        json!({"version":0,"value":null})
+    } else {
+        json!({"version":1,"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"tb-existing"}]}]}})
+    }
 }
 fn rpc_reply(result: Value, removed: bool, method: &str) -> Value {
     if removed && method == "terminal.get" {

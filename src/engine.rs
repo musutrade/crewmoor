@@ -9,7 +9,8 @@ use crate::{
 };
 use std::{fs, path::Path};
 
-pub fn launch(config: Config, root: &Path, runner: &impl Runner) -> Result<Record> {
+pub fn launch(mut config: Config, root: &Path, runner: &impl Runner) -> Result<Record> {
+    config.resolve_target()?;
     let mut record = Record::prepare(config, root)?;
     let _lock = record.lock()?;
     let result = start(&mut record, runner);
@@ -149,6 +150,7 @@ pub fn read_config(path: &Path) -> Result<Config> {
     Ok(toml::from_str(&fs::read_to_string(path)?)?)
 }
 pub fn launch_native(mut config: Config, root: &Path) -> Result<Record> {
+    config.resolve_target()?;
     config.validate()?;
     config.agent_executable = config.agent_executable.canonicalize()?;
     crate::native::versions_config(&config)?;

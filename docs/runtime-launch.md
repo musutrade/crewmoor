@@ -10,7 +10,7 @@ The [official TUI LLM index](https://herdr.dev/llms.txt) currently pins stable 0
 |---|---|
 | TUI 0.9.5 | private server → workspace create → returned root pane → agent start → one process-info → pane close → empty owned workspace close |
 | core 0.1.15 | private named Unix-socket core → run → returned terminal → get → kill/rm |
-| App on core 0.1.15 | specified existing socket/core → read existing layout → run with keep/space/tab labels → get → owned kill/rm; host retained |
+| App on core 0.1.15 | confirmed target + project cwd → recorded project IDs (or explicit existing IDs) → run with keep/adoption labels → get → owned kill/rm; host retained |
 
 TUI calls `agent start ROLE --kind codex|claude --pane RETURNED_PANE --timeout 5000 -- AGENT_ARGS`. Its existing shell-busy handling and internal readiness wait are reused. CrewMoor does not add a busy loop, ready gate or status adapter. This installed CLI has a two-second busy-retry window; that is not an end-to-end two-second deadline. A slow/unavailable shell may still produce an unknown launch.
 
@@ -29,7 +29,7 @@ CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/
 
 Every invocation uses its own absolute target directory, inherited by all Cargo/LLVM children. Root `Cargo.toml` is a business crate, not N/A. Fmt, zero-suppression policy, Clippy `-D warnings`, actual tests/LLVM coverage and per-function CRAP ≤10 all remain required. No shared target is cleaned.
 
-Choose an example from `examples/` and pin the installed versions. Current inspected versions are TUI 0.9.5, core 0.1.15, Codex 0.166.0 and Claude 2.1.314. Both kinds accept `--model`; only Codex accepts `-m`, `--no-alt-screen` and `--no-daemon`.
+Choose an example from `examples/` and pin the installed versions. Current inspected versions are TUI 0.9.5, core 0.1.15, Codex 0.166.0 and Claude 2.1.316. Both kinds accept `--model`; only Codex accepts `-m`, `--no-alt-screen` and `--no-daemon`.
 
 ```text
 crewmoor launch /absolute/config.toml /tmp/fresh-state
@@ -37,7 +37,7 @@ crewmoor inspect /tmp/fresh-state
 crewmoor stop /tmp/fresh-state
 ```
 
-State must be new, absolute and ≤45 bytes for Unix socket paths. Private mode binds each team to one randomly named instance in the selected store. Optional [App binding](app-launch.md) instead selects an explicit existing external core and binds only this team's terminal; it never owns that server. Keep one binding namespace per installation. The record maps configured team/role to session/container, workspace/pane/terminal or core address/generation, accepted/unknown admission, and any verified Agent PID/start/executable/cwd. Config role is an assigned logical identity, not invented native evidence.
+State must be new, absolute and ≤45 bytes for Unix socket paths. Private mode binds each team to one randomly named instance. Optional [App binding](app-launch.md) selects a confirmed existing target (inline or `app_target` file) and owns only its terminal. With both space/tab IDs omitted, core-id + canonical cwd identifies the persisted project placement; no manual Space setup or ID lookup is needed. Explicit existing IDs remain supported. Keep one store per installation. The receipt records team/role, project ownership/IDs, container/native handle, admission and verified process facts; configured role is not invented native evidence.
 
 A startup intent is saved before the single native startup call. Native/version calls have a ten-second bound plus at most one second to reap their own timed-out CLI. Native error/timeout is unknown admission and never triggers another CrewMoor startup call. TUI performs one process-info observation even after the CLI reports a startup error; core uses its returned address and a full get. Neither command exit 0 nor `accepted=true` proves an Agent process. `process_verified` is only resource evidence. No terminal content, unrelated foreground argv or native semantic status is stored.
 
@@ -57,4 +57,4 @@ Future children retain user authentication, tools, HOME/PATH, Cargo/Rustup and a
 
 Rust transport tests cover both runtimes × both Agents, official response shapes, unknown admission without resend, target mismatch refusal, partial cleanup with extra user resources, exit/socket evidence, environment inheritance and minimal evidence storage. Synthetic alias tests never execute `gh auth token`.
 
-[Historical v9 evidence](issue-2-v9-real-acceptance.md) proves a core/Codex launch and complete stop, while TUI input was withheld. It is capability history tied to 769f966/v9, not a real pass for the simplified candidate. Both prior permissions are consumed. The [next minimal acceptance proposal](issue-2-minimal-acceptance.md) needs new explicit permission; no real Agent/container was started during this simplification. The old core and all user/Windows resources stay under HOLD.
+[Evidence layers](issue-2-current-evidence.md) distinguish 769/v9 core history, a1's explicit App Claude real pass, external native auto-Space probes, and the new project entrypoint. TUI real acceptance remains pending. The [next minimal proposal](issue-2-minimal-acceptance.md) requires fresh exact-candidate authorization; no real launch is authorized by implementing this change. Old core/user resources remain HOLD.

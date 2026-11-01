@@ -39,6 +39,7 @@ pub struct Config {
     #[serde(default)]
     pub agent_args: Vec<String>,
     pub app: Option<crate::app::Binding>,
+    pub app_target: Option<PathBuf>,
 }
 pub fn name(value: &str) -> Result<()> {
     if value.is_empty() || value.len() > 24 {
@@ -53,6 +54,17 @@ pub fn name(value: &str) -> Result<()> {
     Ok(())
 }
 impl Config {
+    pub fn resolve_target(&mut self) -> Result<()> {
+        let Some(path) = self.app_target.take() else {
+            return Ok(());
+        };
+        if self.app.is_some() {
+            return Err("choose app or app_target, not both".into());
+        }
+        absolute(&path)?;
+        self.app = Some(toml::from_str(&std::fs::read_to_string(path)?)?);
+        Ok(())
+    }
     pub fn validate(&self) -> Result<()> {
         name(&self.team)?;
         name(&self.role)?;

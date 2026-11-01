@@ -16,8 +16,8 @@ pub struct Binding {
     pub socket: PathBuf,
     pub core_id: String,
     pub machine: String,
-    pub space_id: String,
-    pub tab_id: String,
+    pub space_id: Option<String>,
+    pub tab_id: Option<String>,
 }
 impl Binding {
     pub fn validate(&self, runtime: &Runtime) -> Result<()> {
@@ -28,18 +28,29 @@ impl Binding {
         component(&self.core_id)?;
         component(&self.machine)?;
         crate::config::absolute(&self.socket)?;
-        local_id(&self.machine, &self.space_id)?;
-        local_id(&self.machine, &self.tab_id)?;
+        self.validate_ids()?;
         Ok(())
     }
-    pub fn space_local(&self) -> &str {
-        local_part(&self.machine, &self.space_id)
+    fn validate_ids(&self) -> Result<()> {
+        match (&self.space_id, &self.tab_id) {
+            (None, None) => Ok(()),
+            (Some(_), Some(_)) => self.local_ids().map(|_| ()),
+            _ => Err("provide both space_id and tab_id, or omit both for project placement".into()),
+        }
     }
-    pub fn tab_local(&self) -> &str {
-        local_part(&self.machine, &self.tab_id)
+    pub fn local_ids(&self) -> Result<(&str, &str)> {
+        let space = self
+            .space_id
+            .as_deref()
+            .ok_or("project space not resolved")?;
+        let tab = self.tab_id.as_deref().ok_or("project tab not resolved")?;
+        Ok((
+            local_id(&self.machine, space)?,
+            local_id(&self.machine, tab)?,
+        ))
     }
 }
-fn component(value: &str) -> Result<()> {
+pub(crate) fn component(value: &str) -> Result<()> {
     if value.is_empty()
         || !value
             .bytes()
@@ -94,11 +105,16 @@ fn terminal_request(action: &str, terminal: &str) -> Result<(&'static str, Value
 }
 fn run_params(r: &Record) -> Result<Value> {
     let app = r.config.app.as_ref().ok_or("missing App binding")?;
+    let (space, tab) = app.local_ids()?;
+    let mut labels = json!({"crewmoor-owner":r.owner,"crewmoor-team":r.config.team,
+        "herdr.space":space,"herdr.tab":tab});
+    if let Some(project) = &r.project {
+        labels["crewmoor-project"] = json!(project.id);
+    }
     Ok(
         json!({"argv":r.config.argv(),"cwd":r.config.cwd,"name":r.config.role,
         "keep":true,"no_parent":true,"no_notify":true,"wait":false,"env":{},
-        "labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team,
-            "herdr.space":app.space_local(),"herdr.tab":app.tab_local()}}),
+        "labels":labels}),
     )
 }
 pub fn exchange(socket: &std::path::Path, method: &str, params: Value) -> Result<Value> {
@@ -160,26 +176,27 @@ pub fn check_host(r: &Record, status: &Value) -> Result<()> {
     }
     Ok(())
 }
-pub fn check_layout(r: &Record, runner: &impl crate::native::Runner) -> Result<()> {
-    let Some(app) = &r.config.app else {
+pub fn check_layout(r: &mut Record, runner: &impl crate::native::Runner) -> Result<()> {
+    let Some(app) = r.config.app.clone() else {
         return Ok(());
     };
     let doc = runner.call(r, &strings(&["app-document"]))?;
-    existing_layout(app, &doc)
+    if app.space_id.is_none() && app.tab_id.is_none() {
+        return crate::project::prepare(r, &app, &doc);
+    }
+    existing_layout(&app, &doc)
 }
 pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
+    let (space_id, tab_id) = app.local_ids()?;
     let spaces = doc["value"]["spaces"]
         .as_array()
         .ok_or("App layout unavailable; request withheld")?;
     let space = spaces
         .iter()
-        .find(|s| s["id"].as_str() == Some(app.space_local()))
+        .find(|s| s["id"].as_str() == Some(space_id))
         .ok_or("configured App space does not exist; request withheld")?;
     let tabs = space["tabs"].as_array().ok_or("App tabs unavailable")?;
-    if !tabs
-        .iter()
-        .any(|t| t["id"].as_str() == Some(app.tab_local()))
-    {
+    if !tabs.iter().any(|t| t["id"].as_str() == Some(tab_id)) {
         return Err("configured App tab does not exist in this space; request withheld".into());
     }
     Ok(())

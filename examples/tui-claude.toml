@@ -7,5 +7,5 @@ runtime_binary = "/home/gem/.local/bin/herdr"
 runtime_version = "herdr 0.9.5"
 agent = "claude"
 agent_executable = "/home/gem/.local/bin/claude"
-agent_version = "2.1.314 (Claude Code)"
+agent_version = "2.1.316 (Claude Code)"
 agent_args = []

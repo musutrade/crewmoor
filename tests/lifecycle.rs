@@ -4,6 +4,8 @@ mod app_checks;
 mod common;
 #[path = "support/environment_checks.rs"]
 mod environment_checks;
+#[path = "support/project_checks.rs"]
+mod project_checks;
 #[path = "support/schema_checks.rs"]
 mod schema_checks;
 use crewmoor::{
@@ -39,7 +41,7 @@ fn four_combinations_use_native_handles_and_keep_hook_status_unknown() {
             engine::verified_process(&r).unwrap();
             let args = match runtime {
                 Runtime::Tui => tui::launch_args(&r).unwrap(),
-                Runtime::Core => core::launch_args(&r),
+                Runtime::Core => core::launch_args(&r).unwrap(),
             };
             assert!(fake.calls.borrow().contains(&args));
             assert_native_contract(&r, &fake);

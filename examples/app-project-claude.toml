@@ -1,0 +1,14 @@
+# For each project select cwd + an already-confirmed connection profile.
+# Template paths must be filled before use. No space/tab IDs are needed.
+team = "project-claude"
+role = "dev-claude"
+runtime = "core"
+cwd = "/absolute/project"
+store = "/absolute/crewmoor/bindings"
+app_target = "/absolute/crewmoor/targets/vps.toml"
+runtime_binary = "/absolute/herdr-core"
+runtime_version = "hc 0.1.15"
+agent = "claude"
+agent_executable = "/absolute/canonical/claude"
+agent_version = "2.1.316 (Claude Code)"
+agent_args = []

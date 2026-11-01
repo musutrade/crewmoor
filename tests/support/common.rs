@@ -29,6 +29,7 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         agent_version: "fixture 1".into(),
         agent_args: Vec::new(),
         app: None,
+        app_target: None,
     }
 }
 #[derive(Default)]
@@ -59,6 +60,7 @@ pub struct Fake {
     pub leave_actor: RefCell<bool>,
     pub leave_holder: RefCell<bool>,
     pub leave_socket: RefCell<bool>,
+    pub app_doc: RefCell<Option<Value>>,
 }
 fn spawn(r: &Record) -> Result<Child> {
     use std::io::Read;
@@ -127,6 +129,7 @@ impl Fake {
     fn start(&self, r: &Record) -> Result<()> {
         let saved = Record::load(&r.root)?;
         assert!(saved.request_issued);
+        assert_eq!(saved.project, r.project);
         if !*self.no_agent.borrow() {
             *self.agent.borrow_mut() = Some(spawn(r)?);
         }
@@ -149,9 +152,9 @@ impl Fake {
                 Ok(json!({"removed":"t7"}))
             }
             Some("ls") => Ok(self.inventory()),
-            Some("app-document") => Ok(
+            Some("app-document") => Ok(self.app_doc.borrow().clone().unwrap_or_else(||
                 json!({"version":1,"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"tb-existing"}]}]}}),
-            ),
+            )),
             _ => Err("unexpected core call".into()),
         }
     }

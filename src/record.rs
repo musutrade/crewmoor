@@ -38,6 +38,7 @@ pub struct Record {
     pub server_owned: bool,
     pub binding_scope: String,
     pub app_terminal: Option<String>,
+    pub project: Option<crate::project::Project>,
 }
 impl Record {
     pub fn prepare(config: Config, root: &Path) -> Result<Self> {
@@ -81,6 +82,7 @@ impl Record {
             server_owned,
             binding_scope: if server_owned { "instance" } else { "terminal" }.into(),
             app_terminal: None,
+            project: None,
         };
         result.save()?;
         result.bind()?;

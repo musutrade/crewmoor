@@ -6,6 +6,7 @@ pub mod failure;
 pub mod holders;
 pub mod native;
 pub mod process;
+pub mod project;
 pub mod record;
 pub mod transport;
 pub mod tui;
