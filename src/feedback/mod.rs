@@ -3,7 +3,7 @@ mod cli;
 mod event;
 pub mod install;
 mod journal;
-mod model;
+pub(crate) mod model;
 pub use cli::cli;
 pub use event::{ingest, report};
 pub use journal::show;

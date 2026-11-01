@@ -5,6 +5,7 @@ pub mod engine;
 pub mod failure;
 pub mod feedback;
 pub mod holders;
+pub mod message;
 pub mod native;
 pub mod process;
 pub mod project;
