@@ -6,6 +6,18 @@ approved the plan (`plan.json` SHA-256 `c2f54d7c…cb94c`) and the user chose
 callback option A. The run was executed once and nothing was retried.
 **Issue #15 stays OPEN; the dispatcher decides closure.**
 
+**Code revision.** The real run used `f645a32`. Audit AUDIT_RESULT-001 then
+returned needs-fix, and four fixes were made after this run:
+
+- role names are validated before any path is used;
+- a Hook-recorded session change halts bind and send;
+- a new TUI binding must locate the Agent process;
+- the smoke driver keeps the path of a team it created, even after a partial
+  start.
+
+These fixes have synthetic regression tests only. The real results below
+describe `f645a32`, not the fixed candidate.
+
 ## Setup
 
 | Item | Value |

@@ -71,6 +71,19 @@ pub fn registered_session(registry: &Path, context: &Context) -> Result<Option<S
     let root = model::instance_dir(registry, &context.instance)?;
     Ok(stored(&root)?.or_else(|| context.registration.native_session_id.clone()))
 }
+/// Refuse when the Agent's own Hook already reported a different session for this
+/// instance. Read-only: the association is kept and the new session is never adopted.
+pub fn require_unchanged(registry: &Path, context: &Context) -> Result<()> {
+    let root = model::instance_dir(registry, &context.instance)?;
+    let _lock = crate::record::Lock::take(&root)?;
+    let changed = read_events(&root)?
+        .into_iter()
+        .any(|e| e.source == REJECTED && e.native["from"] == "native-hook");
+    if changed {
+        return Err("Hook reported a changed native session; team halted, binding kept".into());
+    }
+    Ok(())
+}
 fn bind(root: &Path, context: &Context, session: &str, enroll: bool) -> Result<()> {
     let path = root.join("native-session.json");
     if path.exists() {

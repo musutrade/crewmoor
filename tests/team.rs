@@ -441,3 +441,93 @@ fn core_markers_need_an_app_target_and_travel_in_the_terminal_env_field() {
 fn uuid() -> String {
     "0123456789abcdef0123456789abcdef".into()
 }
+#[test]
+fn role_names_are_checked_before_any_write_and_again_when_loading() {
+    let setup = Setup::new();
+    let outside = setup.base().join("outside-team");
+    for bad in [
+        outside.display().to_string(),
+        "..".into(),
+        "a/b".into(),
+        "Lead".into(),
+    ] {
+        let mut cfg = setup.team();
+        cfg.roles[1].role = bad.clone();
+        cfg.dispatcher = bad.clone();
+        let result = team::start(cfg, setup.dir.path(), &mut |_, _| {
+            Err("an invalid role must never reach launch".into())
+        });
+        assert!(result.is_err(), "{bad}");
+        assert!(!setup.dir.path().join("teams").exists(), "{bad}");
+        assert!(!outside.exists());
+    }
+    // A tampered snapshot is refused by bind and stop before any role path is used.
+    let mut team = serde_json::to_value(setup.team()).unwrap();
+    team["roles"][0]["role"] = json!(outside);
+    let dir = setup.dir.path().join("teams/tampered");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("team.json"), team.to_string()).unwrap();
+    assert!(team::bind(&dir, "lead", &Native).is_err());
+    let mut visited = Vec::new();
+    let stopped = team::stop(&dir, &mut |root| {
+        visited.push(root.to_path_buf());
+        Record::load(root)
+    });
+    assert!(stopped.is_err());
+    assert!(visited.is_empty());
+}
+#[test]
+fn hook_session_change_halts_messages_without_a_container_session() {
+    let setup = Setup::new();
+    setup.start().unwrap();
+    setup.native_state();
+    assert!(setup.session_start("lead", AgentKind::Claude, "lead-session", "startup"));
+    assert!(setup.session_start("worker", AgentKind::Codex, "worker-session", "startup"));
+    team::bind(&setup.team_dir(), "worker", &Native).unwrap();
+    let path = setup.team_dir().join("roles/worker/binding.json");
+    let saved = fs::read(&path).unwrap();
+    let binding: Binding = serde_json::from_slice(&saved).unwrap();
+    let request = Message {
+        id: "after-clear".into(),
+        from: "lead".into(),
+        to: "worker".into(),
+        reply_to: None,
+        content: "must not reach the new session".into(),
+    };
+    // A rejected explicit report alone is not a Hook session fact.
+    let report = feedback::report_to(&binding, "other", "agent", "progress", "x", &Native);
+    assert!(report.is_err());
+    assert!(message::send(&binding, &request, &Native).is_ok());
+    fs::remove_file(setup.socket.with_extension("submitted")).unwrap();
+    // Same Codex process, no container session: the Hook's rejection fact halts routing.
+    assert!(!setup.session_start("worker", AgentKind::Codex, "after-clear", "clear"));
+    let error = message::send(&binding, &request, &Native)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("team halted"));
+    assert!(!setup.socket.with_extension("submitted").exists());
+    let reverse = Message {
+        from: "worker".into(),
+        to: "lead".into(),
+        ..request
+    };
+    assert!(message::send(&binding, &reverse, &Native).is_err());
+    assert_eq!(fs::read(&path).unwrap(), saved);
+    let registry = setup.base().join("registry");
+    let path = setup.team_dir().join("roles/worker/context.json");
+    let context: feedback::Context = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let session = feedback::registered_session(&registry, &context).unwrap();
+    assert_eq!(session.as_deref(), Some("worker-session"));
+}
+#[test]
+fn a_new_binding_is_refused_once_the_hook_reported_a_changed_session() {
+    let setup = Setup::new();
+    setup.start().unwrap();
+    setup.native_state();
+    assert!(setup.session_start("lead", AgentKind::Claude, "lead-session", "startup"));
+    assert!(setup.session_start("worker", AgentKind::Codex, "worker-session", "startup"));
+    assert!(!setup.session_start("worker", AgentKind::Codex, "after-clear", "clear"));
+    let error = team::bind(&setup.team_dir(), "worker", &Native).unwrap_err();
+    assert!(error.to_string().contains("team halted"));
+    assert!(!setup.team_dir().join("roles/worker/binding.json").exists());
+}

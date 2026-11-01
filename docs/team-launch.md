@@ -28,6 +28,10 @@ discovery.
 
 ## Configuration
 
+Team and role names follow the same rule (1..24 lowercase letters, digits or `-`)
+and are checked before anything is written, and again whenever `team.json` is
+loaded, so a role name can never point outside its team directory.
+
 `runtime` is declared once for the whole team; a role cannot set its own runtime
 (`deny_unknown_fields` rejects it). One team uses one container. `team start`
 accepts `runtime = "tui"` with an existing `host`; see
@@ -114,7 +118,9 @@ exactly the ones recorded by this team directory's launch records.
   explicit registration session) is authoritative.
 - **Location uses process identity.** TUI uses `pane process-info` to find the
   single foreground process of the Agent kind, then checks PID, start time,
-  executable and cwd. Core checks terminal generation, argv, PID and cwd.
+  executable and cwd. Core checks terminal generation, argv, PID and cwd. A new
+  TUI binding must supply each peer's `agent_executable` and always locates the
+  process; only bindings saved before #15 may lack a process identity.
 - **Herdr `agent_session` is an extra check.** When present it must equal the
   registered session. When absent (idle Codex), the bound process identity is
   required instead. Bindings saved before #15 still load; they keep their earlier
@@ -134,6 +140,14 @@ explicit report arrives with a different session, the journal appends one record
 {"source":"session-rejected","event":"SessionStart","native_session_id":"NEW",
  "native":{"source":"clear","from":"native-hook","associated_session":"OLD"}}
 ```
+
+Once the Agent's own Hook has produced such a record for a role, `message bind`,
+`team bind` and every `message send` (and so `report-to` forwarding) involving
+that role are refused with "team halted". The refusal is read-only: the saved
+binding and the associated session are kept, and the new session is never
+adopted. This holds even when the container has no session field and the Agent
+process is unchanged (Codex `/clear` keeps its process). A rejected explicit
+report alone does not halt messaging; it is the reporter's input, not a Hook fact.
 
 `feedback show` returns it as `latest_session_rejection`; `agent_state` stays
 `unknown` and the record is not a business report. Exit is recorded by the
@@ -197,3 +211,7 @@ wait for both SessionStart records, bind, one report-to and one dispatcher reply
 directory with `SHA256SUMS`. Nothing is retried. Team stop is always attempted
 once if a team directory was created. Waits read only Hook journals and files
 written by the Agents. They never read terminal output or container state.
+The driver derives the team directory `<state>/teams/<team>` from the approved
+config before start. It refuses to run if that directory already exists. When it
+created the directory, the driver keeps the path even if `team start` fails part
+way, so the single stop still runs. It never scans other teams.

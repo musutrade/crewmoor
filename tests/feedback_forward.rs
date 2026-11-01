@@ -1,3 +1,5 @@
+#[path = "support/agents.rs"]
+mod agents;
 use crewmoor::{
     config::{AgentKind, Runtime},
     feedback::{self, Evidence, Registration},
@@ -11,6 +13,7 @@ struct Fixture {
     _socket: UnixListener,
     binding: Binding,
     trace: Trace,
+    _agents: agents::Agents,
 }
 #[derive(Default)]
 struct Trace {
@@ -41,15 +44,17 @@ impl Fixture {
             dispatcher: Peer {
                 instance: dispatcher,
                 handle: "w1:p1".into(),
-                agent_executable: None,
+                agent_executable: Some(agents::EXECUTABLE.into()),
             },
             worker: Peer {
                 instance: worker,
                 handle: "w1:p2".into(),
-                agent_executable: None,
+                agent_executable: Some(agents::EXECUTABLE.into()),
             },
         };
-        let state = json!({"w1:p1":agent("w1:p1","one","dispatcher-session"),"w1:p2":agent("w1:p2","two","worker-session")});
+        let agents = agents::Agents::spawn(dir.path(), &[("w1:p1", "codex"), ("w1:p2", "codex")]);
+        let state = json!({"w1:p1":agent("w1:p1","one","dispatcher-session"),"w1:p2":agent("w1:p2","two","worker-session"),
+            "processes":agents.processes()});
         fs::write(
             config.socket.with_extension("json"),
             serde_json::to_vec(&state).unwrap(),
@@ -61,6 +66,7 @@ impl Fixture {
             _socket: listener,
             binding,
             trace: Trace::default(),
+            _agents: agents,
         }
     }
     fn report(&self, summary: &str) -> crewmoor::Result<Value> {

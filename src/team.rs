@@ -53,6 +53,7 @@ impl Team {
                     .into(),
             );
         }
+        self.validate_names()?;
         let mut names: Vec<_> = self.roles.iter().map(|r| r.role.as_str()).collect();
         names.sort_unstable();
         names.dedup();
@@ -60,6 +61,13 @@ impl Team {
             return Err("team needs at least two distinct roles".into());
         }
         self.role(&self.dispatcher).map(|_| ())
+    }
+    /// Role names become path components: same rule as team names, checked before any write.
+    fn validate_names(&self) -> Result<()> {
+        for role in &self.roles {
+            crate::config::name(&role.role)?;
+        }
+        crate::config::name(&self.dispatcher)
     }
     pub fn role(&self, name: &str) -> Result<&Role> {
         self.roles

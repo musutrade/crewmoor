@@ -1,3 +1,5 @@
+#[path = "support/agents.rs"]
+mod agents;
 use crewmoor::{
     config::AgentKind,
     config::Runtime,
@@ -11,6 +13,7 @@ struct Fixture {
     dir: tempfile::TempDir,
     _socket: UnixListener,
     config: Config,
+    agents: agents::Agents,
 }
 impl Fixture {
     fn new() -> Self {
@@ -27,20 +30,22 @@ impl Fixture {
             socket,
             feedback_registry: dir.path().into(),
             dispatcher: Peer {
-                agent_executable: None,
+                agent_executable: Some(agents::EXECUTABLE.into()),
                 instance: dispatcher,
                 handle: "w1:p1".into(),
             },
             worker: Peer {
-                agent_executable: None,
+                agent_executable: Some(agents::EXECUTABLE.into()),
                 instance: worker,
                 handle: "w1:p2".into(),
             },
         };
+        let agents = agents::Agents::spawn(dir.path(), &[("w1:p1", "codex"), ("w1:p2", "claude")]);
         let result = Self {
             dir,
             _socket: listener,
             config,
+            agents,
         };
         result.state(&json!({
             "w1:p1": agent("codex", "codex-1", "w1:p1", "term_one"),
@@ -48,10 +53,15 @@ impl Fixture {
         }));
         result
     }
+    /// Writes the fixture state; pane processes default to the owned held Agents.
     fn state(&self, value: &Value) {
+        let mut value = value.clone();
+        if value.get("processes").is_none() {
+            value["processes"] = self.agents.processes();
+        }
         fs::write(
             self.config.socket.with_extension("json"),
-            serde_json::to_vec(value).unwrap(),
+            serde_json::to_vec(&value).unwrap(),
         )
         .unwrap();
     }
@@ -266,6 +276,14 @@ fn public_cli_binds_once_and_uses_literal_argv_with_isolated_routing_environment
         config_path.display().to_string(),
         binding_path.display().to_string(),
     ];
+    // A new TUI binding must locate the Agent process; without the executable it is refused.
+    let error = message::cli(&bind_args).unwrap_err().to_string();
+    assert!(error.contains("process location"));
+    assert!(!binding_path.exists());
+    for role in ["dispatcher", "worker"] {
+        legacy_config[role]["agent_executable"] = json!(agents::EXECUTABLE);
+    }
+    fs::write(&config_path, serde_json::to_vec(&legacy_config).unwrap()).unwrap();
     message::cli(&bind_args).unwrap();
     assert!(message::cli(&bind_args).is_err());
     let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
@@ -335,8 +353,7 @@ fn saved_pre_issue15_bindings_stay_readable_and_container_session_is_only_additi
 #[test]
 fn tui_process_location_rejects_missing_duplicate_or_moved_panes() {
     let fixture = Fixture::new();
-    let mut config = serde_json::to_value(&fixture.config).unwrap();
-    config["worker"]["agent_executable"] = json!(env!("CARGO_BIN_EXE_transport-fixture"));
+    let config = serde_json::to_value(&fixture.config).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_transport-fixture"))
         .arg("hold")
         .current_dir(fixture.dir.path())
@@ -346,7 +363,7 @@ fn tui_process_location_rejects_missing_duplicate_or_moved_panes() {
     let mut state = json!({
         "w1:p1": agent("codex", "codex-1", "w1:p1", "term_one"),
         "w1:p2": agent("claude", "claude-1", "w1:p2", "term_two"),
-        "processes": {"w1:p2": []}
+        "processes": fixture.agents.processes()
     });
     let cases = [
         json!([]),
@@ -366,4 +383,36 @@ fn tui_process_location_rejects_missing_duplicate_or_moved_panes() {
     child.kill().unwrap();
     child.wait().unwrap();
     assert!(message::send(&binding, &request(), &Native).is_err());
+}
+#[test]
+fn a_new_tui_binding_always_locates_processes_even_with_container_sessions() {
+    let fixture = Fixture::new();
+    let saved = fixture.binding();
+    assert!(saved.dispatcher.process.is_some());
+    assert!(saved.worker.process.is_some());
+    for role in ["dispatcher", "worker"] {
+        let mut config = serde_json::to_value(&fixture.config).unwrap();
+        config[role]["agent_executable"] = Value::Null;
+        let error = Binding::bind(serde_json::from_value(config).unwrap(), &Native).unwrap_err();
+        assert!(error.to_string().contains("process location"));
+    }
+    let mut state = json!({
+        "w1:p1": agent("codex", "codex-1", "w1:p1", "term_one"),
+        "w1:p2": agent("claude", "claude-1", "w1:p2", "term_two"),
+        "processes": {}
+    });
+    fixture.state(&state);
+    let config = serde_json::from_value(serde_json::to_value(&fixture.config).unwrap()).unwrap();
+    assert!(Binding::bind(config, &Native).is_err());
+    // A saved pre-#15 binding without process identity is still read and checked.
+    let mut legacy = serde_json::to_value(&saved).unwrap();
+    for role in ["dispatcher", "worker"] {
+        legacy[role].as_object_mut().unwrap().remove("process");
+    }
+    let legacy: Binding = serde_json::from_value(legacy).unwrap();
+    state["processes"] = fixture.agents.processes();
+    fixture.state(&state);
+    message::send(&legacy, &request(), &Native).unwrap();
+    let pid = saved.worker.process.unwrap().pid;
+    assert_eq!(fixture.agents.processes()["w1:p2"][0]["pid"], json!(pid));
 }

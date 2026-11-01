@@ -76,7 +76,22 @@ fn preflight(run: &Run) -> Result<()> {
         &json!({"path":callback,"sha256":crate::run::sha256(&callback)?}),
     )
 }
+/// The team directory this run will create: `<state>/teams/<team>` from the approved
+/// team config. Owned only if it did not exist before this run's `team start`.
+fn expected_dir(run: &Run) -> Result<PathBuf> {
+    let config = fs::read_to_string(run.get("team_toml")?)?;
+    let name = config
+        .lines()
+        .find_map(|l| l.strip_prefix("team = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .ok_or("team config has no top-level team name")?;
+    Ok(PathBuf::from(run.get("state")?).join("teams").join(name))
+}
 fn start(run: &Run) -> Result<Team> {
+    let expected = expected_dir(run)?;
+    if expected.exists() {
+        return Err("team directory already exists before start; not owned by this run".into());
+    }
     let argv = vec![
         run.get("crewmoor")?,
         "team".into(),
@@ -84,16 +99,18 @@ fn start(run: &Run) -> Result<Team> {
         run.get("team_toml")?,
         run.get("state")?,
     ];
-    let (code, out) = run.exec("team-start", &argv)?;
+    let result = run.exec("team-start", &argv);
+    // Keep the owned path even when start fails part-way, so finish stops it once.
+    if expected.exists() {
+        *run.team_dir.borrow_mut() = Some(expected.clone());
+    }
+    let (code, out) = result?;
     let value: Value = serde_json::from_str(&out).unwrap_or(Value::Null);
-    let dir = value["team_dir"].as_str().map(PathBuf::from);
-    *run.team_dir.borrow_mut() = dir.clone();
-    let dir = dir.ok_or("team start returned no team directory")?;
-    if code != 0 {
-        return Err("team start failed".into());
+    if code != 0 || value["team_dir"].as_str() != expected.to_str() {
+        return Err("team start failed or returned another team directory".into());
     }
     Ok(Team {
-        dir,
+        dir: expected,
         registry: PathBuf::from(run.get("registry")?),
     })
 }
@@ -276,4 +293,57 @@ pub fn finish(run: &Run) -> Result<()> {
     run.exec("agent-list-after", &s(&["herdr", "agent", "list"]))?;
     run.exec("workspace-list-after", &s(&["herdr", "workspace", "list"]))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("crewmoor-smoke-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+    /// A stand-in `crewmoor` that creates the team directory, then fails like a
+    /// partial `team start` (error on stderr, no JSON on stdout).
+    fn partial_start(dir: &Path) -> PathBuf {
+        let script = dir.join("partial-crewmoor");
+        fs::write(
+            &script,
+            "#!/bin/sh\nmkdir -p \"$4/teams/smoke\"\necho 'role worker start failed' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+    fn plan(dir: &Path, crewmoor: &Path) -> Value {
+        fs::write(
+            dir.join("team.toml"),
+            "team = \"smoke\"\nruntime = \"tui\"\n",
+        )
+        .unwrap();
+        json!({"evidence":dir.join("evidence"),"crewmoor":crewmoor,"team_toml":dir.join("team.toml"),
+            "state":dir,"host_socket":dir.join("synthetic.sock")})
+    }
+    #[test]
+    fn partial_start_keeps_the_owned_team_path_for_one_stop() {
+        let dir = scratch("partial");
+        let run = Run::create(plan(&dir, &partial_start(&dir)), "synthetic").unwrap();
+        assert!(start(&run).is_err());
+        assert_eq!(run.team_dir.borrow().clone(), Some(dir.join("teams/smoke")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn an_existing_team_directory_is_never_claimed() {
+        let dir = scratch("existing");
+        fs::create_dir_all(dir.join("teams/smoke")).unwrap();
+        let run = Run::create(plan(&dir, &partial_start(&dir)), "synthetic").unwrap();
+        assert!(start(&run).is_err());
+        assert_eq!(run.team_dir.borrow().clone(), None);
+        assert!(!run.evidence.join("01-team-start.json").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

@@ -131,7 +131,8 @@ impl Binding {
     pub fn check(&self, member: &Member, transport: &impl Transport) -> Result<()> {
         let value = get(&self.config, &member.handle, transport)?;
         self.verify(member, &value)?;
-        super::tui::check_process(&self.config, member, transport)
+        super::tui::check_process(&self.config, member, transport)?;
+        crate::feedback::require_unchanged(&self.config.feedback_registry, &member.context)
     }
     pub fn verify(&self, member: &Member, value: &serde_json::Value) -> Result<()> {
         if self.config.runtime == Runtime::Core {
@@ -164,6 +165,7 @@ fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<M
     // The Agent's own SessionStart (or explicit registration) is the identity; no wait loop.
     let session = crate::feedback::registered_session(&config.feedback_registry, &context)?
         .ok_or("native session not registered yet; bind after the Agent's SessionStart")?;
+    crate::feedback::require_unchanged(&config.feedback_registry, &context)?;
     let value = get(config, &peer.handle, transport)?;
     if config.runtime == Runtime::Core {
         let mut member = super::core::capture(context, peer, &value)?;

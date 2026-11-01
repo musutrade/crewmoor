@@ -22,10 +22,12 @@ pub fn capture(
     if peer.handle != handle {
         return Err("use the exact returned pane handle".into());
     }
-    let process = match &peer.agent_executable {
-        Some(executable) => Some(observe(config, &context, &handle, executable, transport)?),
-        None => None,
-    };
+    // A new binding always locates the Agent process; only saved bindings may lack it.
+    let executable = peer
+        .agent_executable
+        .as_deref()
+        .ok_or("TUI binding needs the Agent executable for process location")?;
+    let process = Some(observe(config, &context, &handle, executable, transport)?);
     let member = Member {
         context,
         handle,
