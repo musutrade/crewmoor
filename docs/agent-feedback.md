@@ -16,7 +16,7 @@ Read the [official Codex Hooks guide](https://learn.chatgpt.com/docs/hooks) and 
 
 Codex's local schema also lists pre/post-model, pre/post-tool, compaction and subagent events; they are not collected here. Claude has additional events, including TaskCompleted for its own task machinery. Neither native TaskCompleted nor SubagentStop is interpreted as CrewMoor business completion. Subagents do not enroll a new main instance. A repeated SessionStart for the same session may be recorded with its source; it does not create another instance or mean ready. A changed session is rejected rather than silently adopted.
 
-All listed events have automated synthetic tests or a supported schema path; **actual Agent-triggered events and model-authored business reports remain unverified until separately authorized and run**. The first synthetic chain used Claude, then Codex was added. No new model call is authorized by installation.
+All listed events have automated synthetic tests or a supported schema path. The first synthetic chain used Claude, then Codex was added. One separately authorized actual Claude path is recorded below; the remaining native signals and real Codex/skill paths are unverified. Installation itself grants no new model-call permission.
 
 ## Native user-level installation
 
@@ -70,3 +70,17 @@ crewmoor feedback show /absolute/registry INSTANCE
 ```
 
 Allowed report types are `ready`, `progress`, `complete`, `blocked`; sources are `agent` or `skill`. Unknown/mismatched session, unsupported native event or missing evidence does not become successful business completion. Registration distinguishes operator-declared `synthetic` and `native` evidence; a declaration alone does not prove a real model ran. Audit/acceptance must identify the actual native invocation and authored report separately. No queue, continuous monitoring, workflow state machine, container-specific semantic state or automatic task retry is involved.
+
+## Recorded real Claude path
+
+Tested source `15f73eae66ea71c5bba02cca178da5114ebbeeaf`, tree `279bdbb937da476719e5d2771347a4888b125216`, independently passed code/automatic audit (460 functions, max CRAP10, 25 quality +58 business tests). Its exact stable callback SHA256 is `bb277dde4366145175158b3439bfacb89de379289706df4464c3c31370b7e497`. It was atomically installed; native Hook definitions, Herdr/Orca entries and Codex trust configuration stayed unchanged.
+
+On 2026-11-01 the user specifically authorized one direct Claude2.1.316 print-mode invocation for a bounded 2+2 task and authored feedback. It used global user Hooks, with only the routing metadata on the child. Team `issue4-test`, role `feedback-probe`, task `crewmoor-issue-4-001`, instance `dbd88917cf8c407cb4a833739dd9ec4b`, native session `7e736077-3092-414a-944f-bb119060931f` matched throughout.
+
+- Actual native callbacks: `SessionStart` (startup), `UserPromptSubmit`, `Stop` (`stop_hook_active=false`), `SessionEnd` (other).
+- Actual model-authored `agent-report` entries: ready (task loaded), progress (computed2+2=4), complete (answer and requested feedback submitted). These are distinct from Stop/session/process termination; the Rust driver did not fabricate them.
+- One invocation, four model turns, exit0; client-estimated costUSD0.0509416, not a billing guarantee. No retry/trust/auth bypass. The child and driver exited; the dedicated empty cwd was removed after a no-file-user check. No containers/GUI/server objects were created or stopped. Plugin child exits were not individually fingerprinted.
+
+The record view remains `agent_state: unknown`. No full model output, raw stderr, prompt, transcript, assistant message, tool input or credential was saved. Whitelisted records and explicit summaries remain under `/home/gem/.local/state/crewmoor/feedback/instances/dbd88917cf8c407cb4a833739dd9ec4b`; exact plan/authorization/artifact/receipt/checksums are retained in `/home/gem/.local/state/crewmoor/crewmoor-issue-4-001/real-plan-002/`. Independent saved-evidence review was requested; it requires no new live invocation.
+
+Claude failure/notification/permission/tool-failure events were not deliberately triggered. Codex native trust/events/model reports and real skill-authored reports remain unverified. No TUI/core/App live coverage is claimed by this direct user-level test, and no Issue #2 acceptance was reopened.
