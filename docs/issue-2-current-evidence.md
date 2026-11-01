@@ -25,8 +25,15 @@ For both, default core/server/holder/socket were retained. No global layout writ
 
 These probes establish native capability and cleanup facts. They do **not** turn a1 into an automatic-Space implementation or prove the new project entrypoint's real acceptance.
 
-## Current project entrypoint and remaining acceptance
+## Accepted project entrypoint and TUI cases
 
 The new implementation records project placement by core-id plus canonical cwd, permits native creation of owned unknown IDs, and reuses only its own recorded IDs. Explicit existing-space mode is retained. Rust tests execute both Agent branches through synthetic native/RPC transports, including project reuse and preservation of external hosts. Exact candidate SHA, invocation-specific target path, full verify log and artifact/config hashes are supplied with independent audit handoff; no real launch was authorized by this code change.
 
-The new automatic entrypoint still needs its own precise-candidate real acceptance after review and explicit permission. TUI actual startup/location/owned-stop success is still pending; historical 769/v9 TUI withheld input, while its separate core/Codex case passed. The [minimum proposal](issue-2-minimal-acceptance.md) keeps these gaps distinct. New candidate CI must be checked separately by the publisher; PR #5 stays draft with no implied merge/Issue closure. Old core `cm-0c926f847d55` and all user resources remain HOLD.
+Exact source `bd4d4c975756ff07158699c3869b084d84cadfa0`, tree `c3dabee0e26d01f4d16973776afa19d55b16749f`, was independently audited and verified (387 functions, maximum CRAP 10, 25 quality + 43 business tests). A separate exact-archive build produced v13. Two specifically authorized, sequential real cases completed:
+
+- App project Codex 0.166.0: `vps/t24`, PID 3749679/start 181540415, recorded own project IDs for canonical `/home/gem/crewmoor`. User said `我看到了，已经给它发了一条消息` and `收到回复，观察完成`. GUI visibility/manual input/reply were confirmed; exact Space display name was not separately supplied. Owned stop exit 0, `target-stopped-host-retained`, native terminal absent, recorded process exited, terminal binding released. Project mapping and external host/server/holder/socket were retained unchanged.
+- Private TUI Claude 2.1.316: official `agent start`, session `cm-bb433408cd85`, pane `w1:p1`, PID 3750556/start 181542737. Admission and process location were confirmed. Owned pane/workspace/empty-session stop exit 0; recorded Agent/shell/server PID paths, socket and binding absent.
+
+Both cases used one launch, one inspect and one owned stop; checked environment marker key lists were empty. No automatic model task/trust input, Agent-state inference or retry was added. This is not a four-combination live matrix, a real repeated-project-reuse test, or an unknown/timeout-path test.
+
+The dispatcher/publisher confirmed PR #5 merged as `59cc3e319e5cb2755aa4fada8eba887e785cc1a6`, post-merge main CI run 41270646748 attempt 1 succeeded, and Issue #2 closed. No new #2 acceptance is required. Compact retained evidence and cleanup manifest are under `/home/gem/.local/state/crewmoor/crewmoor-issue-2-001/`; temporary binaries/worktree were removed after completion. Old core `cm-0c926f847d55` and all user resources remain HOLD.

@@ -1,0 +1,10 @@
+{
+  "team":"example-team",
+  "role":"developer",
+  "task":"example-task",
+  "cwd":"/absolute/project",
+  "agent":"claude",
+  "agent_version":"2.1.316 (Claude Code)",
+  "evidence":"synthetic",
+  "native_session_id":null
+}

@@ -1,0 +1,118 @@
+use super::{INSTANCE_ENV, event, model};
+use crate::{Result, config::AgentKind};
+use std::{fs, io::Read, path::Path};
+
+pub fn cli(args: &[String]) -> Result<()> {
+    match args.split_first() {
+        Some((cmd, rest)) if cmd == "hooks" => hooks(rest),
+        _ => records(args),
+    }
+}
+fn records(args: &[String]) -> Result<()> {
+    let (command, rest) = args.split_first().ok_or("missing feedback command")?;
+    match command.as_str() {
+        "register" => register(rest),
+        "hook" => receive_command(rest),
+        "show" => show(rest),
+        "report" => report(rest),
+        _ => Err("unknown feedback command".into()),
+    }
+}
+fn register(args: &[String]) -> Result<()> {
+    match args {
+        [registry, config] => {
+            let registration = serde_json::from_slice(&fs::read(config)?)?;
+            print(&model::register(Path::new(registry), registration)?)
+        }
+        _ => Err("usage: feedback register REGISTRY CONFIG".into()),
+    }
+}
+fn receive_command(args: &[String]) -> Result<()> {
+    let [agent, registry] = args else {
+        return Err("usage: feedback hook AGENT REGISTRY".into());
+    };
+    hook(agent, Path::new(registry));
+    Ok(())
+}
+fn show(args: &[String]) -> Result<()> {
+    let [registry, instance] = args else {
+        return Err("usage: feedback show REGISTRY INSTANCE".into());
+    };
+    print(&super::show(Path::new(registry), instance)?)
+}
+fn report(args: &[String]) -> Result<()> {
+    match args {
+        [registry, instance, session, source, kind, summary] => event::report(
+            Path::new(registry),
+            instance,
+            session,
+            source,
+            kind,
+            summary,
+        ),
+        _ => {
+            Err("usage: feedback report REGISTRY INSTANCE SESSION agent|skill TYPE SUMMARY".into())
+        }
+    }
+}
+fn hooks(args: &[String]) -> Result<()> {
+    let (command, rest) = args.split_first().ok_or("missing hooks command")?;
+    match command.as_str() {
+        "plan" => plan(rest),
+        "apply" => apply(rest, false),
+        "rollback" => apply(rest, true),
+        _ => Err("unknown user hooks command".into()),
+    }
+}
+fn plan(args: &[String]) -> Result<()> {
+    match args {
+        [agent, action, registry, binary, directory] => {
+            let agent: AgentKind = serde_json::from_value(agent.as_str().into())?;
+            print(&super::install::preview(
+                agent,
+                action,
+                Path::new(registry),
+                Path::new(binary),
+                Path::new(directory),
+            )?)
+        }
+        _ => Err(
+            "usage: feedback hooks plan AGENT install|uninstall REGISTRY BINARY NEW_PLAN_DIR"
+                .into(),
+        ),
+    }
+}
+fn apply(args: &[String], rollback: bool) -> Result<()> {
+    let [directory] = args else {
+        return Err("supply one user hooks plan directory".into());
+    };
+    print(&super::install::apply(Path::new(directory), rollback)?)
+}
+fn print(value: &impl serde::Serialize) -> Result<()> {
+    let encoded = serde_json::to_string_pretty(value)?;
+    println!("{encoded}");
+    Ok(())
+}
+fn hook(agent: &str, registry: &Path) {
+    // No CrewMoor marker: do not read stdin, look up sessions, or collect anything.
+    if let Some(instance) = std::env::var_os(INSTANCE_ENV)
+        && receive(agent, registry, &instance.to_string_lossy()).is_err()
+    {
+        eprintln!("CrewMoor feedback not recorded; task is not replayed");
+    }
+    // No decision, additional context, retry or task-completion signal to the Agent.
+    println!("{{}}");
+}
+fn receive(agent: &str, registry: &Path, instance: &str) -> Result<()> {
+    let agent: AgentKind = serde_json::from_value(agent.into())?;
+    let context = model::load(registry, instance)?;
+    if context.registration.agent != agent {
+        return Err("unassociated Agent kind".into());
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin().take(1_048_577).read_to_end(&mut bytes)?;
+    if bytes.len() > 1_048_576 {
+        return Err("hook input too large".into());
+    }
+    event::ingest(registry, instance, &agent, &bytes)
+}
