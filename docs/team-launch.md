@@ -200,7 +200,7 @@ start, bind before and after SessionStart, process mismatch, rejection records,
 host-mode stop without `session stop`, the unchanged private path, per-role
 runtime refusal and the initial-prompt rules. `tests/message.rs` covers saved
 bindings without the new fields and the optional `agent_session`. These are
-synthetic. The real TUI run is recorded in [Issue #15 real acceptance](issue-15-real-acceptance.md).
+synthetic. The real TUI runs (real-002 at `f2d339a`, plus the earlier real-001) are recorded in [Issue #15 real acceptance](issue-15-real-acceptance.md).
 
 ## Real smoke program
 
