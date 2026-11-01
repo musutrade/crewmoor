@@ -244,7 +244,22 @@ fn public_cli_binds_once_and_uses_literal_argv_with_isolated_routing_environment
     let config_path = fixture.dir.path().join("config.json");
     let binding_path = fixture.dir.path().join("binding.json");
     let message_path = fixture.dir.path().join("message.json");
-    fs::write(&config_path, serde_json::to_vec(&fixture.config).unwrap()).unwrap();
+    let mut legacy_config = serde_json::to_value(&fixture.config).unwrap();
+    legacy_config.as_object_mut().unwrap().remove("runtime");
+    legacy_config.as_object_mut().unwrap().remove("core_id");
+    legacy_config
+        .as_object_mut()
+        .unwrap()
+        .remove("core_version");
+    legacy_config["dispatcher"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent_executable");
+    legacy_config["worker"]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent_executable");
+    fs::write(&config_path, serde_json::to_vec(&legacy_config).unwrap()).unwrap();
     fs::write(&message_path, serde_json::to_vec(&request()).unwrap()).unwrap();
     let bind_args = vec![
         "bind".into(),
