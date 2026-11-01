@@ -19,11 +19,11 @@ pub struct Event {
     pub native: Value,
     pub summary: Option<String>,
 }
-pub fn append(registry: &Path, context: &Context, event: Event, enroll: bool) -> Result<()> {
+pub fn append(registry: &Path, context: &Context, event: &Event, enroll: bool) -> Result<()> {
     let root = model::instance_dir(registry, &context.instance)?;
     let _lock = crate::record::Lock::take(&root)?;
     bind(&root, context, &event.native_session_id, enroll)?;
-    let mut bytes = serde_json::to_vec(&event)?;
+    let mut bytes = serde_json::to_vec(event)?;
     bytes.push(b'\n');
     fs::OpenOptions::new()
         .append(true)
