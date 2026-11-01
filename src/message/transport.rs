@@ -9,6 +9,9 @@ pub trait Transport {
 pub struct Native;
 impl Transport for Native {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
+        if config.runtime == Runtime::Core {
+            return super::core::call(config, args);
+        }
         let mut cmd = crate::native::endpoint_command(&config.runtime_binary, &config.socket);
         let output = crate::transport::output(cmd.args(args), Duration::from_secs(10))?;
         if !output.status.success() {

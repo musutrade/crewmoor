@@ -1,5 +1,6 @@
 mod binding;
 mod cli;
+mod core;
 mod transport;
 
 pub use binding::{Binding, Config, Member, Peer};
@@ -27,6 +28,8 @@ pub struct Envelope<'a> {
 pub struct Receipt<'a> {
     pub envelope: Envelope<'a>,
     pub transport: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_turn: Option<u64>,
 }
 impl Message {
     fn validate(&self) -> Result<()> {
@@ -56,12 +59,16 @@ pub fn send<'a>(
         message,
     };
     let text = serde_json::to_string(&envelope)?;
-    let args = strings(&["agent", "prompt", &recipient.handle, &text]);
+    let args = match binding.config.runtime {
+        crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
+        crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
+    };
     let result = transport.call(&binding.config, &args);
-    submission(binding, recipient, result)?;
+    let native_turn = submission(binding, recipient, result, transport)?;
     Ok(Receipt {
         envelope,
         transport: "accepted",
+        native_turn,
     })
 }
 fn route<'a>(
@@ -76,6 +83,7 @@ fn route<'a>(
         return Err("message must address the other bound role".into());
     }
     binding.guard()?;
+    core::instance(&binding.config, transport)?;
     binding.check(sender, transport)?;
     binding.check(recipient, transport)?;
     binding.guard()?;
@@ -85,13 +93,18 @@ fn submission(
     binding: &Binding,
     recipient: &Member,
     result: Result<serde_json::Value>,
-) -> Result<()> {
+    transport: &impl Transport,
+) -> Result<Option<u64>> {
     let verified = result.and_then(|value| {
+        if binding.config.runtime == crate::config::Runtime::Core {
+            return core::submitted(binding, &value, transport).map(Some);
+        }
         if value["type"] != "agent_prompted" {
             return Err("missing native prompt acceptance".into());
         }
         binding.verify(recipient, &value["agent"])?;
-        binding.guard()
+        binding.guard()?;
+        Ok(None)
     });
     verified.map_err(|error| {
         format!("message submission unconfirmed: {error}; outcome may be unknown; do not automatically resend")

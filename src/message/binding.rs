@@ -1,6 +1,7 @@
 use super::Transport;
 use crate::{
     Result,
+    config::Runtime,
     feedback::model::{self, Context},
     native::{strings, text},
 };
@@ -12,10 +13,15 @@ use std::{fs, os::unix::fs::MetadataExt, path::PathBuf};
 pub struct Peer {
     pub instance: String,
     pub handle: String,
+    pub agent_executable: Option<PathBuf>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default = "default_runtime")]
+    pub runtime: Runtime,
+    pub core_id: Option<String>,
+    pub core_version: Option<String>,
     pub runtime_binary: PathBuf,
     pub socket: PathBuf,
     pub feedback_registry: PathBuf,
@@ -27,8 +33,9 @@ pub struct Config {
 pub struct Member {
     pub context: Context,
     pub handle: String,
-    pub terminal_id: String,
-    pub workspace_id: String,
+    pub terminal_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub core: Option<super::core::Identity>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -46,9 +53,34 @@ impl Config {
             crate::config::absolute(path)?;
         }
         if self.dispatcher.handle == self.worker.handle {
-            return Err("dispatcher and worker must have distinct panes".into());
+            return Err("dispatcher and worker must have distinct terminal handles".into());
+        }
+        self.validate_core()?;
+        Ok(())
+    }
+    fn validate_core(&self) -> Result<()> {
+        if self.runtime == Runtime::Core {
+            model::identifier(
+                self.core_version
+                    .as_deref()
+                    .ok_or("core_version required")?,
+            )?;
+            crate::app::component(self.core_id.as_deref().ok_or("core_id required")?)?;
+            for peer in [&self.dispatcher, &self.worker] {
+                peer.validate_core()?;
+            }
         }
         Ok(())
+    }
+}
+impl Peer {
+    fn validate_core(&self) -> Result<()> {
+        crate::app::component(&self.handle)?;
+        crate::config::absolute(
+            self.agent_executable
+                .as_deref()
+                .ok_or("core Agent executable required")?,
+        )
     }
 }
 impl Binding {
@@ -56,6 +88,7 @@ impl Binding {
         config.validate()?;
         config.socket = config.socket.canonicalize()?;
         let metadata = fs::metadata(&config.socket)?;
+        super::core::instance(&config, transport)?;
         let dispatcher = capture(&config, &config.dispatcher, transport)?;
         let worker = capture(&config, &config.worker, transport)?;
         same_team(&dispatcher.context, &worker.context)?;
@@ -84,14 +117,20 @@ impl Binding {
         Ok(())
     }
     pub fn check(&self, member: &Member, transport: &impl Transport) -> Result<()> {
-        let value = transport.call(&self.config, &strings(&["agent", "get", &member.handle]))?;
-        self.verify(member, &value["agent"])
+        let value = get(&self.config, &member.handle, transport)?;
+        self.verify(member, &value)
     }
     pub fn verify(&self, member: &Member, value: &serde_json::Value) -> Result<()> {
+        if self.config.runtime == Runtime::Core {
+            return super::core::verify(member, value);
+        }
+        if member.terminal_id.is_none() || member.workspace_id.is_none() {
+            return Err("missing bound TUI location".into());
+        }
         session(&member.context, value)?;
         if text(value, "/pane_id")? != member.handle
-            || text(value, "/terminal_id")? != member.terminal_id
-            || text(value, "/workspace_id")? != member.workspace_id
+            || value["terminal_id"].as_str() != member.terminal_id.as_deref()
+            || value["workspace_id"].as_str() != member.workspace_id.as_deref()
         {
             return Err("bound Agent location changed".into());
         }
@@ -109,8 +148,13 @@ fn same_team(dispatcher: &Context, worker: &Context) -> Result<()> {
 }
 fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<Member> {
     let context = model::load(&config.feedback_registry, &peer.instance)?;
-    let value = transport.call(config, &strings(&["agent", "get", &peer.handle]))?;
-    let agent = &value["agent"];
+    let value = get(config, &peer.handle, transport)?;
+    if config.runtime == Runtime::Core {
+        return super::core::capture(context, peer, &value);
+    }
+    capture_tui(context, peer, &value)
+}
+fn capture_tui(context: Context, peer: &Peer, agent: &serde_json::Value) -> Result<Member> {
     session(&context, agent)?;
     let handle = text(agent, "/pane_id")?;
     if peer.handle != handle {
@@ -119,9 +163,25 @@ fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<M
     Ok(Member {
         context,
         handle,
-        terminal_id: text(agent, "/terminal_id")?,
-        workspace_id: text(agent, "/workspace_id")?,
+        terminal_id: Some(text(agent, "/terminal_id")?),
+        workspace_id: Some(text(agent, "/workspace_id")?),
+        core: None,
     })
+}
+fn default_runtime() -> Runtime {
+    Runtime::Tui
+}
+pub(super) fn get(
+    config: &Config,
+    handle: &str,
+    transport: &impl Transport,
+) -> Result<serde_json::Value> {
+    match config.runtime {
+        Runtime::Tui => {
+            Ok(transport.call(config, &strings(&["agent", "get", handle]))?["agent"].clone())
+        }
+        Runtime::Core => transport.call(config, &strings(&["get", handle])),
+    }
 }
 fn session(context: &Context, value: &serde_json::Value) -> Result<()> {
     let expected = context
