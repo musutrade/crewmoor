@@ -155,6 +155,36 @@ app_target = "/path/to/app-target.toml"
 
 CrewMoor reads this file, verifies the running core identity, and routes all terminal sends through the existing socket. It never starts or stops the core process.
 
+### One App tab per role
+
+By default every role's terminal gets the `herdr.space` / `herdr.tab` labels from `app-target.toml`, so all roles share one tab. To give a role its own tab, set `tab_id` on that role in `team.toml`. Roles without `tab_id` keep using the `app-target.toml` tab.
+
+```toml
+[[roles]]
+role = "lead"
+tab_id = "tb-lead-tab-id"    # overrides app-target.toml tab_id for this role
+# ...
+
+[[roles]]
+role = "worker"
+tab_id = "tb-worker-tab-id"
+# ...
+```
+
+Rules:
+
+- Only `runtime = "core"` teams accept a per-role `tab_id`.
+- `app-target.toml` must set both `space_id` and `tab_id`; per-role tabs live in that space. Project placement (both omitted) does not support per-role tabs.
+- The tab must already exist in the App layout, the same check the team-level `tab_id` gets. A `<machine>/` prefix is accepted and stripped, as for `app-target.toml`.
+
+CrewMoor does not create tabs. Create them in Herdr App first, either from the App interface (the `+` in the tab bar) or with the App's official command, which prints the new tab id:
+
+```bash
+herdr-app do tab.new --name lead --space <space_id>
+```
+
+`herdr tab create` is a Herdr TUI command and does not create Herdr App tabs.
+
 ## Session integrity
 
 CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). If the session changes — agent restart, re-login, or context reset — the team halts immediately and writes a visible rejection record. No silent continuation.

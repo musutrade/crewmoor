@@ -81,11 +81,16 @@ agent_version = "fixture 1"
     }
     fn start(&self) -> crewmoor::Result<Value> {
         let mut next = 0;
-        team::start(self.team(), self.dir.path(), &mut |cfg, root| {
-            let fake = &self.fakes[next];
-            next += 1;
-            engine::launch(cfg, root, fake)
-        })
+        team::start(
+            self.team(),
+            self.dir.path(),
+            &mut no_layout,
+            &mut |cfg, root| {
+                let fake = &self.fakes[next];
+                next += 1;
+                engine::launch(cfg, root, fake)
+            },
+        )
     }
     fn team_dir(&self) -> std::path::PathBuf {
         self.dir.path().join("teams/smoke")
@@ -336,6 +341,10 @@ fn team_configuration_declares_runtime_once_and_needs_an_existing_tui_host() {
     team.app_target = Some(setup.dir.path().join("app-target.toml"));
     assert!(team.validate().is_err());
     let mut team = setup.team();
+    team.roles[0].tab_id = Some("tb-worker".into());
+    let error = team.validate().unwrap_err().to_string();
+    assert!(error.contains("tab_id needs runtime=core"));
+    let mut team = setup.team();
     team.roles.truncate(1);
     assert!(team.validate().is_err());
     let mut team = setup.team();
@@ -366,6 +375,10 @@ fn team_configuration_declares_runtime_once_and_needs_an_existing_tui_host() {
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["roles"][0]["result"], "not-launched");
+}
+/// TUI teams have no App layout; reading one is a test failure.
+fn no_layout(_: &crewmoor::app::Binding) -> crewmoor::Result<Value> {
+    Err("TUI team must not read an App layout".into())
 }
 fn crewmoor_cli(args: &[&str]) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_crewmoor"))
@@ -497,7 +510,7 @@ fn role_names_are_checked_before_any_write_and_again_when_loading() {
         let mut cfg = setup.team();
         cfg.roles[1].role = bad.clone();
         cfg.dispatcher = bad.clone();
-        let result = team::start(cfg, setup.dir.path(), &mut |_, _| {
+        let result = team::start(cfg, setup.dir.path(), &mut no_layout, &mut |_, _| {
             Err("an invalid role must never reach launch".into())
         });
         assert!(result.is_err(), "{bad}");

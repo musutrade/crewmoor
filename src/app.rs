@@ -121,6 +121,10 @@ fn run_params(r: &Record) -> Result<Value> {
         "labels":labels}),
     )
 }
+/// The App layout document from the target's socket, read-only (`doc.get`).
+pub fn layout(app: &Binding) -> Result<Value> {
+    exchange(&app.socket, "doc.get", json!({"name":"herdr-app"}))
+}
 pub fn exchange(socket: &std::path::Path, method: &str, params: Value) -> Result<Value> {
     exchange_within(socket, method, params, Duration::from_secs(10))
 }
