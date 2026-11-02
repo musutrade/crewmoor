@@ -30,6 +30,7 @@ struct Setup {
     _listener: UnixListener,
     socket: PathBuf,
     fakes: Vec<common::Fake>,
+    layout_reads: std::cell::Cell<usize>,
 }
 fn clean_host() -> std::process::Child {
     let mut command = std::process::Command::new(FIXTURE);
@@ -73,6 +74,7 @@ impl Setup {
             socket,
             fakes,
             dir,
+            layout_reads: std::cell::Cell::new(0),
         }
     }
     fn base(&self) -> PathBuf {
@@ -120,11 +122,16 @@ agent_version = "fixture 1"
     }
     fn start(&self) -> crewmoor::Result<Value> {
         let mut next = 0;
-        team::start(self.team(), &self.state(), &mut |cfg, root| {
-            let fake = &self.fakes[next];
-            next += 1;
-            engine::launch(cfg, root, &Host(fake))
-        })
+        team::start(
+            self.team(),
+            &self.state(),
+            &mut layout(self),
+            &mut |cfg, root| {
+                let fake = &self.fakes[next];
+                next += 1;
+                engine::launch(cfg, root, &Host(fake))
+            },
+        )
     }
     /// Roles start dispatcher first: lead uses fake 0, worker fake 1.
     fn fake(&self, role: &str) -> &common::Fake {
@@ -155,6 +162,17 @@ agent_version = "fixture 1"
             &serde_json::to_vec(&input).unwrap(),
         )
         .unwrap();
+    }
+}
+/// The existing App layout as the dispatcher's fake core serves it (`doc.get`).
+fn layout(setup: &Setup) -> impl FnMut(&crewmoor::app::Binding) -> crewmoor::Result<Value> + '_ {
+    |app| {
+        assert_eq!(app.socket, setup.socket);
+        let fake = &setup.fakes[0];
+        setup.layout_reads.set(setup.layout_reads.get() + 1);
+        Ok(fake.app_doc.borrow().clone().unwrap_or_else(|| {
+            json!({"version":1,"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"tb-existing"}]}]}})
+        }))
     }
 }
 /// Message side of the same existing core: status, terminal get and send only.
@@ -338,9 +356,12 @@ fn core_team_example_and_target_rules() {
     let mut team = setup.team();
     team.app_target = Some(setup.dir.path().join("missing.toml"));
     team.validate().unwrap();
-    let error = team::start(team, &setup.state(), &mut |cfg, root| {
-        engine::launch(cfg, root, &Host(&setup.fakes[0]))
-    })
+    let error = team::start(
+        team,
+        &setup.state(),
+        &mut layout(&setup),
+        &mut |cfg, root| engine::launch(cfg, root, &Host(&setup.fakes[0])),
+    )
     .unwrap_err()
     .to_string();
     assert!(error.contains("role lead start failed"));
@@ -362,11 +383,16 @@ fn tab_doc() -> Value {
 }
 fn start_team(setup: &Setup, team: team::Team) -> crewmoor::Result<Value> {
     let mut next = 0;
-    team::start(team, &setup.state(), &mut |cfg, root| {
-        let fake = &setup.fakes[next];
-        next += 1;
-        engine::launch(cfg, root, &Host(fake))
-    })
+    team::start(
+        team,
+        &setup.state(),
+        &mut layout(setup),
+        &mut |cfg, root| {
+            let fake = &setup.fakes[next];
+            next += 1;
+            engine::launch(cfg, root, &Host(fake))
+        },
+    )
 }
 
 #[test]
@@ -436,10 +462,32 @@ fn core_team_role_tab_id_rules_are_checked_before_any_write() {
     let error = start_team(&setup, team).unwrap_err().to_string();
     assert!(error.contains("needs space_id"));
     assert!(!setup.team_dir().exists());
-    // The App must already list the tab, as for the team-level tab.
+    // Every effective tab must already exist in the App, wherever the missing one is.
+    for (index, role) in [(1, "dispatcher"), (0, "worker")] {
+        let mut team = setup.team();
+        team.roles[1 - index].tab_id = Some("tb-existing".into());
+        team.roles[index].tab_id = Some("tb-missing".into());
+        let error = start_team(&setup, team).unwrap_err().to_string();
+        assert!(error.contains("tab does not exist"), "{role}: {error}");
+        assert!(!setup.team_dir().exists(), "{role}");
+        for fake in &setup.fakes {
+            assert!(fake.calls.borrow().is_empty(), "{role}");
+        }
+    }
+    // A fallback role is checked too: the target tab is missing from this layout.
+    *setup.fakes[0].app_doc.borrow_mut() = Some(json!({"version":1,"value":{"spaces":[
+        {"id":"sp-existing","tabs":[{"id":"tb-worker"}]}]}}));
     let mut team = setup.team();
-    team.roles[1].tab_id = Some("tb-missing".into());
+    team.roles[0].tab_id = Some("tb-worker".into());
     let error = start_team(&setup, team).unwrap_err().to_string();
     assert!(error.contains("tab does not exist"));
-    assert!(!setup.fakes[0].calls.borrow().iter().any(|c| c[0] == "run"));
+    assert!(!setup.team_dir().exists());
+    assert!(setup.fakes.iter().all(|f| f.calls.borrow().is_empty()));
+}
+
+#[test]
+fn core_team_without_role_tab_id_never_reads_the_layout_before_start() {
+    let setup = Setup::new();
+    start_team(&setup, setup.team()).unwrap();
+    assert_eq!(setup.layout_reads.get(), 0);
 }

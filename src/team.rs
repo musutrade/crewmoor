@@ -98,10 +98,23 @@ impl Team {
         app.validate(&self.runtime)?;
         Ok(Some(app))
     }
-    /// Reads the App target for per-role tabs before the team directory is written.
-    fn validate_role_apps(&self) -> Result<()> {
+    /// With per-role tabs, every role's effective tab (its own or the target's) must
+    /// exist in the App layout before the team directory is written or any role runs.
+    fn check_role_tabs(
+        &self,
+        layout: &mut impl FnMut(&crate::app::Binding) -> Result<Value>,
+    ) -> Result<()> {
+        if self.roles.iter().all(|r| r.tab_id.is_none()) {
+            return Ok(());
+        }
+        let target = self.app()?;
+        let mut apps = Vec::new();
         for role in &self.roles {
-            self.role_app(role)?;
+            apps.push(self.role_app(role)?.unwrap_or_else(|| target.clone()));
+        }
+        let doc = layout(&target)?;
+        for app in &apps {
+            crate::app::existing_layout(app, &doc)?;
         }
         Ok(())
     }
@@ -193,11 +206,15 @@ fn new_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 /// Create `<state>/teams/<team>/` and start every role once, dispatcher first.
+/// `layout` reads the App layout document; it is called only for per-role tabs.
 pub fn start(
     team: Team,
     state: &Path,
+    layout: &mut impl FnMut(&crate::app::Binding) -> Result<Value>,
     launch: &mut impl FnMut(Config, &Path) -> Result<Record>,
 ) -> Result<Value> {
+    team.validate()?;
+    team.check_role_tabs(layout)?;
     let dir = create(&team, state)?;
     let mut roles = Vec::new();
     for role in team.ordered() {
@@ -213,7 +230,6 @@ pub fn start(
 }
 fn create(team: &Team, state: &Path) -> Result<PathBuf> {
     team.validate()?;
-    team.validate_role_apps()?;
     crate::config::absolute(state)?;
     let parent = state.join("teams");
     model::private_dir(&parent)?;
@@ -409,6 +425,7 @@ fn start_native(config: &str, state: &str) -> Result<Value> {
     start(
         read(Path::new(config))?,
         Path::new(state),
+        &mut crate::app::layout,
         &mut crate::engine::launch_native,
     )
 }
