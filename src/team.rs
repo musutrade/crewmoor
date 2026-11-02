@@ -43,6 +43,8 @@ pub struct Role {
     #[serde(default)]
     pub agent_args: Vec<String>,
     pub initial_prompt: Option<String>,
+    /// App tab for this role only (core teams); overrides the app_target `tab_id`.
+    pub tab_id: Option<String>,
 }
 impl Team {
     pub fn validate(&self) -> Result<()> {
@@ -51,6 +53,7 @@ impl Team {
         crate::config::absolute(&self.feedback_registry)?;
         self.validate_target()?;
         self.validate_names()?;
+        self.validate_tabs()?;
         let mut names: Vec<_> = self.roles.iter().map(|r| r.role.as_str()).collect();
         names.sort_unstable();
         names.dedup();
@@ -74,6 +77,33 @@ impl Team {
             crate::config::name(&role.role)?;
         }
         crate::config::name(&self.dispatcher)
+    }
+    /// Per-role tabs place core terminals in the existing App only.
+    fn validate_tabs(&self) -> Result<()> {
+        if self.runtime != Runtime::Core && self.roles.iter().any(|r| r.tab_id.is_some()) {
+            return Err("role tab_id needs runtime=core".into());
+        }
+        Ok(())
+    }
+    /// The App target with this role's tab; the target must name its space.
+    fn role_app(&self, role: &Role) -> Result<Option<crate::app::Binding>> {
+        let Some(tab) = &role.tab_id else {
+            return Ok(None);
+        };
+        let mut app = self.app()?;
+        if app.space_id.is_none() {
+            return Err("role tab_id needs space_id and tab_id in app_target".into());
+        }
+        app.tab_id = Some(tab.clone());
+        app.validate(&self.runtime)?;
+        Ok(Some(app))
+    }
+    /// Reads the App target for per-role tabs before the team directory is written.
+    fn validate_role_apps(&self) -> Result<()> {
+        for role in &self.roles {
+            self.role_app(role)?;
+        }
+        Ok(())
     }
     pub fn role(&self, name: &str) -> Result<&Role> {
         self.roles
@@ -103,8 +133,10 @@ impl Team {
             Runtime::Core => role_dir(dir, &role.role),
         }
     }
-    fn launch_config(&self, role: &Role, dir: &Path, instance: &str) -> Config {
-        Config {
+    fn launch_config(&self, role: &Role, dir: &Path, instance: &str) -> Result<Config> {
+        let app = self.role_app(role)?;
+        let app_target = app.is_none().then(|| self.app_target.clone()).flatten();
+        Ok(Config {
             team: self.team.clone(),
             role: role.role.clone(),
             runtime: self.runtime.clone(),
@@ -117,12 +149,12 @@ impl Team {
             agent_executable: role.agent_executable.clone(),
             agent_version: role.agent_version.clone(),
             agent_args: role.agent_args.clone(),
-            app: None,
-            app_target: self.app_target.clone(),
+            app,
+            app_target,
             host: self.host.clone(),
             feedback_instance: Some(instance.into()),
             initial_prompt: role.initial_prompt.clone(),
-        }
+        })
     }
     fn registration(&self, role: &Role) -> Registration {
         Registration {
@@ -181,6 +213,7 @@ pub fn start(
 }
 fn create(team: &Team, state: &Path) -> Result<PathBuf> {
     team.validate()?;
+    team.validate_role_apps()?;
     crate::config::absolute(state)?;
     let parent = state.join("teams");
     model::private_dir(&parent)?;
@@ -203,7 +236,7 @@ fn start_role(
         &root.join("context.json"),
         &serde_json::to_vec_pretty(&context)?,
     )?;
-    let config = team.launch_config(role, dir, &context.instance);
+    let config = team.launch_config(role, dir, &context.instance)?;
     let record = launch(config, &launch_root(dir, &role.role))?;
     Ok(
         json!({"role":role.role,"feedback_instance":context.instance,

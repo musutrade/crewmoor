@@ -346,3 +346,100 @@ fn core_team_example_and_target_rules() {
     assert!(error.contains("role lead start failed"));
     assert!(setup.fakes[0].calls.borrow().is_empty());
 }
+
+/// Labels the App adoption reads from this role's `terminal.run` request.
+fn tab_labels(setup: &Setup, role: &str) -> (Value, Value) {
+    let record = setup.record(role);
+    let calls = setup.fake(role).calls.borrow();
+    let run = calls.iter().find(|c| c[0] == "run").unwrap();
+    let (_, params) = crewmoor::app::request(&record, run).unwrap();
+    let labels = &params["labels"];
+    (labels["herdr.space"].clone(), labels["herdr.tab"].clone())
+}
+fn tab_doc() -> Value {
+    json!({"version":1,"value":{"spaces":[{"id":"sp-existing",
+        "tabs":[{"id":"tb-existing"},{"id":"tb-lead"},{"id":"tb-worker"}]}]}})
+}
+fn start_team(setup: &Setup, team: team::Team) -> crewmoor::Result<Value> {
+    let mut next = 0;
+    team::start(team, &setup.state(), &mut |cfg, root| {
+        let fake = &setup.fakes[next];
+        next += 1;
+        engine::launch(cfg, root, &Host(fake))
+    })
+}
+
+#[test]
+fn core_team_role_tab_id_overrides_the_target_tab_for_that_role_only() {
+    let setup = Setup::new();
+    for fake in &setup.fakes {
+        *fake.app_doc.borrow_mut() = Some(tab_doc());
+    }
+    let mut team = setup.team();
+    team.roles[0].tab_id = Some("tb-worker".into());
+    team.roles[1].tab_id = Some("user-machine/tb-lead".into());
+    start_team(&setup, team).unwrap();
+    for (role, tab) in [("lead", "tb-lead"), ("worker", "tb-worker")] {
+        assert_eq!(tab_labels(&setup, role), (json!("sp-existing"), json!(tab)));
+        let record = setup.record(role);
+        let app = record.config.app.as_ref().unwrap();
+        assert_eq!(app.space_id.as_deref(), Some("user-machine/sp-existing"));
+        assert!(record.config.app_target.is_none());
+    }
+}
+
+#[test]
+fn core_team_without_role_tab_id_keeps_the_target_tab() {
+    let setup = Setup::new();
+    start_team(&setup, setup.team()).unwrap();
+    for role in ["lead", "worker"] {
+        let labels = tab_labels(&setup, role);
+        assert_eq!(labels, (json!("sp-existing"), json!("tb-existing")));
+    }
+    let snapshot: Value =
+        serde_json::from_slice(&fs::read(setup.team_dir().join("team.json")).unwrap()).unwrap();
+    assert_eq!(snapshot["roles"][0]["tab_id"], Value::Null);
+}
+
+#[test]
+fn core_team_role_without_tab_id_falls_back_beside_one_with_it() {
+    let setup = Setup::new();
+    for fake in &setup.fakes {
+        *fake.app_doc.borrow_mut() = Some(tab_doc());
+    }
+    let mut team = setup.team();
+    team.roles[0].tab_id = Some("tb-worker".into());
+    start_team(&setup, team).unwrap();
+    assert_eq!(tab_labels(&setup, "lead").1, json!("tb-existing"));
+    assert_eq!(tab_labels(&setup, "worker").1, json!("tb-worker"));
+}
+
+#[test]
+fn core_team_role_tab_id_rules_are_checked_before_any_write() {
+    let setup = Setup::new();
+    let mut team = setup.team();
+    team.roles[0].tab_id = Some("tb bad".into());
+    assert!(start_team(&setup, team).is_err());
+    assert!(!setup.team_dir().exists());
+    fs::write(
+        setup.dir.path().join("project-target.toml"),
+        format!(
+            "session = \"app-stable\"\nsocket = \"{}\"\ncore_id = \"own-core\"\n\
+             machine = \"user-machine\"\n",
+            setup.socket.display()
+        ),
+    )
+    .unwrap();
+    let mut team = setup.team();
+    team.app_target = Some(setup.dir.path().join("project-target.toml"));
+    team.roles[0].tab_id = Some("tb-worker".into());
+    let error = start_team(&setup, team).unwrap_err().to_string();
+    assert!(error.contains("needs space_id"));
+    assert!(!setup.team_dir().exists());
+    // The App must already list the tab, as for the team-level tab.
+    let mut team = setup.team();
+    team.roles[1].tab_id = Some("tb-missing".into());
+    let error = start_team(&setup, team).unwrap_err().to_string();
+    assert!(error.contains("tab does not exist"));
+    assert!(!setup.fakes[0].calls.borrow().iter().any(|c| c[0] == "run"));
+}

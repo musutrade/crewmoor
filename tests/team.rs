@@ -336,6 +336,10 @@ fn team_configuration_declares_runtime_once_and_needs_an_existing_tui_host() {
     team.app_target = Some(setup.dir.path().join("app-target.toml"));
     assert!(team.validate().is_err());
     let mut team = setup.team();
+    team.roles[0].tab_id = Some("tb-worker".into());
+    let error = team.validate().unwrap_err().to_string();
+    assert!(error.contains("tab_id needs runtime=core"));
+    let mut team = setup.team();
     team.roles.truncate(1);
     assert!(team.validate().is_err());
     let mut team = setup.team();

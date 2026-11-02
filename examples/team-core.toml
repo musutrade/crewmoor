@@ -18,6 +18,9 @@ cwd = "/absolute/project"
 agent = "claude"
 agent_executable = "/home/gem/.local/bin/claude"
 agent_version = "2.1.316 (Claude Code)"
+# Optional: this role's own App tab (an existing tab in app_target's space_id).
+# Omit to use the app_target tab_id. Create tabs with `herdr-app do tab.new`.
+# tab_id = "tb-lead-tab-id"
 
 [[roles]]
 role = "worker"
