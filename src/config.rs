@@ -173,14 +173,43 @@ fn agent_arg<'a>(
     arg: &str,
     values: &mut impl Iterator<Item = &'a String>,
 ) -> Result<()> {
-    match arg {
-        "--no-alt-screen" | "--no-daemon" if *kind == AgentKind::Codex => Ok(()),
-        "--model" => model(values.next()),
-        "-m" if *kind == AgentKind::Codex => model(values.next()),
-        _ => Err(
-            "unsupported argument for this Agent kind; prompts/subcommands are forbidden".into(),
-        ),
+    match kind {
+        AgentKind::Codex => codex_arg(arg, values),
+        AgentKind::Claude => claude_arg(arg, values),
     }
+}
+fn codex_arg<'a>(arg: &str, values: &mut impl Iterator<Item = &'a String>) -> Result<()> {
+    match arg {
+        "--no-alt-screen" | "--no-daemon" => Ok(()),
+        "--model" | "-m" => model(values.next()),
+        _ => unsupported(),
+    }
+}
+fn claude_arg<'a>(arg: &str, values: &mut impl Iterator<Item = &'a String>) -> Result<()> {
+    match arg {
+        "--dangerously-skip-permissions" => Ok(()),
+        "--model" => model(values.next()),
+        "--settings" => settings(values.next()),
+        "--add-dir" => dir(values.next()),
+        _ => unsupported(),
+    }
+}
+fn unsupported() -> Result<()> {
+    Err("unsupported argument for this Agent kind; prompts/subcommands are forbidden".into())
+}
+fn settings(value: Option<&String>) -> Result<()> {
+    let value = value.ok_or("missing --settings value")?;
+    if value.is_empty() || value.contains('\0') {
+        return Err("invalid --settings value".into());
+    }
+    Ok(())
+}
+fn dir(value: Option<&String>) -> Result<()> {
+    let value = value.ok_or("missing --add-dir value")?;
+    if value.is_empty() || value.contains('\0') || !std::path::Path::new(value).is_absolute() {
+        return Err("--add-dir must be an absolute path".into());
+    }
+    Ok(())
 }
 fn model(value: Option<&String>) -> Result<()> {
     let value = value.ok_or("missing model")?;

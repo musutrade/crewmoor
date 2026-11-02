@@ -430,6 +430,31 @@ fn codex_accepts_one_initial_prompt_and_other_arguments_stay_forbidden() {
     assert!(cfg.validate().is_err());
     assert!(config::validate_args(&AgentKind::Claude, &strings(&["--model", "m"])).is_ok());
     assert!(config::validate_args(&AgentKind::Claude, &strings(&["--no-daemon"])).is_err());
+    assert!(
+        config::validate_args(
+            &AgentKind::Claude,
+            &strings(&["--dangerously-skip-permissions"])
+        )
+        .is_ok()
+    );
+    assert!(
+        config::validate_args(
+            &AgentKind::Claude,
+            &strings(&["--settings", "{\"key\":\"val\"}"])
+        )
+        .is_ok()
+    );
+    assert!(config::validate_args(&AgentKind::Claude, &strings(&["--settings"])).is_err());
+    assert!(
+        config::validate_args(&AgentKind::Claude, &strings(&["--add-dir", "/tmp/batch"])).is_ok()
+    );
+    assert!(
+        config::validate_args(
+            &AgentKind::Claude,
+            &strings(&["--add-dir", "relative/path"])
+        )
+        .is_err()
+    );
 }
 
 #[test]
