@@ -178,10 +178,10 @@ impl Record {
         Ok(())
     }
 }
-/// Private sockets live under the state root; an external host's socket does not.
+/// Private sockets live under the state root; an external host's or App core's socket does not.
 fn root_length(config: &Config, root: &Path) -> Result<()> {
     crate::config::absolute(root)?;
-    if config.host.is_none() && root.as_os_str().len() > 45 {
+    if config.host.is_none() && config.app.is_none() && root.as_os_str().len() > 45 {
         return Err("state root must be <=45 bytes for native Unix sockets".into());
     }
     Ok(())
