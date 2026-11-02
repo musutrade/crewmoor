@@ -118,11 +118,19 @@ fn hook(agent: &str, registry: &Path) {
     // No decision, additional context, retry or task-completion signal to the Agent.
     println!("{{}}");
 }
-/// Forwarding must finish inside the Agents' 2 s Hook timeout, leaving room for startup.
-const FORWARD_BUDGET: Duration = Duration::from_millis(1500);
+/// Forwarding budget env var; value in milliseconds. Falls back to `DEFAULT_FORWARD_BUDGET_MS`.
+pub const FORWARD_BUDGET_ENV: &str = "CREWMOOR_FORWARD_BUDGET_MS";
+const DEFAULT_FORWARD_BUDGET_MS: u64 = 8000;
+fn forward_budget() -> Duration {
+    std::env::var(FORWARD_BUDGET_ENV)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_FORWARD_BUDGET_MS))
+}
 fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
     // Forwarding, issue queries and delivery share one deadline.
-    let deadline = std::time::Instant::now() + FORWARD_BUDGET;
+    let deadline = std::time::Instant::now() + forward_budget();
     let transport = crate::message::Bounded::until(deadline);
     let gh = crate::issue::gh::Bounded {
         program: "gh".into(),
