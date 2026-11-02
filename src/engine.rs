@@ -176,6 +176,7 @@ fn operation(command: &str, record: &mut Record) -> Result<()> {
 pub fn cli(args: &[String]) -> Result<()> {
     match args {
         [cmd, rest @ ..] if cmd == "feedback" => crate::feedback::cli(rest),
+        [cmd, rest @ ..] if cmd == "issue" => crate::issue::cli(rest),
         [cmd, rest @ ..] if cmd == "message" => crate::message::cli(rest),
         [cmd, rest @ ..] if cmd == "team" => crate::team::cli(rest),
         _ => lifecycle_cli(args),
