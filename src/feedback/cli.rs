@@ -121,7 +121,13 @@ fn hook(agent: &str, registry: &Path) {
 /// Forwarding must finish inside the Agents' 2 s Hook timeout, leaving room for startup.
 const FORWARD_BUDGET: Duration = Duration::from_millis(1500);
 fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
-    let transport = crate::message::Bounded::new(FORWARD_BUDGET);
+    // Forwarding, issue queries and delivery share one deadline.
+    let deadline = std::time::Instant::now() + FORWARD_BUDGET;
+    let transport = crate::message::Bounded::until(deadline);
+    let gh = crate::issue::gh::Bounded {
+        program: "gh".into(),
+        deadline,
+    };
     // An unknown or mismatched context never reads stdin.
     if super::associated(agent, registry, instance).is_err() {
         return false;
@@ -131,9 +137,12 @@ fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
     if read.is_err() || bytes.len() > 1_048_576 {
         return false;
     }
-    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport);
+    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport, &gh);
     if let Some(error) = outcome.forward_error {
         eprintln!("CrewMoor forward unconfirmed; not resent: {error}");
+    }
+    if let Some(error) = outcome.delivery_error {
+        eprintln!("CrewMoor issue delivery unconfirmed; not resent: {error}");
     }
     outcome.recorded
 }

@@ -1,16 +1,19 @@
 //! User-level native hooks and explicitly authored business reports.
 mod cli;
+mod deliver;
 mod event;
 mod forward;
 pub mod install;
 mod journal;
 pub(crate) mod model;
 pub use cli::cli;
+pub use deliver::{DELIVERED_FILE, DELIVERY_UNCONFIRMED};
 pub use event::{ingest, report};
 pub use forward::report_to;
 pub use journal::{REJECTED, registered_session, require_unchanged, show};
 pub use model::{
-    BindingRef, Context, Evidence, Registration, load_binding_ref, register, write_binding_ref,
+    BindingRef, Context, Evidence, Registration, load_binding_ref, load_dispatcher_binding_ref,
+    register, write_binding_ref, write_dispatcher_binding_ref,
 };
 pub const INSTANCE_ENV: &str = "CREWMOOR_FEEDBACK_INSTANCE";
 
@@ -27,25 +30,38 @@ pub struct HookOutcome {
     pub recorded: bool,
     /// A forward was attempted and failed or timed out; it is never resent.
     pub forward_error: Option<String>,
+    /// Delivering the next issue on a dispatcher Stop failed or is unconfirmed; never resent.
+    pub delivery_error: Option<String>,
 }
 
 /// Record one Hook event, then forward exactly what that append wrote when this is a bound
 /// worker: a recorded `Stop`/`SessionEnd`, or this call's own session rejection as a halt.
+/// When this is a bound dispatcher and it recorded a `Stop`, deliver the next issue if its
+/// assigned one is closed.
 pub fn process_hook_event(
     agent: &str,
     registry: &Path,
     instance: &str,
     bytes: &[u8],
     transport: &impl Transport,
+    gh: &impl crate::issue::Gh,
 ) -> HookOutcome {
     let appended = ingest_hook(agent, registry, instance, bytes);
     let recorded = matches!(appended, Ok(Appended::Recorded(_)));
-    let forward_error = appended
-        .ok()
-        .and_then(|written| forward_written(registry, instance, &written, transport));
+    let written = appended.ok();
+    let forward_error = written
+        .as_ref()
+        .and_then(|written| forward_written(registry, instance, written, transport));
+    let delivery_error = match &written {
+        Some(Appended::Recorded(stop)) if stop.event == "Stop" => {
+            deliver::after_stop(registry, instance, stop, gh, transport)
+        }
+        _ => None,
+    };
     HookOutcome {
         recorded,
         forward_error,
+        delivery_error,
     }
 }
 
@@ -104,9 +120,11 @@ fn bound_worker(registry: &Path, instance: &str) -> Result<Option<crate::message
     let Some(binding_ref) = model::load_binding_ref(registry, instance)? else {
         return Ok(None);
     };
-    let binding: crate::message::Binding =
-        serde_json::from_slice(&std::fs::read(&binding_ref.binding)?)?;
+    let binding = read_binding(&binding_ref.binding)?;
     Ok((binding.worker.context.instance == instance).then_some(binding))
+}
+fn read_binding(path: &Path) -> Result<crate::message::Binding> {
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
 /// Free-form errors never reach disk; only whether the prompt was submitted is recorded.
 fn note_unconfirmed(

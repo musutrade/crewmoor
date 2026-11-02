@@ -101,18 +101,42 @@ pub fn load(registry: &Path, instance: &str) -> Result<Context> {
 pub struct BindingRef {
     pub binding: PathBuf,
 }
+/// Worker side: the binding its Hook callback forwards through. Never overwritten.
 pub fn write_binding_ref(registry: &Path, instance: &str, binding: &Path) -> Result<()> {
+    write_ref(registry, instance, "binding-ref.json", binding)
+}
+pub fn load_binding_ref(registry: &Path, instance: &str) -> Result<Option<BindingRef>> {
+    load_ref(registry, instance, "binding-ref.json")
+}
+/// Dispatcher side: the first bound pair wins and is kept. Every binding of one dispatcher
+/// carries the same container, dispatcher member and session, so any of them reaches it.
+pub fn write_dispatcher_binding_ref(registry: &Path, instance: &str, binding: &Path) -> Result<()> {
+    match write_ref(registry, instance, DISPATCHER_BINDING_REF, binding) {
+        Err(e)
+            if e.downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::AlreadyExists) =>
+        {
+            Ok(())
+        }
+        written => written,
+    }
+}
+pub fn load_dispatcher_binding_ref(registry: &Path, instance: &str) -> Result<Option<BindingRef>> {
+    load_ref(registry, instance, DISPATCHER_BINDING_REF)
+}
+pub const DISPATCHER_BINDING_REF: &str = "dispatcher-binding-ref.json";
+fn write_ref(registry: &Path, instance: &str, file: &str, binding: &Path) -> Result<()> {
     let dir = instance_dir(registry, instance)?;
     write_new(
-        &dir.join("binding-ref.json"),
+        &dir.join(file),
         &serde_json::to_vec(&BindingRef {
             binding: binding.to_path_buf(),
         })?,
     )
 }
-pub fn load_binding_ref(registry: &Path, instance: &str) -> Result<Option<BindingRef>> {
+fn load_ref(registry: &Path, instance: &str, file: &str) -> Result<Option<BindingRef>> {
     let dir = instance_dir(registry, instance)?;
-    match fs::read(dir.join("binding-ref.json")) {
+    match fs::read(dir.join(file)) {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),

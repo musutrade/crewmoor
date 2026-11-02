@@ -18,9 +18,11 @@ pub struct Bounded {
 }
 impl Bounded {
     pub fn new(budget: Duration) -> Self {
-        Self {
-            deadline: Instant::now() + budget,
-        }
+        Self::until(Instant::now() + budget)
+    }
+    /// Share a deadline with other bounded calls of the same callback.
+    pub fn until(deadline: Instant) -> Self {
+        Self { deadline }
     }
 }
 impl Transport for Bounded {
