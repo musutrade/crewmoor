@@ -246,20 +246,16 @@ fn run_rejects_unknown_operations_and_wrong_arity() {
         );
     }
 }
-/// A stand-in `gh` on PATH: logs its arguments, prints `answer`, exits with `status`.
-fn fake_gh(dir: &Path, answer: &str, status: i32) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
+/// The Rust `gh-fixture` on PATH as `gh`: logs its arguments, prints `answer`, exits `status`.
+fn fake_gh(dir: &Path, answer: &str, status: u8) -> std::path::PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(dir.join("answer"), answer).unwrap();
-    let script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}'\ncat '{answer}'\necho 'fake gh stderr' >&2\nexit {status}\n",
-        log = dir.join("gh-args").display(),
-        answer = dir.join("answer").display(),
-    );
-    let path = bin.join("gh");
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(dir.join("status"), status.to_string()).unwrap();
+    let link = bin.join("gh");
+    if !link.exists() {
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_gh-fixture"), &link).unwrap();
+    }
     bin
 }
 fn crewmoor(bin: &Path, values: &[&str]) -> std::process::Output {
@@ -272,6 +268,7 @@ fn crewmoor(bin: &Path, values: &[&str]) -> std::process::Output {
         .arg("issue")
         .args(values)
         .env("PATH", path)
+        .env("GH_FIXTURE_DIR", bin.parent().unwrap())
         .output()
         .unwrap()
 }

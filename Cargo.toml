@@ -15,3 +15,7 @@ tempfile = "3"
 [[bin]]
 name = "transport-fixture"
 path = "tests/support/transport.rs"
+
+[[bin]]
+name = "gh-fixture"
+path = "tests/support/gh.rs"
