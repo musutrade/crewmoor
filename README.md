@@ -2,7 +2,7 @@
 
 A lightweight CLI for coordinating AI agents across runtimes: assign requirements, pass messages, record feedback, and track delivery.
 
-Currently supports **Herdr TUI**. Herdr App and Orca support planned.
+Supports **Herdr TUI** and **Herdr App** (via herdr-core). Orca support planned.
 
 [中文说明](docs/README.zh.md)
 
@@ -22,7 +22,7 @@ flowchart TD
 | Runtime | Status |
 |---|---|
 | Herdr TUI | Supported |
-| Herdr App | Planned |
+| Herdr App (herdr-core) | Supported |
 | Orca | Planned |
 
 A team runs in one runtime instance. Different teams may use different runtimes.
@@ -38,7 +38,9 @@ A team runs in one runtime instance. Different teams may use different runtimes.
 
 ## Quick start
 
-> **Prerequisites**: `herdr` and `gh` (authenticated) installed, Herdr TUI running.
+> **Prerequisites**: `gh` (authenticated) installed, plus one of:
+> - **Herdr TUI**: `herdr` running
+> - **Herdr App**: `hc` (herdr-core) running and connected to Herdr App; an `app-target.toml` pointing at the live socket
 
 ### 1. Install
 
@@ -49,18 +51,31 @@ cargo install --path .
 ### 2. Register the Hook callback
 
 ```bash
-crewmoor feedback install
+crewmoor feedback hooks plan claude install REGISTRY BINARY PLAN_DIR
+crewmoor feedback hooks apply PLAN_DIR
 ```
 
 After installation, Stop / SessionEnd events from agents are recorded and forwarded to the dispatcher automatically.
 
 ### 3. Start a team
 
+**Herdr TUI** (`runtime = "tui"`, team config includes `host`):
+
 ```bash
-crewmoor team start --team myteam --config team.toml
-crewmoor team bind  --team myteam --worker developer
-crewmoor team stop  --team myteam
+crewmoor team start team.toml ~/.local/state/crewmoor
+crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
+crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
 ```
+
+**Herdr App / herdr-core** (`runtime = "core"`, team config includes `app_target`):
+
+```bash
+crewmoor team start team-core.toml ~/.local/state/crewmoor
+crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
+crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
+```
+
+See [`examples/team-core.toml`](examples/team-core.toml) for a core-mode team config template.
 
 ### 4. Assign and track a requirement
 
@@ -82,16 +97,34 @@ crewmoor issue next musutrade/crewmoor --label sprint
 ### 5. Send a message
 
 ```bash
-crewmoor message send --binding roles/developer/binding.json \
-  --from dispatcher --to developer \
-  '{"task":"implement feature X"}'
+# Bind first (creates the binding file)
+crewmoor message bind msg-config.json roles/developer/binding.json
+
+# Then send
+crewmoor message send roles/developer/binding.json message.json
 ```
 
 ### 6. View feedback records
 
 ```bash
-crewmoor feedback show <instance>
+crewmoor feedback show ~/.local/state/crewmoor/feedback <instance>
 ```
+
+## Herdr App / herdr-core
+
+For `runtime = "core"` teams, CrewMoor connects to an already-running herdr-core instance through an **app-target file**:
+
+```toml
+# app-target.toml
+session   = "my-session"
+socket    = "/run/user/1000/herdr-core/default.sock"
+core_id   = "<id from hc server status>"
+machine   = "<machine name>"
+space_id  = "<space id from Herdr App>"   # optional; omit to use project placement
+tab_id    = "<tab id from Herdr App>"     # optional; omit together with space_id
+```
+
+CrewMoor reads this file, verifies the running core identity, and routes all terminal sends through the existing socket. It never starts or stops the core process.
 
 ## Session integrity
 

@@ -3,7 +3,7 @@ team = "sample-core-team"
 task = "sample-task"
 runtime = "core"
 runtime_binary = "/home/gem/.local/bin/herdr-core"
-runtime_version = "hc 0.1.15"
+runtime_version = "hc 0.1.16"
 # Existing App/core target (see app-target.toml); filled from read-only confirmation.
 # CrewMoor connects to that socket and never starts or stops the core.
 app_target = "/absolute/crewmoor/app-target.toml"
