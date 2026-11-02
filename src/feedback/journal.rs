@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Event {
     pub received_ms: u64,
     pub source: String,
@@ -20,16 +20,38 @@ pub struct Event {
     pub summary: Option<String>,
 }
 pub const REJECTED: &str = "session-rejected";
+/// What one append wrote while holding the journal lock.
+pub enum Appended {
+    Recorded(Event),
+    /// The session differed; only this rejection notice was written.
+    Rejected(Event),
+}
 pub fn append(registry: &Path, context: &Context, event: &Event, enroll: bool) -> Result<()> {
+    match record(registry, context, event, enroll)? {
+        Appended::Recorded(_) => Ok(()),
+        Appended::Rejected(_) => {
+            Err("native session differs; feedback not associated; rejection recorded".into())
+        }
+    }
+}
+pub fn record(registry: &Path, context: &Context, event: &Event, enroll: bool) -> Result<Appended> {
     let root = model::instance_dir(registry, &context.instance)?;
     let _lock = crate::record::Lock::take(&root)?;
     model::identifier(&event.native_session_id)?;
     if let Some(expected) = differing(&root, context, &event.native_session_id)? {
         // Team halts: record only the minimal notice fact, never adopt the new session.
-        write_event(&root, &rejection(event, &expected)?)?;
-        return Err("native session differs; feedback not associated; rejection recorded".into());
+        let notice = rejection(event, &expected)?;
+        write_event(&root, &notice)?;
+        return Ok(Appended::Rejected(notice));
     }
     bind(&root, context, &event.native_session_id, enroll)?;
+    write_event(&root, event)?;
+    Ok(Appended::Recorded(event.clone()))
+}
+/// Append a fact about this callback's own forward, outside any session association.
+pub fn note(registry: &Path, instance: &str, event: &Event) -> Result<()> {
+    let root = model::instance_dir(registry, instance)?;
+    let _lock = crate::record::Lock::take(&root)?;
     write_event(&root, event)
 }
 fn write_event(root: &Path, event: &Event) -> Result<()> {
@@ -150,29 +172,4 @@ fn read_events(root: &Path) -> Result<Vec<Event>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(e.into()),
     }
-}
-/// The most-recent fully-appended event in the journal; `None` if the file is absent or empty.
-pub fn last_completed_event(registry: &Path, instance: &str) -> Result<Option<Event>> {
-    let root = model::instance_dir(registry, instance)?;
-    let bytes = match fs::read(root.join("events.jsonl")) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    let complete = bytes
-        .iter()
-        .rposition(|b| *b == b'\n')
-        .map_or(0, |end| end + 1);
-    if complete == 0 {
-        return Ok(None);
-    }
-    let prev = bytes[..complete - 1]
-        .iter()
-        .rposition(|b| *b == b'\n')
-        .map_or(0, |i| i + 1);
-    let line = std::str::from_utf8(&bytes[prev..complete - 1])?.trim();
-    if line.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(serde_json::from_str(line)?))
 }

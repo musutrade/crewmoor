@@ -21,20 +21,37 @@ are forwarded; the dispatcher's own events are never forwarded.
 | `UserPromptSubmit` | native-hook | No | — |
 | All others | native-hook | No | — |
 
-**Record-first, forward-after.** The local record is always written before forwarding is
-attempted. A forwarding failure is suppressed; the callback always returns `{}` and never
-retries. An uncertain send might already have delivered text; do not repeat the hook event
-to recover an unknown result.
+**Record-first, forward-after.** The callback forwards exactly the record that its own
+append wrote while holding the journal lock. It never re-reads the latest journal line. If
+this call wrote nothing (for example the lock was held or the input was refused), nothing is
+forwarded. A session rejection written by an explicit `report`/`report-to` is never forwarded
+as a Hook halt.
+
+**Unconfirmed forward.** If forwarding fails or times out, the callback still returns `{}`,
+does not retry, writes one line to stderr, and appends one journal record:
+
+```json
+{"source":"native-hook-unconfirmed","event":"Stop","native_session_id":"<record session>",
+ "native":{"forwarded_source":"native-hook","forwarded_received_ms":1793585462096,
+           "halt":false,"error":"submission-unconfirmed"}}
+```
+
+`error` is `submission-unconfirmed` when the native prompt call was made and its outcome is
+unknown; it may already have been delivered. It is `not-submitted` when the send stopped
+before the prompt call. Free-form error text is only written to stderr, never to disk. This
+record is not a session fact: `require_unchanged` and the session association ignore it.
 
 **Time bound.** Codex and Claude run each CrewMoor Hook with a 2 s timeout. All native
-calls of one forward share a 1.5 s deadline; a call past it is not started, and the send is
-reported as unconfirmed. The callback checks its context before reading stdin, and reads at
-most 1 MiB.
+calls of one forward share a 1.5 s deadline; a call past it is not started, and the forward
+is recorded as unconfirmed. The callback checks its context before reading stdin, and reads
+at most 1 MiB. On the core runtime the deadline sets the socket read and write timeouts, so
+a peer that keeps sending small chunks can extend one call beyond it.
 
 **Halt path.** When a worker's session changes (e.g. `/clear`), the journal appends a
 `session-rejected` record and the normal `message::send` route would refuse it (the worker's
-`require_unchanged` fails). The halt path skips the sender session check and sends to the
-dispatcher only, marking the message `"system_halt_notification": true`.
+`require_unchanged` fails). The halt path skips only the sender session check. It still requires
+`from` to be the bound worker and `to` its dispatcher, and marks the message
+`"system_halt_notification": true`.
 
 Every rejected Hook appends its own `session-rejected` record, so after `/clear` each Hook
 of the new session (for example `SessionStart`, `UserPromptSubmit` and `Stop`) sends one halt
@@ -123,10 +140,17 @@ The following are **outside** this step:
 - Only bound workers forwarded; unbound instance is skipped.
 - Event filter: Stop and SessionEnd forwarded; SessionStart/UserPromptSubmit not.
 - Halt exception: session-rejected forwarded with `system_halt_notification: true`.
-- Transport failure marks forwarding unknown; event record still exists; callback returns `{}`.
-- An exhausted forwarding deadline starts no native call and keeps the record.
+- Transport failure: the Stop is recorded, one `native-hook-unconfirmed` record is added,
+  exactly one attempt is made, and a later normal send still works.
+- An exhausted forwarding deadline starts no native call and records `not-submitted`.
+- A failed append under a held lock forwards nothing and never resends an old rejection.
+- A Hook appended while the binding is read does not replace the forwarded Stop.
+- An agent-report rejection is never forwarded as a Hook halt.
+- Halt sends keep the fixed worker→dispatcher direction (outsider and dispatcher senders are
+  refused).
 - Dispatcher events never forwarded (no binding-ref written for dispatcher by `team bind`).
-- Subprocess integration: `crewmoor feedback hook` returns `{}\n`, records the Stop and forwards it.
+- Subprocess integration: `crewmoor feedback hook` returns `{}\n`, records the Stop and forwards it;
+  a failed forward prints one stderr line and adds one unconfirmed record.
 
 These are synthetic. Real acceptance is documented in
 [docs/issue-6-step3-real-acceptance.md](issue-6-step3-real-acceptance.md) once the live

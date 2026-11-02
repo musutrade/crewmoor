@@ -131,5 +131,9 @@ fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
     if read.is_err() || bytes.len() > 1_048_576 {
         return false;
     }
-    super::process_hook_event(agent, registry, instance, &bytes, &transport)
+    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport);
+    if let Some(error) = outcome.forward_error {
+        eprintln!("CrewMoor forward unconfirmed; not resent: {error}");
+    }
+    outcome.recorded
 }

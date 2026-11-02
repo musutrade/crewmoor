@@ -60,10 +60,14 @@ fn record_prompt(args: &[String], socket: &std::path::Path) -> Result<()> {
         .iter()
         .filter(|name| std::env::var_os(name).is_some())
         .collect();
-    fs::write(
-        socket.with_extension("submitted"),
-        serde_json::to_vec(&json!({"args":args,"inherited":inherited}))?,
-    )?;
+    let record = serde_json::to_vec(&json!({"args":args,"inherited":inherited}))?;
+    fs::write(socket.with_extension("submitted"), &record)?;
+    // One line per prompt call, so tests can count attempts.
+    let mut log = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(socket.with_extension("prompts"))?;
+    std::io::Write::write_all(&mut log, b"prompt\n")?;
     Ok(())
 }
 /// `pane process-info --pane HANDLE`: foreground processes from `processes.HANDLE`.

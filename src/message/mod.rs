@@ -7,6 +7,8 @@ mod tui;
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
 pub use transport::{Bounded, Native, Transport};
+/// Prefix of every send error raised after the native prompt call was made.
+pub const SUBMISSION_UNCONFIRMED: &str = "message submission unconfirmed";
 
 use crate::{Result, feedback::model::identifier, native::strings};
 use serde::{Deserialize, Serialize};
@@ -85,17 +87,20 @@ fn route<'a>(
     binding.guard()?;
     Ok(recipient)
 }
-/// Halt route: validate message, check only the recipient (dispatcher).
+/// Halt route: the fixed worker→dispatcher direction still holds; only the sender's own
+/// session check is skipped, because that session has just been rejected.
 fn route_halt<'a>(
     binding: &'a Binding,
     message: &Message,
     transport: &impl Transport,
 ) -> Result<&'a Member> {
     message.validate()?;
-    if message.to != binding.dispatcher.context.registration.role {
-        return Err("halt notification must target the dispatcher".into());
+    let worker = &binding.worker.context.registration.role;
+    let dispatcher = &binding.dispatcher.context.registration.role;
+    if &message.from != worker || &message.to != dispatcher || worker == dispatcher {
+        return Err("halt notification must go from the bound worker to its dispatcher".into());
     }
-    let recipient = binding.member(&message.to)?;
+    let recipient = &binding.dispatcher;
     binding.guard()?;
     core::instance(&binding.config, transport)?;
     binding.check(recipient, transport)?;
@@ -143,7 +148,9 @@ fn submission(
         Ok(None)
     });
     verified.map_err(|error| {
-        format!("message submission unconfirmed: {error}; outcome may be unknown; do not automatically resend")
-            .into()
+        format!(
+            "{SUBMISSION_UNCONFIRMED}: {error}; outcome may be unknown; do not automatically resend"
+        )
+        .into()
     })
 }

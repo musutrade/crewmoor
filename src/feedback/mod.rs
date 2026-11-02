@@ -8,40 +8,45 @@ pub(crate) mod model;
 pub use cli::cli;
 pub use event::{ingest, report};
 pub use forward::report_to;
-pub use journal::{REJECTED, last_completed_event, registered_session, require_unchanged, show};
+pub use journal::{REJECTED, registered_session, require_unchanged, show};
 pub use model::{
     BindingRef, Context, Evidence, Registration, load_binding_ref, register, write_binding_ref,
 };
 pub const INSTANCE_ENV: &str = "CREWMOOR_FEEDBACK_INSTANCE";
 
 use crate::{Result, message::Transport};
+use journal::{Appended, Event};
 use std::path::Path;
 
-/// Process one hook event: ingest into the journal, then attempt forwarding if this is a bound
-/// worker and the event is Stop, SessionEnd, or a session-rejected halt record.
-/// Forwarding errors are suppressed; the hook always returns `{}`.
-/// Returns `true` if the normal event was ingested successfully.
+/// Journal source of a note that forwarding a recorded Hook event was not confirmed.
+pub const UNCONFIRMED: &str = "native-hook-unconfirmed";
+
+/// What one Hook callback did. The callback still answers the Agent with `{}`.
+pub struct HookOutcome {
+    /// The Hook event itself was recorded (neither refused nor rejected).
+    pub recorded: bool,
+    /// A forward was attempted and failed or timed out; it is never resent.
+    pub forward_error: Option<String>,
+}
+
+/// Record one Hook event, then forward exactly what that append wrote when this is a bound
+/// worker: a recorded `Stop`/`SessionEnd`, or this call's own session rejection as a halt.
 pub fn process_hook_event(
     agent: &str,
     registry: &Path,
     instance: &str,
     bytes: &[u8],
     transport: &impl Transport,
-) -> bool {
-    let ingest_ok = ingest_hook(agent, registry, instance, bytes).is_ok();
-    let event_name = event_name_from_bytes(bytes);
-    let session = session_from_bytes(bytes);
-    if let Some(name) = event_name {
-        maybe_forward(
-            registry,
-            instance,
-            &name,
-            ingest_ok,
-            session.as_deref(),
-            transport,
-        );
+) -> HookOutcome {
+    let appended = ingest_hook(agent, registry, instance, bytes);
+    let recorded = matches!(appended, Ok(Appended::Recorded(_)));
+    let forward_error = appended
+        .ok()
+        .and_then(|written| forward_written(registry, instance, &written, transport));
+    HookOutcome {
+        recorded,
+        forward_error,
     }
-    ingest_ok
 }
 
 /// The Agent kind of a registered context that this callback's Agent matches.
@@ -57,59 +62,42 @@ pub(crate) fn associated(
     }
     Ok(agent_kind)
 }
-fn ingest_hook(agent: &str, registry: &Path, instance: &str, bytes: &[u8]) -> Result<()> {
+fn ingest_hook(agent: &str, registry: &Path, instance: &str, bytes: &[u8]) -> Result<Appended> {
     let agent_kind = associated(agent, registry, instance)?;
-    event::ingest(registry, instance, &agent_kind, bytes)
+    event::hook(registry, instance, &agent_kind, bytes)
 }
-
-fn event_name_from_bytes(bytes: &[u8]) -> Option<String> {
-    serde_json::from_slice::<serde_json::Value>(bytes)
-        .ok()
-        .and_then(|v| v["hook_event_name"].as_str().map(str::to_owned))
-}
-
-fn session_from_bytes(bytes: &[u8]) -> Option<String> {
-    serde_json::from_slice::<serde_json::Value>(bytes)
-        .ok()
-        .and_then(|v| v["session_id"].as_str().map(str::to_owned))
-}
-
-fn maybe_forward(
+fn forward_written(
     registry: &Path,
     instance: &str,
-    event_name: &str,
-    ingest_ok: bool,
-    incoming_session: Option<&str>,
+    written: &Appended,
     transport: &impl Transport,
-) {
-    // Forward Stop/SessionEnd normally; always check for session-rejected halt.
-    if ingest_ok && !matches!(event_name, "Stop" | "SessionEnd") {
-        return;
+) -> Option<String> {
+    let (record, is_halt) = match written {
+        Appended::Recorded(event) if matches!(event.event.as_str(), "Stop" | "SessionEnd") => {
+            (event, false)
+        }
+        Appended::Recorded(_) => return None,
+        Appended::Rejected(event) => (event, true),
+    };
+    let mut error = try_forward(registry, instance, record, is_halt, transport)
+        .err()?
+        .to_string();
+    if note_unconfirmed(registry, instance, record, is_halt, &error).is_err() {
+        error.push_str("; unconfirmed note not written");
     }
-    let _ = try_forward(registry, instance, ingest_ok, incoming_session, transport);
+    Some(error)
 }
-
 fn try_forward(
     registry: &Path,
     instance: &str,
-    ingest_ok: bool,
-    incoming_session: Option<&str>,
+    record: &Event,
+    is_halt: bool,
     transport: &impl Transport,
 ) -> Result<()> {
     let Some(binding) = bound_worker(registry, instance)? else {
         return Ok(());
     };
-    let Some(record) = journal::last_completed_event(registry, instance)? else {
-        return Ok(());
-    };
-    // Confirm a session-rejected record belongs to this invocation via session match.
-    let is_halt = record.source == REJECTED
-        && incoming_session.is_some_and(|s| s == record.native_session_id);
-    if !ingest_ok && !is_halt {
-        // Ingest failed for a non-rejection reason; nothing to forward.
-        return Ok(());
-    }
-    forward::forward_hook_event(&binding, &record, is_halt, transport).map(|_| ())
+    forward::forward_hook_event(&binding, record, is_halt, transport).map(|_| ())
 }
 /// The binding written by `team bind`, only when this instance is its worker side.
 fn bound_worker(registry: &Path, instance: &str) -> Result<Option<crate::message::Binding>> {
@@ -119,4 +107,31 @@ fn bound_worker(registry: &Path, instance: &str) -> Result<Option<crate::message
     let binding: crate::message::Binding =
         serde_json::from_slice(&std::fs::read(&binding_ref.binding)?)?;
     Ok((binding.worker.context.instance == instance).then_some(binding))
+}
+/// Free-form errors never reach disk; only whether the prompt was submitted is recorded.
+fn note_unconfirmed(
+    registry: &Path,
+    instance: &str,
+    record: &Event,
+    is_halt: bool,
+    error: &str,
+) -> Result<()> {
+    let kind = if error.starts_with(crate::message::SUBMISSION_UNCONFIRMED) {
+        "submission-unconfirmed"
+    } else {
+        "not-submitted"
+    };
+    journal::note(
+        registry,
+        instance,
+        &Event {
+            received_ms: journal::now()?,
+            source: UNCONFIRMED.into(),
+            event: record.event.clone(),
+            native_session_id: record.native_session_id.clone(),
+            native: serde_json::json!({"forwarded_source":record.source,
+                "forwarded_received_ms":record.received_ms,"halt":is_halt,"error":kind}),
+            summary: None,
+        },
+    )
 }
