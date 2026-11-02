@@ -93,6 +93,14 @@ crewmoor message send --binding roles/developer/binding.json \
 crewmoor feedback show <instance>
 ```
 
+## 会话完整性
+
+CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 Hook，不由进程状态推断）。session 发生变化时——Agent 重启、重新登录或上下文重置——团队立即停止并写入可见的拒绝记录，不会静默继续。
+
+## 无后台进程
+
+没有常驻进程，也没有状态机。条件交付完全在 Hook 回调内完成（2 秒窗口）。交付失败会写入 unconfirmed 记录，下次 Stop 自动重试。调用未能启动时不写标记，下次直接重试。
+
 ## 条件交付
 
 调度 Agent Stop 时，CrewMoor 自动检查：

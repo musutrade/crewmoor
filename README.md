@@ -93,6 +93,14 @@ crewmoor message send --binding roles/developer/binding.json \
 crewmoor feedback show <instance>
 ```
 
+## Session integrity
+
+CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). If the session changes — agent restart, re-login, or context reset — the team halts immediately and writes a visible rejection record. No silent continuation.
+
+## No daemon
+
+There is no background process or state machine. Conditional delivery runs entirely inside the Hook callback (2-second window). A failed delivery writes an unconfirmed record; the next Stop retries automatically. A call that never started leaves no marker and retries cleanly.
+
 ## Conditional delivery
 
 When the dispatcher agent stops, CrewMoor checks automatically:
