@@ -6,7 +6,7 @@ mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
-pub use transport::{Bounded, Native, Transport};
+pub use transport::{Bounded, Native, NotStarted, Transport};
 /// Prefix of every send error raised after the native prompt call was made.
 pub const SUBMISSION_UNCONFIRMED: &str = "message submission unconfirmed";
 
@@ -162,6 +162,11 @@ fn submission(
     result: Result<serde_json::Value>,
     transport: &impl Transport,
 ) -> Result<Option<u64>> {
+    // A prompt that was never started was not submitted; only a started one is unknown.
+    let result = match result {
+        Err(error) if error.is::<NotStarted>() => return Err(error),
+        result => result,
+    };
     let verified = result.and_then(|value| {
         if binding.config.runtime == crate::config::Runtime::Core {
             return core::submitted(binding, &value, transport).map(Some);

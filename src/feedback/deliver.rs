@@ -138,7 +138,8 @@ fn send(
         error,
     })
 }
-/// Submit the notice once: its outcome kind and, unless accepted, the error.
+/// Submit the notice once: its outcome kind and, unless accepted, the error. A prompt the
+/// shared budget never started is `not-submitted`, never wrapped as possibly submitted.
 fn submit(
     binding: &Binding,
     assignment: &Assignment,

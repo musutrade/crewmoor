@@ -65,11 +65,17 @@ impl Gh for FakeGh {
 struct Trace {
     submissions: Cell<usize>,
     fail_prompt: Cell<bool>,
+    /// The shared deadline runs out after the route checks, right at the prompt call.
+    exhaust_at_prompt: Cell<bool>,
 }
 
 impl Transport for Trace {
     fn call(&self, config: &Config, args: &[String]) -> crewmoor::Result<Value> {
-        if args.get(1).map(String::as_str) == Some("prompt") {
+        let prompt = args.get(1).map(String::as_str) == Some("prompt");
+        if prompt && self.exhaust_at_prompt.get() {
+            return Bounded::new(Duration::ZERO).call(config, args);
+        }
+        if prompt {
             self.submissions.set(self.submissions.get() + 1);
             if self.fail_prompt.get() {
                 return Err("synthetic timeout".into());
@@ -979,4 +985,56 @@ fn the_dispatcher_notice_route_refuses_any_other_sender_or_recipient() {
         );
     }
     assert_eq!(fixture.submissions(), 0);
+}
+
+#[test]
+fn a_budget_exhausted_at_the_prompt_is_not_submitted_unmarked_and_retried() {
+    let fixture = Fixture::new();
+    fixture.bind_dispatcher();
+    fixture.assign(8);
+    fixture.gh.answer(Some("CLOSED"), Some(listing(21)));
+    fixture.trace.exhaust_at_prompt.set(true);
+    let error = fixture.dispatcher_stop().delivery_error.expect("noted");
+    assert!(error.contains("call not started"), "{error}");
+    assert!(!error.contains("submission unconfirmed"), "{error}");
+    let socket = &fixture.binding.config.socket;
+    assert!(
+        !socket.with_extension("prompts").exists(),
+        "no prompt CLI ran"
+    );
+    let note = fixture.dispatcher_events().last().cloned().unwrap();
+    assert_eq!(
+        (&note["native"]["stage"], &note["native"]["error"]),
+        (&json!("send"), &json!("not-submitted"))
+    );
+    assert!(fixture.delivered().is_none(), "never started: not marked");
+    // The next normal Stop queries again and delivers the item that was never sent.
+    fixture.trace.exhaust_at_prompt.set(false);
+    assert!(fixture.dispatcher_stop().delivery_error.is_none());
+    assert_eq!(fixture.gh.calls(), ["view", "list", "view", "list"]);
+    assert_eq!(fixture.submissions(), 1);
+    assert_eq!(fixture.last_message_content()["next"]["number"], 21);
+    assert!(fixture.delivered().is_some());
+}
+
+#[test]
+fn a_worker_forward_exhausted_at_the_prompt_is_noted_not_submitted() {
+    let fixture = Fixture::new();
+    fixture.trace.exhaust_at_prompt.set(true);
+    let error = fixture
+        .hook_event("worker", "worker-session", "Stop")
+        .forward_error
+        .expect("noted");
+    assert!(error.contains("call not started"), "{error}");
+    assert!(
+        !fixture
+            .binding
+            .config
+            .socket
+            .with_extension("prompts")
+            .exists()
+    );
+    let note = fixture.events().last().cloned().unwrap();
+    assert_eq!(note["source"], feedback::UNCONFIRMED);
+    assert_eq!(note["native"]["error"], "not-submitted");
 }
