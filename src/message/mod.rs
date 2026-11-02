@@ -6,7 +6,9 @@ mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
-pub use transport::{Native, Transport};
+pub use transport::{Bounded, Native, Transport};
+/// Prefix of every send error raised after the native prompt call was made.
+pub const SUBMISSION_UNCONFIRMED: &str = "message submission unconfirmed";
 
 use crate::{Result, feedback::model::identifier, native::strings};
 use serde::{Deserialize, Serialize};
@@ -55,22 +57,17 @@ pub fn send<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route(binding, message, transport)?;
-    let envelope = Envelope {
-        team: &binding.team,
-        message,
-    };
-    let text = serde_json::to_string(&envelope)?;
-    let args = match binding.config.runtime {
-        crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
-        crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
-    };
-    let result = transport.call(&binding.config, &args);
-    let native_turn = submission(binding, recipient, result, transport)?;
-    Ok(Receipt {
-        envelope,
-        transport: "accepted",
-        native_turn,
-    })
+    do_send(binding, recipient, message, transport)
+}
+/// Send a halt notification to the dispatcher only.
+/// Skips the sender session check because the worker has a rejected session after `/clear`.
+pub fn send_halt_to_dispatcher<'a>(
+    binding: &'a Binding,
+    message: &'a Message,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let recipient = route_halt(binding, message, transport)?;
+    do_send(binding, recipient, message, transport)
 }
 fn route<'a>(
     binding: &'a Binding,
@@ -90,6 +87,49 @@ fn route<'a>(
     binding.guard()?;
     Ok(recipient)
 }
+/// Halt route: the fixed worker→dispatcher direction still holds; only the sender's own
+/// session check is skipped, because that session has just been rejected.
+fn route_halt<'a>(
+    binding: &'a Binding,
+    message: &Message,
+    transport: &impl Transport,
+) -> Result<&'a Member> {
+    message.validate()?;
+    let worker = &binding.worker.context.registration.role;
+    let dispatcher = &binding.dispatcher.context.registration.role;
+    if &message.from != worker || &message.to != dispatcher || worker == dispatcher {
+        return Err("halt notification must go from the bound worker to its dispatcher".into());
+    }
+    let recipient = &binding.dispatcher;
+    binding.guard()?;
+    core::instance(&binding.config, transport)?;
+    binding.check(recipient, transport)?;
+    binding.guard()?;
+    Ok(recipient)
+}
+fn do_send<'a>(
+    binding: &'a Binding,
+    recipient: &'a Member,
+    message: &'a Message,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let envelope = Envelope {
+        team: &binding.team,
+        message,
+    };
+    let text = serde_json::to_string(&envelope)?;
+    let args = match binding.config.runtime {
+        crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
+        crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
+    };
+    let result = transport.call(&binding.config, &args);
+    let native_turn = submission(binding, recipient, result, transport)?;
+    Ok(Receipt {
+        envelope,
+        transport: "accepted",
+        native_turn,
+    })
+}
 fn submission(
     binding: &Binding,
     recipient: &Member,
@@ -108,7 +148,9 @@ fn submission(
         Ok(None)
     });
     verified.map_err(|error| {
-        format!("message submission unconfirmed: {error}; outcome may be unknown; do not automatically resend")
-            .into()
+        format!(
+            "{SUBMISSION_UNCONFIRMED}: {error}; outcome may be unknown; do not automatically resend"
+        )
+        .into()
     })
 }

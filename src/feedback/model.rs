@@ -96,3 +96,25 @@ pub fn load(registry: &Path, instance: &str) -> Result<Context> {
     }
     Ok(context)
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BindingRef {
+    pub binding: PathBuf,
+}
+pub fn write_binding_ref(registry: &Path, instance: &str, binding: &Path) -> Result<()> {
+    let dir = instance_dir(registry, instance)?;
+    write_new(
+        &dir.join("binding-ref.json"),
+        &serde_json::to_vec(&BindingRef {
+            binding: binding.to_path_buf(),
+        })?,
+    )
+}
+pub fn load_binding_ref(registry: &Path, instance: &str) -> Result<Option<BindingRef>> {
+    let dir = instance_dir(registry, instance)?;
+    match fs::read(dir.join("binding-ref.json")) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}

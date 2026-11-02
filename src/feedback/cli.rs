@@ -1,6 +1,6 @@
 use super::{INSTANCE_ENV, event, model};
 use crate::{Result, config::AgentKind};
-use std::{fs, io::Read, path::Path};
+use std::{fs, io::Read, path::Path, time::Duration};
 
 pub fn cli(args: &[String]) -> Result<()> {
     match args.split_first() {
@@ -111,23 +111,29 @@ fn print(value: &impl serde::Serialize) -> Result<()> {
 fn hook(agent: &str, registry: &Path) {
     // No CrewMoor marker: do not read stdin, look up sessions, or collect anything.
     if let Some(instance) = std::env::var_os(INSTANCE_ENV)
-        && receive(agent, registry, &instance.to_string_lossy()).is_err()
+        && !receive(agent, registry, &instance.to_string_lossy())
     {
         eprintln!("CrewMoor feedback not recorded; task is not replayed");
     }
     // No decision, additional context, retry or task-completion signal to the Agent.
     println!("{{}}");
 }
-fn receive(agent: &str, registry: &Path, instance: &str) -> Result<()> {
-    let agent: AgentKind = serde_json::from_value(agent.into())?;
-    let context = model::load(registry, instance)?;
-    if context.registration.agent != agent {
-        return Err("unassociated Agent kind".into());
+/// Forwarding must finish inside the Agents' 2 s Hook timeout, leaving room for startup.
+const FORWARD_BUDGET: Duration = Duration::from_millis(1500);
+fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
+    let transport = crate::message::Bounded::new(FORWARD_BUDGET);
+    // An unknown or mismatched context never reads stdin.
+    if super::associated(agent, registry, instance).is_err() {
+        return false;
     }
     let mut bytes = Vec::new();
-    std::io::stdin().take(1_048_577).read_to_end(&mut bytes)?;
-    if bytes.len() > 1_048_576 {
-        return Err("hook input too large".into());
+    let read = std::io::stdin().take(1_048_577).read_to_end(&mut bytes);
+    if read.is_err() || bytes.len() > 1_048_576 {
+        return false;
     }
-    event::ingest(registry, instance, &agent, &bytes)
+    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport);
+    if let Some(error) = outcome.forward_error {
+        eprintln!("CrewMoor forward unconfirmed; not resent: {error}");
+    }
+    outcome.recorded
 }

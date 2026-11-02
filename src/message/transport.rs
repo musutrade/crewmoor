@@ -1,7 +1,7 @@
 use super::Config;
 use crate::{Result, config::Runtime, failure::NativeFailure};
 use serde_json::Value;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub trait Transport {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value>;
@@ -9,15 +9,38 @@ pub trait Transport {
 pub struct Native;
 impl Transport for Native {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
-        if config.runtime == Runtime::Core {
-            return super::core::call(config, args);
-        }
-        let mut cmd = crate::native::endpoint_command(&config.runtime_binary, &config.socket);
-        let output = crate::transport::output(cmd.args(args), Duration::from_secs(10))?;
-        if !output.status.success() {
-            let value = serde_json::from_slice(&output.stderr).unwrap_or(Value::Null);
-            return Err(NativeFailure::decode(&value).into());
-        }
-        crate::native::payload(serde_json::from_slice(&output.stdout)?, &Runtime::Tui)
+        call_within(config, args, Duration::from_secs(10))
     }
+}
+/// Native calls sharing one total deadline; a call past it is refused, never started.
+pub struct Bounded {
+    deadline: Instant,
+}
+impl Bounded {
+    pub fn new(budget: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + budget,
+        }
+    }
+}
+impl Transport for Bounded {
+    fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err("native call budget exhausted; call not started".into());
+        }
+        call_within(config, args, left)
+    }
+}
+fn call_within(config: &Config, args: &[String], limit: Duration) -> Result<Value> {
+    if config.runtime == Runtime::Core {
+        return super::core::call(config, args, limit);
+    }
+    let mut cmd = crate::native::endpoint_command(&config.runtime_binary, &config.socket);
+    let output = crate::transport::output(cmd.args(args), limit)?;
+    if !output.status.success() {
+        let value = serde_json::from_slice(&output.stderr).unwrap_or(Value::Null);
+        return Err(NativeFailure::decode(&value).into());
+    }
+    crate::native::payload(serde_json::from_slice(&output.stdout)?, &Runtime::Tui)
 }

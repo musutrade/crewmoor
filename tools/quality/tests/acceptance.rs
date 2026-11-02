@@ -64,15 +64,23 @@ fn configuration_negatives() {
         "[build]\nrustflags=['-A', 'warnings']",
         "[build]\nrustflags=['--cap-lints=allow']",
         "[build]\nrustc-wrapper='unknown'",
+        "[build]\nrustc-wrapper='/home/gem/.cargo/bin/unknown'",
+        "[build]\nrustc-wrapper='/opt/sccache/bin/sccache-dist'",
+        "[build]\nrustc='/home/gem/.cargo/bin/sccache'",
     ] {
         assert!(config::document(text).is_err());
     }
-    assert!(
-        config::document(
-            "[build]\nrustc-wrapper='sccache'\nrustflags=['-C', 'link-arg=-fuse-ld=mold']"
-        )
-        .is_ok()
-    );
+    for wrapper in [
+        "sccache",
+        "/home/gem/.cargo/bin/sccache",
+        "kache",
+        "/home/gem/.cargo/bin/kache",
+    ] {
+        let text = format!(
+            "[build]\nrustc-wrapper='{wrapper}'\nrustflags=['-C', 'link-arg=-fuse-ld=mold']"
+        );
+        assert!(config::document(&text).is_ok(), "{wrapper}");
+    }
     assert!(config::environment([("RUSTFLAGS".into(), "-A warnings".into())].into_iter()).is_err());
     for text in [
         "cargo clippy -- -A warnings",

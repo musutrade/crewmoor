@@ -105,9 +105,9 @@ pub fn submitted(binding: &Binding, value: &Value, transport: &impl Transport) -
     binding.guard()?;
     Ok(turn)
 }
-pub fn call(config: &Config, args: &[String]) -> Result<Value> {
+pub fn call(config: &Config, args: &[String], limit: std::time::Duration) -> Result<Value> {
     let (method, params) = request(args)?;
-    crate::app::exchange(&config.socket, method, params)
+    crate::app::exchange_within(&config.socket, method, params, limit)
 }
 fn request(args: &[String]) -> Result<(&'static str, Value)> {
     match args {

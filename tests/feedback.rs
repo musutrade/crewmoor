@@ -1,12 +1,11 @@
+#[path = "support/hook.rs"]
+mod hook;
 use crewmoor::{
     config::AgentKind,
     feedback::{self, Evidence, Registration},
 };
 use serde_json::{Value, json};
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::process::Command;
 
 fn registration(dir: &std::path::Path) -> Registration {
     Registration {
@@ -83,20 +82,13 @@ fn claude_native_events_and_explicit_business_reports_have_separate_meanings() {
 fn hook_callback_is_a_real_rust_subprocess_but_fixture_evidence_stays_synthetic() {
     let dir = tempfile::tempdir().unwrap();
     let context = feedback::register(dir.path(), registration(dir.path())).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
-        .args(["feedback", "hook", "claude", dir.path().to_str().unwrap()])
-        .env(feedback::INSTANCE_ENV, &context.instance)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&serde_json::to_vec(&payload(dir.path(), "SessionStart")).unwrap())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
+    let input = serde_json::to_vec(&payload(dir.path(), "SessionStart")).unwrap();
+    let output = hook::run(
+        "claude",
+        dir.path(),
+        &[(feedback::INSTANCE_ENV, &context.instance)],
+        Some(&input),
+    );
     assert!(output.status.success());
     assert_eq!(output.stdout, b"{}\n");
     let view = feedback::show(dir.path(), &context.instance).unwrap();
@@ -105,16 +97,8 @@ fn hook_callback_is_a_real_rust_subprocess_but_fixture_evidence_stays_synthetic(
 #[test]
 fn unassociated_global_hook_does_not_wait_for_input_or_create_records() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
-        .args(["feedback", "hook", "claude", dir.path().to_str().unwrap()])
-        .env_remove(feedback::INSTANCE_ENV)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Keep the writer open: a global hook without context must not read stdin.
-    let _writer = child.stdin.take().unwrap();
-    let output = child.wait_with_output().unwrap();
+    // A global hook without context must not read stdin.
+    let output = hook::run("claude", dir.path(), &[], None);
     assert!(output.status.success());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
@@ -248,22 +232,19 @@ fn codex_has_its_own_event_set_and_repeated_sessionstart_is_not_ready_or_a_new_i
 #[test]
 fn unknown_marker_does_not_read_stdin_and_known_context_failure_never_blocks_agent() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
-        .args(["feedback", "hook", "claude", dir.path().to_str().unwrap()])
-        .env(feedback::INSTANCE_ENV, "not-registered")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let _open_writer = child.stdin.take().unwrap();
-    assert!(child.wait_with_output().unwrap().status.success());
+    let unknown = [(feedback::INSTANCE_ENV, "not-registered")];
+    assert!(
+        hook::run("claude", dir.path(), &unknown, None)
+            .status
+            .success()
+    );
     let context = feedback::register(dir.path(), registration(dir.path())).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
-        .args(["feedback", "hook", "claude", dir.path().to_str().unwrap()])
-        .env(feedback::INSTANCE_ENV, &context.instance)
-        .output()
-        .unwrap();
+    // A Codex callback on a Claude context is refused before stdin is read.
+    let known = [(feedback::INSTANCE_ENV, context.instance.as_str())];
+    let mismatched = hook::run("codex", dir.path(), &known, None);
+    assert!(mismatched.status.success());
+    assert!(String::from_utf8_lossy(&mismatched.stderr).contains("not recorded"));
+    let output = hook::run("claude", dir.path(), &known, Some(b""));
     assert!(output.status.success());
     assert_eq!(output.stdout, b"{}\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("not recorded"));

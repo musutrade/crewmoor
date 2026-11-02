@@ -61,8 +61,13 @@ fn entry(key: &str, value: &Value) -> Result<()> {
     }
     walk(value)
 }
+/// Only a caching `rustc-wrapper` is allowed, named by file name or by full path.
 fn wrapper(key: &str, value: &Value) -> Result<()> {
-    if key == "rustc-wrapper" && value.as_str() == Some("sccache") {
+    let name = value
+        .as_str()
+        .and_then(|path| std::path::Path::new(path).file_name())
+        .and_then(|name| name.to_str());
+    if key == "rustc-wrapper" && matches!(name, Some("sccache" | "kache")) {
         return Ok(());
     }
     Err("unknown compiler override".into())

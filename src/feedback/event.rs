@@ -44,11 +44,25 @@ pub fn events(agent: &AgentKind) -> &'static [&'static str] {
     }
 }
 pub fn ingest(registry: &Path, instance: &str, agent: &AgentKind, bytes: &[u8]) -> Result<()> {
+    match hook(registry, instance, agent, bytes)? {
+        journal::Appended::Recorded(_) => Ok(()),
+        journal::Appended::Rejected(_) => {
+            Err("native session differs; feedback not associated; rejection recorded".into())
+        }
+    }
+}
+/// One native Hook event, and exactly what its append wrote.
+pub fn hook(
+    registry: &Path,
+    instance: &str,
+    agent: &AgentKind,
+    bytes: &[u8],
+) -> Result<journal::Appended> {
     let context = model::load(registry, instance)?;
     let input = checked_input(&context, agent, bytes)?;
     let native = metadata(&input)?;
     let enroll = input.hook_event_name == "SessionStart";
-    journal::append(
+    journal::record(
         registry,
         &context,
         &Event {
