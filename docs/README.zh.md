@@ -1,6 +1,8 @@
 # CrewMoor
 
-一个轻量级 CLI，用于在 Herdr TUI 中协调一组 AI Agent 完成开发任务：分配需求、传递消息、记录反馈、跟踪交付。
+一个轻量级 CLI，用于跨容器协调 AI Agent 完成开发任务：分配需求、传递消息、记录反馈、跟踪交付。
+
+当前支持 **Herdr TUI**，未来计划支持 Herdr App 和 Orca。
 
 [English](../README.md)
 
@@ -14,6 +16,16 @@ flowchart TD
     W -->|"feedback hook"| D
     D -->|"issue done → next"| You
 ```
+
+## 容器兼容性
+
+| 容器 | 状态 |
+|---|---|
+| Herdr TUI | 已支持 |
+| Herdr App | 计划中 |
+| Orca | 计划中 |
+
+一个团队运行在一个容器实例中，不同团队可使用不同容器。
 
 ## 子命令
 

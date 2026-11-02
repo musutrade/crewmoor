@@ -1,6 +1,8 @@
 # CrewMoor
 
-A lightweight CLI for coordinating AI agents in Herdr TUI: assign requirements, pass messages, record feedback, and track delivery.
+A lightweight CLI for coordinating AI agents across runtimes: assign requirements, pass messages, record feedback, and track delivery.
+
+Currently supports **Herdr TUI**. Herdr App and Orca support planned.
 
 [中文说明](docs/README.zh.md)
 
@@ -14,6 +16,16 @@ flowchart TD
     W -->|"feedback hook"| D
     D -->|"issue done → next"| You
 ```
+
+## Runtime support
+
+| Runtime | Status |
+|---|---|
+| Herdr TUI | Supported |
+| Herdr App | Planned |
+| Orca | Planned |
+
+A team runs in one runtime instance. Different teams may use different runtimes.
 
 ## Subcommands
 
