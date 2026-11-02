@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const LONG: u64 = 600;
+pub(crate) const LONG: u64 = 600;
 
 fn s(list: &[&str]) -> Vec<String> {
     list.iter().map(|v| (*v).into()).collect()
@@ -17,7 +17,7 @@ fn read(path: &Path) -> Value {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null)
 }
-fn role_value(dir: &Path, role: &str, file: &str, pointer: &str) -> Result<String> {
+pub(crate) fn role_value(dir: &Path, role: &str, file: &str, pointer: &str) -> Result<String> {
     let value = read(&dir.join("roles").join(role).join(file));
     Ok(value
         .pointer(pointer)
@@ -26,22 +26,22 @@ fn role_value(dir: &Path, role: &str, file: &str, pointer: &str) -> Result<Strin
         .into())
 }
 pub struct Team {
-    dir: PathBuf,
-    registry: PathBuf,
+    pub(crate) dir: PathBuf,
+    pub(crate) registry: PathBuf,
 }
 impl Team {
-    fn instance(&self, role: &str) -> Result<PathBuf> {
+    pub(crate) fn instance(&self, role: &str) -> Result<PathBuf> {
         let id = role_value(&self.dir, role, "context.json", "/instance")?;
         Ok(self.registry.join("instances").join(id))
     }
-    fn pane(&self, role: &str) -> Result<String> {
+    pub(crate) fn pane(&self, role: &str) -> Result<String> {
         role_value(&self.dir, role, "launch/record.json", "/handle")
     }
-    fn session(&self, role: &str) -> Result<Option<String>> {
+    pub(crate) fn session(&self, role: &str) -> Result<Option<String>> {
         let path = self.instance(role)?.join("native-session.json");
         Ok(serde_json::from_value(read(&path)).ok())
     }
-    fn journal(&self, role: &str) -> Result<String> {
+    pub(crate) fn journal(&self, role: &str) -> Result<String> {
         Ok(fs::read_to_string(self.instance(role)?.join("events.jsonl")).unwrap_or_default())
     }
 }
@@ -59,7 +59,7 @@ pub fn execute(run: &Run) -> Result<()> {
     compact(run, &team, &binding)?;
     clear(run, &team, &paths, &binding)
 }
-fn preflight(run: &Run) -> Result<()> {
+pub(crate) fn preflight(run: &Run) -> Result<()> {
     let crewmoor = PathBuf::from(run.get("crewmoor")?);
     if crate::run::sha256(&crewmoor)? != run.get("crewmoor_sha256")? {
         return Err("frozen crewmoor binary differs from approved plan".into());
@@ -117,7 +117,7 @@ pub fn start(run: &Run) -> Result<Team> {
         registry: PathBuf::from(run.get("registry")?),
     })
 }
-fn team_cmd(run: &Run, team: &Team, args: &[&str]) -> Result<Vec<String>> {
+pub(crate) fn team_cmd(run: &Run, team: &Team, args: &[&str]) -> Result<Vec<String>> {
     let mut argv = vec![run.get("crewmoor")?, "team".into()];
     argv.extend(s(args));
     argv.insert(3, team.dir.display().to_string());
@@ -166,7 +166,7 @@ fn bind(run: &Run, team: &Team) -> Result<()> {
     }
     Ok(())
 }
-fn prompt(run: &Run, team: &Team, role: &str, label: &str, text: &str) -> Result<()> {
+pub(crate) fn prompt(run: &Run, team: &Team, role: &str, label: &str, text: &str) -> Result<()> {
     let argv = vec![
         "herdr".into(),
         "agent".into(),

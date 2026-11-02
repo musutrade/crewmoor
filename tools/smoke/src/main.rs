@@ -1,7 +1,7 @@
-//! Issue #15 real smoke run. Runs only with an approved plan:
+//! Real smoke run (#15, or #6 step 3 with `"flow":"hook-forward"`). Runs only with an approved plan:
 //! `CREWMOOR_SMOKE_APPROVED=<sha256 of plan.json> crewmoor-smoke PLAN.json`.
 //! Every external call is saved as evidence; nothing is retried.
-use crewmoor_smoke::{Result, flow, run};
+use crewmoor_smoke::{Result, flow, forward, run};
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -25,8 +25,15 @@ fn start(args: &[String]) -> Result<()> {
     }
     let plan: serde_json::Value = serde_json::from_slice(&std::fs::read(plan_path)?)?;
     let run = run::Run::create(plan, &digest)?;
-    let result = flow::execute(&run);
+    let result = if plan_flow(&run) == "hook-forward" {
+        forward::execute(&run)
+    } else {
+        flow::execute(&run)
+    };
     let stop = flow::finish(&run);
     run.seal()?;
     result.and(stop)
+}
+fn plan_flow(run: &run::Run) -> String {
+    run.plan["flow"].as_str().unwrap_or_default().to_owned()
 }

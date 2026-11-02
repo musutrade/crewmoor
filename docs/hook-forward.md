@@ -26,10 +26,19 @@ attempted. A forwarding failure is suppressed; the callback always returns `{}` 
 retries. An uncertain send might already have delivered text; do not repeat the hook event
 to recover an unknown result.
 
+**Time bound.** Codex and Claude run each CrewMoor Hook with a 2 s timeout. All native
+calls of one forward share a 1.5 s deadline; a call past it is not started, and the send is
+reported as unconfirmed. The callback checks its context before reading stdin, and reads at
+most 1 MiB.
+
 **Halt path.** When a worker's session changes (e.g. `/clear`), the journal appends a
 `session-rejected` record and the normal `message::send` route would refuse it (the worker's
 `require_unchanged` fails). The halt path skips the sender session check and sends to the
 dispatcher only, marking the message `"system_halt_notification": true`.
+
+Every rejected Hook appends its own `session-rejected` record, so after `/clear` each Hook
+of the new session (for example `SessionStart`, `UserPromptSubmit` and `Stop`) sends one halt
+notification. There is no system deduplication; the dispatcher writes its halt report once.
 
 ### Message content
 
@@ -81,6 +90,7 @@ skill-layer policy and do not modify the `herdr-team-flow` global skill.
    - Report the halt to the user with the worker role, the new session id, and the
      associated (old) session id from `record.native.associated_session`.
    - Await user decision before re-engaging that worker.
+   - Write the halt report once, even when several halt notifications arrive.
 
 4. **Halt reply once.** The dispatcher may send one acknowledgement to the user for a
    halt event; it does not reply to the worker.
@@ -114,8 +124,9 @@ The following are **outside** this step:
 - Event filter: Stop and SessionEnd forwarded; SessionStart/UserPromptSubmit not.
 - Halt exception: session-rejected forwarded with `system_halt_notification: true`.
 - Transport failure marks forwarding unknown; event record still exists; callback returns `{}`.
+- An exhausted forwarding deadline starts no native call and keeps the record.
 - Dispatcher events never forwarded (no binding-ref written for dispatcher by `team bind`).
-- Subprocess integration: `crewmoor feedback hook` returns `{}\n`; Stop event recorded.
+- Subprocess integration: `crewmoor feedback hook` returns `{}\n`, records the Stop and forwards it.
 
 These are synthetic. Real acceptance is documented in
 [docs/issue-6-step3-real-acceptance.md](issue-6-step3-real-acceptance.md) once the live
