@@ -6,7 +6,7 @@ mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
-pub use transport::{Bounded, Native, Transport};
+pub use transport::{Bounded, Native, NotStarted, Transport};
 /// Prefix of every send error raised after the native prompt call was made.
 pub const SUBMISSION_UNCONFIRMED: &str = "message submission unconfirmed";
 
@@ -69,6 +69,28 @@ pub fn send_halt_to_dispatcher<'a>(
     let recipient = route_halt(binding, message, transport)?;
     do_send(binding, recipient, message, transport)
 }
+/// Send a system notice to the dispatcher about its own work (the next issue item).
+/// Sender and recipient are both the dispatcher role; only the dispatcher is checked.
+pub fn send_to_dispatcher<'a>(
+    binding: &'a Binding,
+    message: &'a Message,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let recipient = route_self(binding, message, transport)?;
+    do_send(binding, recipient, message, transport)
+}
+fn route_self<'a>(
+    binding: &'a Binding,
+    message: &Message,
+    transport: &impl Transport,
+) -> Result<&'a Member> {
+    message.validate()?;
+    let dispatcher = &binding.dispatcher.context.registration.role;
+    if &message.from != dispatcher || &message.to != dispatcher {
+        return Err("system notice must go from and to the bound dispatcher".into());
+    }
+    dispatcher_only(binding, transport)
+}
 fn route<'a>(
     binding: &'a Binding,
     message: &Message,
@@ -100,6 +122,10 @@ fn route_halt<'a>(
     if &message.from != worker || &message.to != dispatcher || worker == dispatcher {
         return Err("halt notification must go from the bound worker to its dispatcher".into());
     }
+    dispatcher_only(binding, transport)
+}
+/// Container instance and the dispatcher's own Hook session and location; sender not checked.
+fn dispatcher_only<'a>(binding: &'a Binding, transport: &impl Transport) -> Result<&'a Member> {
     let recipient = &binding.dispatcher;
     binding.guard()?;
     core::instance(&binding.config, transport)?;
@@ -136,6 +162,11 @@ fn submission(
     result: Result<serde_json::Value>,
     transport: &impl Transport,
 ) -> Result<Option<u64>> {
+    // A prompt that was never started was not submitted; only a started one is unknown.
+    let result = match result {
+        Err(error) if error.is::<NotStarted>() => return Err(error),
+        result => result,
+    };
     let verified = result.and_then(|value| {
         if binding.config.runtime == crate::config::Runtime::Core {
             return core::submitted(binding, &value, transport).map(Some);

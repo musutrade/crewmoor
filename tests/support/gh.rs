@@ -1,6 +1,7 @@
 // `gh` test double for tests/issue.rs. Never calls GitHub.
-// In $GH_FIXTURE_DIR: writes its arguments one per line to `gh-args`, prints `answer`,
-// then exits with the code in `status`. Missing setup exits 2.
+// In $GH_FIXTURE_DIR: writes its arguments one per line to `gh-args`, prints
+// `answer-<subcommand>` (e.g. `answer-view`) or else `answer`, then exits with the code in
+// `status`. Missing setup exits 2.
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 fn main() -> ExitCode {
@@ -9,10 +10,11 @@ fn main() -> ExitCode {
     };
     let args: Vec<String> = env::args().skip(1).collect();
     let logged = fs::write(dir.join("gh-args"), args.join("\n") + "\n").is_ok();
-    print!(
-        "{}",
-        fs::read_to_string(dir.join("answer")).unwrap_or_default()
-    );
+    let specific = args.get(1).map(|sub| dir.join(format!("answer-{sub}")));
+    let answer = specific
+        .and_then(|path| fs::read_to_string(path).ok())
+        .or_else(|| fs::read_to_string(dir.join("answer")).ok());
+    print!("{}", answer.unwrap_or_default());
     eprintln!("fake gh stderr");
     let status = fs::read_to_string(dir.join("status"))
         .ok()

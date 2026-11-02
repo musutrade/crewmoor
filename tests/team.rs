@@ -204,6 +204,12 @@ fn team_bind_needs_registered_sessions_then_binds_launched_resources_and_message
     let binding: Binding =
         serde_json::from_slice(&fs::read(dir.join("roles/worker/binding.json")).unwrap()).unwrap();
     assert!(binding.worker.process.is_some());
+    // The dispatcher side also references the binding so its own Stop can deliver.
+    let registry = setup.base().join("registry");
+    let reference = feedback::load_dispatcher_binding_ref(&registry, &setup.instance("lead"))
+        .unwrap()
+        .expect("dispatcher binding reference written on bind");
+    assert_eq!(reference.binding, dir.join("roles/worker/binding.json"));
     let report = Message {
         id: "report-1".into(),
         from: "worker".into(),

@@ -206,12 +206,18 @@ pub fn bind(dir: &Path, worker: &str, transport: &impl Transport) -> Result<Valu
         "worker_session":binding.worker.native_session}),
     )
 }
-/// The binding, then the worker's reference to it so its Hook callback can forward.
+/// The binding, then the worker's reference to it so its Hook callback can forward, then
+/// the dispatcher's reference (first bind wins) so its own Stop can deliver the next issue.
 fn record_binding(team: &Team, path: &Path, binding: &Binding) -> Result<()> {
     model::write_new(path, &serde_json::to_vec_pretty(binding)?)?;
     feedback::model::write_binding_ref(
         &team.feedback_registry,
         &binding.worker.context.instance,
+        path,
+    )?;
+    feedback::model::write_dispatcher_binding_ref(
+        &team.feedback_registry,
+        &binding.dispatcher.context.instance,
         path,
     )
 }

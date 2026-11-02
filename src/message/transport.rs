@@ -3,6 +3,15 @@ use crate::{Result, config::Runtime, failure::NativeFailure};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
+/// A native call refused before any CLI process was started; nothing was submitted.
+#[derive(Debug)]
+pub struct NotStarted;
+impl std::fmt::Display for NotStarted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native call budget exhausted; call not started")
+    }
+}
+impl std::error::Error for NotStarted {}
 pub trait Transport {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value>;
 }
@@ -18,16 +27,18 @@ pub struct Bounded {
 }
 impl Bounded {
     pub fn new(budget: Duration) -> Self {
-        Self {
-            deadline: Instant::now() + budget,
-        }
+        Self::until(Instant::now() + budget)
+    }
+    /// Share a deadline with other bounded calls of the same callback.
+    pub fn until(deadline: Instant) -> Self {
+        Self { deadline }
     }
 }
 impl Transport for Bounded {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
         let left = self.deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err("native call budget exhausted; call not started".into());
+            return Err(NotStarted.into());
         }
         call_within(config, args, left)
     }

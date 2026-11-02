@@ -1,5 +1,6 @@
 //! Explicit issue assignment for a feedback instance, read from GitHub through `gh`.
-//! The dispatcher writes assignments itself; nothing here assigns or delivers automatically.
+//! The dispatcher writes assignments itself; nothing here assigns. Delivery of the next item
+//! on the dispatcher's own Stop lives in `feedback::deliver`.
 mod cli;
 pub mod gh;
 pub use cli::{cli, run};
@@ -70,17 +71,15 @@ pub fn assign(registry: &Path, instance: &str, assignment: &Assignment) -> Resul
     model::load(registry, instance)?;
     replace(
         &model::instance_dir(registry, instance)?,
+        ASSIGNMENT_FILE,
         &serde_json::to_vec(assignment)?,
     )
 }
 /// Stage a private file beside the record, then rename it over the record atomically.
-fn replace(directory: &Path, bytes: &[u8]) -> Result<()> {
-    let staged = directory.join(format!(
-        ".{ASSIGNMENT_FILE}.{}",
-        uuid::Uuid::new_v4().simple()
-    ));
+pub(crate) fn replace(directory: &Path, file: &str, bytes: &[u8]) -> Result<()> {
+    let staged = directory.join(format!(".{file}.{}", uuid::Uuid::new_v4().simple()));
     model::write_new(&staged, bytes)?;
-    let renamed = fs::rename(&staged, directory.join(ASSIGNMENT_FILE));
+    let renamed = fs::rename(&staged, directory.join(file));
     if renamed.is_err() {
         let _ = fs::remove_file(&staged);
     }
@@ -88,20 +87,25 @@ fn replace(directory: &Path, bytes: &[u8]) -> Result<()> {
 }
 /// The instance's current assignment; no record is an error, never a guess.
 pub fn current(registry: &Path, instance: &str) -> Result<Assignment> {
+    assigned(registry, instance)?.ok_or_else(|| "no issue assigned to this instance".into())
+}
+/// The instance's assignment, or `None` when none was ever written.
+pub fn assigned(registry: &Path, instance: &str) -> Result<Option<Assignment>> {
     let path = model::instance_dir(registry, instance)?.join(ASSIGNMENT_FILE);
     let bytes = match fs::read(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err("no issue assigned to this instance".into());
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         read => read?,
     };
     let assignment: Assignment = serde_json::from_slice(&bytes)?;
     assignment.validate()?;
-    Ok(assignment)
+    Ok(Some(assignment))
 }
 /// Whether GitHub reports the assigned issue closed.
 pub fn done(registry: &Path, instance: &str, gh: &impl Gh) -> Result<Done> {
-    let assignment = current(registry, instance)?;
+    state(&current(registry, instance)?, gh)
+}
+/// Whether GitHub reports this assignment's issue closed.
+pub fn state(assignment: &Assignment, gh: &impl Gh) -> Result<Done> {
     let value = gh.call(&[
         "issue".into(),
         "view".into(),
@@ -117,6 +121,11 @@ pub fn done(registry: &Path, instance: &str, gh: &impl Gh) -> Result<Done> {
 }
 /// The oldest open issue carrying `label`.
 pub fn next(repository: &str, wanted: &str, gh: &impl Gh) -> Result<Issue> {
+    next_open(repository, wanted, gh)?
+        .ok_or_else(|| format!("no open issue labelled {wanted}").into())
+}
+/// The oldest open issue carrying `label`, or `None` when GitHub lists none.
+pub fn next_open(repository: &str, wanted: &str, gh: &impl Gh) -> Result<Option<Issue>> {
     repo(repository)?;
     label(wanted)?;
     let value = gh.call(&[
@@ -130,8 +139,5 @@ pub fn next(repository: &str, wanted: &str, gh: &impl Gh) -> Result<Issue> {
         "--json=number,title,body,url".into(),
     ])?;
     let issues: Vec<Issue> = serde_json::from_value(value)?;
-    issues
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("no open issue labelled {wanted}").into())
+    Ok(issues.into_iter().next())
 }
