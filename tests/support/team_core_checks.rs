@@ -1,0 +1,348 @@
+//! #16 synthetic core team: start/bind/stop against an existing App core target.
+use super::common;
+use crewmoor::{
+    config::AgentKind,
+    engine,
+    feedback::{self, INSTANCE_ENV},
+    message::{self, Binding, Message, Transport},
+    native::Runner,
+    process,
+    record::Record,
+    team,
+};
+use serde_json::{Value, json};
+use std::{cell::RefCell, fs, io::Read, os::unix::net::UnixListener, path::PathBuf};
+
+const FIXTURE: &str = env!("CARGO_BIN_EXE_transport-fixture");
+
+/// The existing App core: one socket, one clean server process per role fake.
+struct Host<'a>(&'a common::Fake);
+impl Runner for Host<'_> {
+    fn call(&self, r: &Record, args: &[String]) -> crewmoor::Result<Value> {
+        self.0.call(r, args)
+    }
+    fn boot(&self, _r: &Record) -> crewmoor::Result<process::Identity> {
+        process::identity(common::child_pid(&self.0.child).ok_or("missing host")?)
+    }
+}
+struct Setup {
+    dir: tempfile::TempDir,
+    _listener: UnixListener,
+    socket: PathBuf,
+    fakes: Vec<common::Fake>,
+}
+fn clean_host() -> std::process::Child {
+    let mut command = std::process::Command::new(FIXTURE);
+    for marker in crewmoor::app::HOST_MARKERS {
+        command.env_remove(marker);
+    }
+    let mut child = command
+        .arg("hold")
+        .env("CREWMOOR_TRANSPORT_HANDSHAKE", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut byte = [0];
+    child.stdout.take().unwrap().read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"R");
+    child
+}
+impl Setup {
+    fn new() -> Self {
+        let dir = common::directory();
+        let socket = dir.path().join("existing.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let fakes = (0..2)
+            .map(|index| {
+                let mut fake = common::Fake::default();
+                fake.index = index;
+                *fake.child.borrow_mut() = Some(clean_host());
+                fake
+            })
+            .collect();
+        let target = format!(
+            "session = \"app-stable\"\nsocket = \"{}\"\ncore_id = \"own-core\"\n\
+             machine = \"user-machine\"\nspace_id = \"user-machine/sp-existing\"\n\
+             tab_id = \"tb-existing\"\n",
+            socket.display()
+        );
+        fs::write(dir.path().join("app-target.toml"), target).unwrap();
+        Self {
+            _listener: listener,
+            socket,
+            fakes,
+            dir,
+        }
+    }
+    fn base(&self) -> PathBuf {
+        self.dir.path().canonicalize().unwrap()
+    }
+    fn team(&self) -> team::Team {
+        let text = format!(
+            r#"team = "core"
+task = "issue-16"
+runtime = "core"
+runtime_binary = "/no-cli-spawn-allowed"
+runtime_version = "hc 0.1.15"
+app_target = "{base}/app-target.toml"
+feedback_registry = "{base}/registry"
+evidence = "synthetic"
+dispatcher = "lead"
+[[roles]]
+role = "worker"
+cwd = "{base}"
+agent = "codex"
+agent_executable = "{FIXTURE}"
+agent_version = "fixture 1"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "Read the task file and report once."
+[[roles]]
+role = "lead"
+cwd = "{base}"
+agent = "claude"
+agent_executable = "{FIXTURE}"
+agent_version = "fixture 1"
+"#,
+            base = self.base().display(),
+        );
+        let path = self.dir.path().join("team.toml");
+        fs::write(&path, text).unwrap();
+        team::read(&path).unwrap()
+    }
+    /// A realistic state path: longer than the 45-byte private socket limit.
+    fn state(&self) -> PathBuf {
+        self.base()
+            .join("a-state-root-longer-than-private-sockets-allow")
+    }
+    fn team_dir(&self) -> PathBuf {
+        self.state().join("teams/core")
+    }
+    fn start(&self) -> crewmoor::Result<Value> {
+        let mut next = 0;
+        team::start(self.team(), &self.state(), &mut |cfg, root| {
+            let fake = &self.fakes[next];
+            next += 1;
+            engine::launch(cfg, root, &Host(fake))
+        })
+    }
+    /// Roles start dispatcher first: lead uses fake 0, worker fake 1.
+    fn fake(&self, role: &str) -> &common::Fake {
+        &self.fakes[usize::from(role == "worker")]
+    }
+    fn stop(&self) -> crewmoor::Result<Value> {
+        team::stop(&self.team_dir(), &mut |root| {
+            let mut record = Record::load(root)?;
+            let _lock = record.lock()?;
+            let fake = self.fake(&record.config.role);
+            engine::stop(&mut record, &Host(fake))?;
+            Ok(record)
+        })
+    }
+    fn record(&self, role: &str) -> Record {
+        Record::load(&team::launch_root(&self.team_dir(), role)).unwrap()
+    }
+    fn instance(&self, role: &str) -> String {
+        self.record(role).config.feedback_instance.unwrap()
+    }
+    fn session_start(&self, role: &str, kind: AgentKind, session: &str) {
+        let input = json!({"session_id":session,"cwd":self.base(),
+            "hook_event_name":"SessionStart","source":"startup"});
+        feedback::ingest(
+            &self.base().join("registry"),
+            &self.instance(role),
+            &kind,
+            &serde_json::to_vec(&input).unwrap(),
+        )
+        .unwrap();
+    }
+}
+/// Message side of the same existing core: status, terminal get and send only.
+struct Core<'a> {
+    setup: &'a Setup,
+    sends: RefCell<Vec<Vec<String>>>,
+}
+impl Transport for Core<'_> {
+    fn call(&self, config: &message::Config, args: &[String]) -> crewmoor::Result<Value> {
+        let socket = self.setup.socket.canonicalize()?;
+        assert_eq!(config.socket, socket);
+        match args.first().map(String::as_str) {
+            Some("server") => Ok(json!({"core":{"id":"own-core"},"version":"0.1.15"})),
+            Some("get") => self.terminal(&args[1]),
+            Some("send") => {
+                self.sends.borrow_mut().push(args.to_vec());
+                Ok(json!({"turn":0}))
+            }
+            _ => Err("unexpected core message call".into()),
+        }
+    }
+}
+impl Core<'_> {
+    fn new(setup: &Setup) -> Core<'_> {
+        Core {
+            setup,
+            sends: RefCell::default(),
+        }
+    }
+    fn terminal(&self, handle: &str) -> crewmoor::Result<Value> {
+        for role in ["lead", "worker"] {
+            let record = self.setup.record(role);
+            if record.handle.as_deref() == Some(handle) {
+                return Ok(self.setup.fake(role).terminal(&record));
+            }
+        }
+        Err("terminal absent".into())
+    }
+}
+fn report() -> Message {
+    Message {
+        id: "report-1".into(),
+        from: "worker".into(),
+        to: "lead".into(),
+        reply_to: None,
+        content: "synthetic".into(),
+    }
+}
+
+#[test]
+fn core_team_start_launches_each_role_in_the_existing_app_core_with_markers() {
+    let setup = Setup::new();
+    let started = setup.start().unwrap();
+    let dir = setup.team_dir();
+    assert_eq!(started["team_dir"], json!(dir));
+    assert_eq!(started["roles"][0]["role"], "lead");
+    assert_eq!(started["roles"][1]["role"], "worker");
+    let snapshot: Value =
+        serde_json::from_slice(&fs::read(dir.join("team.json")).unwrap()).unwrap();
+    assert_eq!(snapshot["runtime"], "core");
+    for role in ["lead", "worker"] {
+        let record = setup.record(role);
+        let fake = setup.fake(role);
+        assert!(!record.server_owned);
+        assert_eq!(record.binding_scope, "terminal");
+        assert_eq!(record.session, "app-stable");
+        assert_eq!(record.handle, Some(fake.address()));
+        assert!(record.process_verified);
+        assert!(record.config.app.is_some());
+        assert!(record.config.host.is_none());
+        record.binding().unwrap();
+        assert!(dir.join(format!("roles/{role}/core.json")).exists());
+        let calls = fake.calls.borrow();
+        let run = calls.iter().find(|c| c[0] == "run").unwrap();
+        let (method, params) = crewmoor::app::request(&record, run).unwrap();
+        assert_eq!(method, "terminal.run");
+        assert_eq!(params["env"], json!({INSTANCE_ENV: setup.instance(role)}));
+        assert!(!calls.iter().any(|c| c[..] == ["server", "start"]));
+    }
+    let worker = setup.record("worker");
+    assert_eq!(
+        worker.config.argv().last().unwrap(),
+        "Read the task file and report once."
+    );
+    assert!(worker.config.argv().contains(&"--no-daemon".to_owned()));
+    let again = setup.start().unwrap_err().to_string();
+    assert!(again.contains("team directory exists"));
+}
+#[test]
+fn core_team_bind_uses_the_app_target_identity_and_messages_through_core() {
+    let setup = Setup::new();
+    setup.start().unwrap();
+    let dir = setup.team_dir();
+    let core = Core::new(&setup);
+    let early = team::bind(&dir, "worker", &core).unwrap_err().to_string();
+    assert!(early.contains("not registered"));
+    setup.session_start("lead", AgentKind::Claude, "lead-session");
+    setup.session_start("worker", AgentKind::Codex, "worker-session");
+    let bound = team::bind(&dir, "worker", &core).unwrap();
+    assert_eq!(bound["dispatcher_session"], "lead-session");
+    assert_eq!(bound["worker_session"], "worker-session");
+    assert!(team::bind(&dir, "worker", &core).is_err());
+    let binding: Binding =
+        serde_json::from_slice(&fs::read(dir.join("roles/worker/binding.json")).unwrap()).unwrap();
+    assert_eq!(binding.config.core_id.as_deref(), Some("own-core"));
+    assert_eq!(binding.config.core_version.as_deref(), Some("0.1.15"));
+    assert!(binding.worker.terminal_id.is_none());
+    assert!(binding.worker.process.is_none());
+    assert_eq!(binding.worker.core.as_ref().unwrap().created_ms, 42);
+    let registry = setup.base().join("registry");
+    let reference = feedback::load_dispatcher_binding_ref(&registry, &setup.instance("lead"))
+        .unwrap()
+        .expect("dispatcher binding reference written on bind");
+    assert_eq!(reference.binding, dir.join("roles/worker/binding.json"));
+    let report = report();
+    let receipt = message::send(&binding, &report, &core).unwrap();
+    assert_eq!(receipt.transport, "accepted");
+    assert_eq!(receipt.native_turn, Some(0));
+    let sends = core.sends.borrow();
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0][1], setup.fake("lead").address());
+}
+
+#[test]
+fn core_team_bind_refuses_a_terminal_generation_this_team_did_not_launch() {
+    let setup = Setup::new();
+    setup.start().unwrap();
+    setup.session_start("lead", AgentKind::Claude, "lead-session");
+    setup.session_start("worker", AgentKind::Codex, "worker-session");
+    let path = team::launch_root(&setup.team_dir(), "worker").join("record.json");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["created_ms"] = json!(41);
+    fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let error = team::bind(&setup.team_dir(), "worker", &Core::new(&setup))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not the resource launched by this team"));
+    assert!(!setup.team_dir().join("roles/worker/binding.json").exists());
+}
+
+#[test]
+fn core_team_stop_removes_only_owned_terminals_and_keeps_the_app_core() {
+    let setup = Setup::new();
+    setup.start().unwrap();
+    *setup.fakes[1].extra.borrow_mut() = true;
+    let stopped = setup.stop().unwrap();
+    for (index, role) in ["lead", "worker"].into_iter().enumerate() {
+        assert_eq!(
+            stopped["roles"][index]["result"],
+            "target-stopped-host-retained"
+        );
+        let fake = setup.fake(role);
+        assert!(*fake.removed.borrow());
+        assert!(!*fake.stopped.borrow());
+        let calls = fake.calls.borrow();
+        assert!(!calls.iter().any(|c| c[..] == ["server", "stop"]));
+        assert!(!calls.iter().any(|c| c[0] == "ls"));
+        process::same(setup.record(role).server.as_ref().unwrap()).unwrap();
+        assert!(setup.record(role).binding().is_err());
+    }
+    assert!(setup.socket.exists());
+    let again = setup.stop().unwrap();
+    assert_eq!(again["roles"][1]["result"], "target-stopped-host-retained");
+}
+
+#[test]
+fn core_team_example_and_target_rules() {
+    let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/team-core.toml");
+    team::read(&example).unwrap().validate().unwrap();
+    let setup = Setup::new();
+    let mut team = setup.team();
+    team.app_target = None;
+    assert!(team.validate().is_err());
+    let mut team = setup.team();
+    team.host = Some(crewmoor::config::Host {
+        socket: setup.socket.clone(),
+        server_version: "0.9.4".into(),
+    });
+    assert!(team.validate().is_err());
+    // An unreadable target fails the dispatcher's launch before any core call.
+    let mut team = setup.team();
+    team.app_target = Some(setup.dir.path().join("missing.toml"));
+    team.validate().unwrap();
+    let error = team::start(team, &setup.state(), &mut |cfg, root| {
+        engine::launch(cfg, root, &Host(&setup.fakes[0]))
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("role lead start failed"));
+    assert!(setup.fakes[0].calls.borrow().is_empty());
+}

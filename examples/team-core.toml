@@ -1,0 +1,29 @@
+# Issue #16 team in the user's existing App core. Copy and replace /absolute/project.
+team = "sample-core-team"
+task = "sample-task"
+runtime = "core"
+runtime_binary = "/home/gem/.local/bin/herdr-core"
+runtime_version = "hc 0.1.15"
+# Existing App/core target (see app-target.toml); filled from read-only confirmation.
+# CrewMoor connects to that socket and never starts or stops the core.
+app_target = "/absolute/crewmoor/app-target.toml"
+# Must be the registry the user-level Hook callback was installed with.
+feedback_registry = "/home/gem/.local/state/crewmoor/feedback"
+evidence = "native"
+dispatcher = "lead"
+
+[[roles]]
+role = "lead"
+cwd = "/absolute/project"
+agent = "claude"
+agent_executable = "/home/gem/.local/bin/claude"
+agent_version = "2.1.316 (Claude Code)"
+
+[[roles]]
+role = "worker"
+cwd = "/absolute/project"
+agent = "codex"
+agent_executable = "/home/gem/.local/bin/codex"
+agent_version = "codex-cli 0.166.0"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "You are the worker. Wait for a team message before acting."

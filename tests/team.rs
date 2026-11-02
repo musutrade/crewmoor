@@ -1,5 +1,7 @@
 #[path = "support/common.rs"]
 mod common;
+#[path = "support/team_core_checks.rs"]
+mod team_core_checks;
 use crewmoor::{
     config::{self, AgentKind, Host, Runtime},
     engine,
@@ -320,8 +322,18 @@ fn team_configuration_declares_runtime_once_and_needs_an_existing_tui_host() {
     let mut team = setup.team();
     team.host = None;
     assert!(team.validate().is_err());
+    // Core needs app_target instead of host; mixing either way is refused.
     let mut team = setup.team();
     team.runtime = Runtime::Core;
+    assert!(team.validate().is_err());
+    team.app_target = Some(setup.dir.path().join("app-target.toml"));
+    assert!(team.validate().is_err());
+    team.host = None;
+    team.validate().unwrap();
+    team.app_target = Some("relative/app-target.toml".into());
+    assert!(team.validate().is_err());
+    let mut team = setup.team();
+    team.app_target = Some(setup.dir.path().join("app-target.toml"));
     assert!(team.validate().is_err());
     let mut team = setup.team();
     team.roles.truncate(1);

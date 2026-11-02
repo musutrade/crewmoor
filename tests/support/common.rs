@@ -122,7 +122,7 @@ impl Fake {
         } else {
             "live"
         };
-        let mut value = json!({"address":"t7","labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},
+        let mut value = json!({"address":self.address(),"labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},
             "argv":r.config.argv(),"cwd":r.config.cwd,"state":state,"created_ms":42,
             "screen":"exact","cols":80,"rows":24,"pid":child_pid(&self.agent),"name":r.config.role});
         if *self.changed.borrow() {
@@ -156,7 +156,7 @@ impl Fake {
             Some("kill") => self.kill_core(),
             Some("rm") => {
                 *self.removed.borrow_mut() = true;
-                Ok(json!({"removed":"t7"}))
+                Ok(json!({"removed":self.address()}))
             }
             Some("ls") => Ok(self.inventory()),
             Some("app-document") => Ok(self.app_doc.borrow().clone().unwrap_or_else(||
@@ -170,7 +170,7 @@ impl Fake {
         *self.created.borrow_mut() = true;
         self.start(r)?;
         Ok(
-            json!({"address":"t7","agent":r.config.agent.name(),"cwd":r.config.cwd,"name":r.config.role,"state":"live","turn":0}),
+            json!({"address":self.address(),"agent":r.config.agent.name(),"cwd":r.config.cwd,"name":r.config.role,"state":"live","turn":0}),
         )
     }
     fn get_core(&self, r: &Record) -> Result<Value> {
@@ -189,7 +189,7 @@ impl Fake {
     fn inventory(&self) -> Value {
         let mut terminals = Vec::new();
         if *self.created.borrow() && !*self.removed.borrow() {
-            terminals.push(json!({"address":"t7"}));
+            terminals.push(json!({"address":self.address()}));
         }
         if *self.extra.borrow() {
             terminals.push(json!({"address":"user-terminal"}));
@@ -242,6 +242,13 @@ impl Fake {
                 json!({"version":host.server_version,"running":true,"socket":socket})
             }
             None => json!({"version":"0.9.5"}),
+        }
+    }
+    /// Core terminal address; index 0 keeps the original `t7`.
+    pub fn address(&self) -> String {
+        match self.index {
+            0 => "t7".into(),
+            n => format!("t7-{n}"),
         }
     }
     pub fn workspace_id(&self) -> String {

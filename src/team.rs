@@ -25,6 +25,8 @@ pub struct Team {
     pub runtime_binary: PathBuf,
     pub runtime_version: String,
     pub host: Option<Host>,
+    /// Existing App/core target file (`app::Binding`); core teams only.
+    pub app_target: Option<PathBuf>,
     pub feedback_registry: PathBuf,
     pub evidence: Evidence,
     pub dispatcher: String,
@@ -47,12 +49,7 @@ impl Team {
         crate::config::name(&self.team)?;
         model::identifier(&self.task)?;
         crate::config::absolute(&self.feedback_registry)?;
-        if self.runtime != Runtime::Tui || self.host.is_none() {
-            return Err(
-                "team start supports runtime=tui with an existing host; core team entry: see #16"
-                    .into(),
-            );
-        }
+        self.validate_target()?;
         self.validate_names()?;
         let mut names: Vec<_> = self.roles.iter().map(|r| r.role.as_str()).collect();
         names.sort_unstable();
@@ -61,6 +58,15 @@ impl Team {
             return Err("team needs at least two distinct roles".into());
         }
         self.role(&self.dispatcher).map(|_| ())
+    }
+    /// TUI teams use an existing host; core teams use an existing App/core target.
+    fn validate_target(&self) -> Result<()> {
+        match (&self.runtime, &self.host, &self.app_target) {
+            (Runtime::Tui, Some(_), None) => Ok(()),
+            (Runtime::Core, None, Some(path)) => crate::config::absolute(path),
+            (Runtime::Tui, _, _) => Err("runtime=tui team needs host and no app_target".into()),
+            (Runtime::Core, _, _) => Err("runtime=core team needs app_target and no host".into()),
+        }
     }
     /// Role names become path components: same rule as team names, checked before any write.
     fn validate_names(&self) -> Result<()> {
@@ -84,13 +90,26 @@ impl Team {
     fn host(&self) -> Result<&Host> {
         self.host.as_ref().ok_or_else(|| "team host missing".into())
     }
+    fn app(&self) -> Result<crate::app::Binding> {
+        let path = self.app_target.as_ref().ok_or("team app_target missing")?;
+        let app: crate::app::Binding = toml::from_str(&fs::read_to_string(path)?)?;
+        app.validate(&self.runtime)?;
+        Ok(app)
+    }
+    /// An App record binds `<store>/<team>.json`; each role keeps its own store.
+    fn store(&self, role: &Role, dir: &Path) -> PathBuf {
+        match self.runtime {
+            Runtime::Tui => dir.into(),
+            Runtime::Core => role_dir(dir, &role.role),
+        }
+    }
     fn launch_config(&self, role: &Role, dir: &Path, instance: &str) -> Config {
         Config {
             team: self.team.clone(),
             role: role.role.clone(),
             runtime: self.runtime.clone(),
             cwd: role.cwd.clone(),
-            store: dir.into(),
+            store: self.store(role, dir),
             endpoint_dir: None,
             runtime_binary: self.runtime_binary.clone(),
             runtime_version: self.runtime_version.clone(),
@@ -99,7 +118,7 @@ impl Team {
             agent_version: role.agent_version.clone(),
             agent_args: role.agent_args.clone(),
             app: None,
-            app_target: None,
+            app_target: self.app_target.clone(),
             host: self.host.clone(),
             feedback_instance: Some(instance.into()),
             initial_prompt: role.initial_prompt.clone(),
@@ -232,13 +251,26 @@ fn binding_path(team: &Team, dir: &Path, worker: &str) -> Result<PathBuf> {
     }
     Ok(path)
 }
+/// Socket, core id and core version for the message binding.
+type Endpoint = (PathBuf, Option<String>, Option<String>);
+fn endpoint(team: &Team) -> Result<Endpoint> {
+    if team.runtime == Runtime::Tui {
+        return Ok((team.host()?.socket.clone(), None, None));
+    }
+    let app = team.app()?;
+    // Same version form as the core status check: `hc 0.1.15` reports `0.1.15`.
+    let version = team.runtime_version.strip_prefix("hc ");
+    let version = version.unwrap_or(&team.runtime_version);
+    Ok((app.socket, Some(app.core_id), Some(version.into())))
+}
 fn message_config(team: &Team, dir: &Path, worker: &str) -> Result<message::Config> {
+    let (socket, core_id, core_version) = endpoint(team)?;
     Ok(message::Config {
         runtime: team.runtime.clone(),
-        core_id: None,
-        core_version: None,
+        core_id,
+        core_version,
         runtime_binary: team.runtime_binary.clone(),
-        socket: team.host()?.socket.clone(),
+        socket,
         feedback_registry: team.feedback_registry.clone(),
         dispatcher: peer(dir, &team.dispatcher)?,
         worker: peer(dir, worker)?,
@@ -256,13 +288,24 @@ fn peer(dir: &Path, role: &str) -> Result<Peer> {
 /// The bound pane/process must be exactly what this team directory launched.
 fn launched(dir: &Path, member: &message::Member) -> Result<()> {
     let record = Record::load(&launch_root(dir, &member.context.registration.role))?;
-    let same = record.terminal_id == member.terminal_id
-        && record.workspace_id == member.workspace_id
-        && (record.agent_process.is_none() || record.agent_process == member.process);
-    if !same {
+    if !same_resource(&record, member) {
         return Err("bound Agent is not the resource launched by this team".into());
     }
     Ok(())
+}
+/// Core terminals have no pane ids: the launched generation and Agent process identify them.
+fn same_resource(record: &Record, member: &message::Member) -> bool {
+    if let Some(core) = &member.core {
+        return record.created_ms == Some(core.created_ms)
+            && record.handle.as_deref() == Some(member.handle.as_str())
+            && record
+                .agent_process
+                .as_ref()
+                .is_none_or(|p| p == &core.process);
+    }
+    record.terminal_id == member.terminal_id
+        && record.workspace_id == member.workspace_id
+        && (record.agent_process.is_none() || record.agent_process == member.process)
 }
 /// Call the existing stop once for each launched role that is not already ended.
 pub fn stop(dir: &Path, operate: &mut impl FnMut(&Path) -> Result<Record>) -> Result<Value> {
