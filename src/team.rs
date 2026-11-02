@@ -200,10 +200,19 @@ pub fn bind(dir: &Path, worker: &str, transport: &impl Transport) -> Result<Valu
     for member in [&binding.dispatcher, &binding.worker] {
         launched(dir, member)?;
     }
-    model::write_new(&path, &serde_json::to_vec_pretty(&binding)?)?;
+    record_binding(&team, &path, &binding)?;
     Ok(
         json!({"binding":path,"dispatcher_session":binding.dispatcher.native_session,
         "worker_session":binding.worker.native_session}),
+    )
+}
+/// The binding, then the worker's reference to it so its Hook callback can forward.
+fn record_binding(team: &Team, path: &Path, binding: &Binding) -> Result<()> {
+    model::write_new(path, &serde_json::to_vec_pretty(binding)?)?;
+    feedback::model::write_binding_ref(
+        &team.feedback_registry,
+        &binding.worker.context.instance,
+        path,
     )
 }
 fn binding_path(team: &Team, dir: &Path, worker: &str) -> Result<PathBuf> {

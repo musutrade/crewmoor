@@ -6,7 +6,7 @@ mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
-pub use transport::{Native, Transport};
+pub use transport::{Bounded, Native, Transport};
 
 use crate::{Result, feedback::model::identifier, native::strings};
 use serde::{Deserialize, Serialize};
@@ -55,22 +55,17 @@ pub fn send<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route(binding, message, transport)?;
-    let envelope = Envelope {
-        team: &binding.team,
-        message,
-    };
-    let text = serde_json::to_string(&envelope)?;
-    let args = match binding.config.runtime {
-        crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
-        crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
-    };
-    let result = transport.call(&binding.config, &args);
-    let native_turn = submission(binding, recipient, result, transport)?;
-    Ok(Receipt {
-        envelope,
-        transport: "accepted",
-        native_turn,
-    })
+    do_send(binding, recipient, message, transport)
+}
+/// Send a halt notification to the dispatcher only.
+/// Skips the sender session check because the worker has a rejected session after `/clear`.
+pub fn send_halt_to_dispatcher<'a>(
+    binding: &'a Binding,
+    message: &'a Message,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let recipient = route_halt(binding, message, transport)?;
+    do_send(binding, recipient, message, transport)
 }
 fn route<'a>(
     binding: &'a Binding,
@@ -89,6 +84,46 @@ fn route<'a>(
     binding.check(recipient, transport)?;
     binding.guard()?;
     Ok(recipient)
+}
+/// Halt route: validate message, check only the recipient (dispatcher).
+fn route_halt<'a>(
+    binding: &'a Binding,
+    message: &Message,
+    transport: &impl Transport,
+) -> Result<&'a Member> {
+    message.validate()?;
+    if message.to != binding.dispatcher.context.registration.role {
+        return Err("halt notification must target the dispatcher".into());
+    }
+    let recipient = binding.member(&message.to)?;
+    binding.guard()?;
+    core::instance(&binding.config, transport)?;
+    binding.check(recipient, transport)?;
+    binding.guard()?;
+    Ok(recipient)
+}
+fn do_send<'a>(
+    binding: &'a Binding,
+    recipient: &'a Member,
+    message: &'a Message,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let envelope = Envelope {
+        team: &binding.team,
+        message,
+    };
+    let text = serde_json::to_string(&envelope)?;
+    let args = match binding.config.runtime {
+        crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
+        crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
+    };
+    let result = transport.call(&binding.config, &args);
+    let native_turn = submission(binding, recipient, result, transport)?;
+    Ok(Receipt {
+        envelope,
+        transport: "accepted",
+        native_turn,
+    })
 }
 fn submission(
     binding: &Binding,

@@ -15,6 +15,15 @@ struct Fact<'a> {
     evidence: &'a super::Evidence,
     record: &'a Event,
 }
+#[derive(Serialize)]
+struct HookFact<'a> {
+    feedback_instance: &'a str,
+    task: &'a str,
+    agent: &'a crate::config::AgentKind,
+    evidence: &'a super::Evidence,
+    record: &'a Event,
+    system_halt_notification: bool,
+}
 pub fn report_to(
     binding: &Binding,
     session: &str,
@@ -72,4 +81,36 @@ fn forward(
     };
     let delivery = message::send(binding, &message, transport)?;
     Ok(json!({"recorded":true,"delivery":delivery}))
+}
+
+/// Forward a native Hook event (Stop, SessionEnd, or session-rejected) to the dispatcher.
+/// `is_halt` selects the halt path: skip sender session check, mark as system halt notification.
+pub(super) fn forward_hook_event(
+    binding: &Binding,
+    record: &Event,
+    is_halt: bool,
+    transport: &impl Transport,
+) -> Result<Value> {
+    let context = &binding.worker.context;
+    let fact = HookFact {
+        feedback_instance: &context.instance,
+        task: &context.registration.task,
+        agent: &context.registration.agent,
+        evidence: &context.registration.evidence,
+        record,
+        system_halt_notification: is_halt,
+    };
+    let message = Message {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        from: context.registration.role.clone(),
+        to: binding.dispatcher.context.registration.role.clone(),
+        reply_to: None,
+        content: serde_json::to_string(&fact)?,
+    };
+    let delivery = if is_halt {
+        message::send_halt_to_dispatcher(binding, &message, transport)?
+    } else {
+        message::send(binding, &message, transport)?
+    };
+    Ok(json!({"forwarded":true,"halt":is_halt,"delivery":delivery}))
 }

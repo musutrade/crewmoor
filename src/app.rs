@@ -122,9 +122,17 @@ fn run_params(r: &Record) -> Result<Value> {
     )
 }
 pub fn exchange(socket: &std::path::Path, method: &str, params: Value) -> Result<Value> {
+    exchange_within(socket, method, params, Duration::from_secs(10))
+}
+pub fn exchange_within(
+    socket: &std::path::Path,
+    method: &str,
+    params: Value,
+    limit: Duration,
+) -> Result<Value> {
     let mut stream = UnixStream::connect(socket)?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_read_timeout(Some(limit))?;
+    stream.set_write_timeout(Some(limit))?;
     let request = json!({"jsonrpc":"2.0","id":1,"method":method,"params":params});
     stream.write_all(format!("{request}\n").as_bytes())?;
     let mut line = String::new();

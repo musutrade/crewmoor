@@ -151,3 +151,28 @@ fn read_events(root: &Path) -> Result<Vec<Event>> {
         Err(e) => Err(e.into()),
     }
 }
+/// The most-recent fully-appended event in the journal; `None` if the file is absent or empty.
+pub fn last_completed_event(registry: &Path, instance: &str) -> Result<Option<Event>> {
+    let root = model::instance_dir(registry, instance)?;
+    let bytes = match fs::read(root.join("events.jsonl")) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let complete = bytes
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |end| end + 1);
+    if complete == 0 {
+        return Ok(None);
+    }
+    let prev = bytes[..complete - 1]
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1);
+    let line = std::str::from_utf8(&bytes[prev..complete - 1])?.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_str(line)?))
+}
