@@ -1,84 +1,97 @@
 # CrewMoor
 
-A lightweight workspace for coordinating AI agents across different runtime environments.
-
-> **Project status:** Issue #2 startup/location/owned cleanup is accepted and merged. Codex/Claude use official TUI/core interfaces; [App project placement](docs/app-launch.md) reuses native Space adoption. [Recorded real evidence](docs/issue-2-current-evidence.md) distinguishes user UI confirmation from process and cleanup facts. Issue #4 adds [user-level native Hooks and explicit Agent/skill business feedback](docs/agent-feedback.md), with synthetic and actual Agent evidence kept separate. Issue #6 [step 1](docs/feedback-forward.md) forwards one authored worker report to its dispatcher, and [step 2](docs/issue-6-step2-acceptance.md) records one real dispatcher judgement reply. Issue #15 adds [team start/bind/stop](docs/team-launch.md) in the user's existing Herdr TUI server: each role gets its own workspace with the feedback marker, bind uses the session registered by the Agent's own Hook, and a session change halts the team with a visible rejection record. The core team entry is tracked in #16. There is no container-derived Agent state, queue or workflow state machine. The broader workflow below remains the intended direction.
-
-CrewMoor is for an everyday development loop: give a small team a requirement, let its agents develop and review the change, follow the pull request and CI, and see what needs your attention.
-
-## How a day might look
-
-1. You give a project team a requirement and its constraints.
-2. A coordinating agent works with a developer, a reviewer, and a publishing agent. Their roles, handoffs, and responsibilities are described in skills.
-3. The team develops, reviews, handles the PR and CI, and reports results. Agents manage and clean up their own temporary worktrees.
-4. You can check the team's reported progress and running state. The team asks for your decision when needed.
-
-This is an example of the intended workflow, not a fixed pipeline. Tasks and roles can differ between teams.
+CrewMoor 是一个轻量级 CLI，用于在 Herdr TUI 中协调一组 AI Agent 完成开发任务：分配需求、传递消息、记录反馈、跟踪交付。
 
 ```mermaid
-flowchart TD
-    U["You: requirement and decisions"] --> C["CrewMoor: team, runtime, messages, records"]
-    C --> R["One team in one runtime<br/>Herdr TUI or herdr-core"]
-    R --> S["Coordinator agent"]
-    S --> D["Developer agent"]
-    D --> V["Reviewer agent"]
-    V -->|"Feedback when needed"| D
-    V --> P["Publishing agent: PR and CI"]
-    P --> S
-    S -->|"Results and decisions"| U
-    K["Skills: roles, handoffs and worktree cleanup"] -. guide .-> S
-    K -. guide .-> D
-    K -. guide .-> V
-    K -. guide .-> P
-    C -. "Status and important exceptions" .-> U
+flowchart LR
+    You["你\n需求 / 决策"] -->|issue assign| D["调度 Agent"]
+    D -->|team bind + message| W["开发 / 评审 / 发布 Agent"]
+    W -->|feedback hook| D
+    D -->|issue done → next| You
 ```
 
-## What CrewMoor is intended to do
+## 子命令
 
-- Configure a team, its roles, agents, models, and runtime.
-- Start agents, connect logical roles to their actual runtime sessions, and pass messages.
-- Show useful running information alongside the team's own progress reports.
-- Keep a small local record of tasks and results using SQLite.
-- Stop team-owned runtime resources when appropriate, and notify the user when attention is needed.
+| 子命令 | 职责 |
+|---|---|
+| `crewmoor team` | 启动团队、绑定 worker，跟踪会话 |
+| `crewmoor message` | 在调度与 worker 之间传递消息 |
+| `crewmoor feedback` | 记录 Hook 事件，转交调度 |
+| `crewmoor issue` | 分配 GitHub Issue，查询完成状态，取下一项 |
 
-A team is bound to **one runtime instance**. Different teams may use different runtimes; CrewMoor does not route a team across runtimes or move an active session between them.
+## 快速上手
 
-## What stays with the agents
+> **前提**：已安装 `herdr`、`gh`（已登录），Herdr TUI 正在运行。
 
-Skills and agents own the development workflow: interpreting requirements, implementing changes, review, PR and CI work, handoffs, and cleaning up their own temporary worktrees. A message being accepted is not proof that the recipient completed the task.
+### 1. 安装
 
-CrewMoor does not need to turn every handoff into a fixed workflow state machine. When an unusual situation cannot be safely determined, it should stop the affected action and ask a person, rather than guess or repeatedly retry.
+```bash
+cargo install --path .
+```
 
-## Runtime direction
+### 2. 注册 Hook 回调
 
-The initial direction is to learn from the existing [herdr-flow-rust](https://github.com/musutrade/herdr-flow-rust) TUI workflow, then support separate integrations for:
+```bash
+crewmoor feedback install
+```
 
-- **Herdr TUI**, using its own agent and terminal interfaces.
-- **herdr-core**, the runtime behind Herdr App. Agent startup works without an App window; an optional explicit App binding uses the official keep/space/tab labels so a connected UI can adopt that same terminal and accept user input.
+安装后，Agent 的 Stop / SessionEnd 等事件会自动记录并转交调度。
 
-Runtime capabilities and semantics differ. Support for either integration, individual agents, or specific recovery features must be verified rather than assumed. The existing TUI project remains independent and useful; replacement or migration is not a prerequisite.
+### 3. 启动团队
 
-## Scope
+```bash
+# 在已有 pane 中启动角色，绑定 worker 到调度
+crewmoor team start  --team myteam --config team.toml
+crewmoor team bind   --team myteam --worker developer
+crewmoor team stop   --team myteam
+```
 
-Issue #9 provides a [minimal message entry](docs/messages.md) for one fixed
-dispatcher/worker pair in one existing Herdr TUI instance. Issue #11 adds the
-same entry on an existing herdr-core socket used by App. The recipient actively
-replies through the same entry; transport acceptance, actual receipt and business
-completion remain separate facts.
+### 4. 分配和跟踪需求
 
-Issue #6's [first step](docs/feedback-forward.md) explicitly forwards one
-worker-authored feedback record to its fixed dispatcher through that message
-path. This step leaves #6 open; dispatcher follow-up handling is separate.
+```bash
+# 把 Issue #42 分配给调度实例
+crewmoor issue assign ~/.local/state/crewmoor/registry musutrade/crewmoor 42 <instance>
 
-Issue #15's [team entries](docs/team-launch.md) start a dispatcher and workers,
-bind each worker to the dispatcher after their SessionStart, and stop only the
-team's own panes and workspaces. The same page lists the capabilities each
-container must provide.
+# 查看当前分配
+crewmoor issue current ~/.local/state/crewmoor/registry <instance>
 
-CrewMoor aims to provide the smallest useful foundation for the team's actual workflow. It is not intended to be a general-purpose workflow engine, a cross-runtime session migration service, or a heavy message broker.
+# 查询 Issue 是否已关闭
+crewmoor issue done ~/.local/state/crewmoor/registry <instance>
 
-Design discussion starts in the repository issues. The first prototype's supported setup and acceptance steps are in [docs/runtime-launch.md](docs/runtime-launch.md).
+# 取下一项可开发 Issue（默认 label=ready）
+crewmoor issue next musutrade/crewmoor
+crewmoor issue next musutrade/crewmoor --label sprint
+```
 
-## Quality gates
+### 5. 发送消息
 
-Rust 质量门禁的规则、度量定义与验证限制见 [docs/quality-gates.md](docs/quality-gates.md)。
+```bash
+crewmoor message send --binding roles/developer/binding.json \
+  --from dispatcher --to developer \
+  '{"task":"implement feature X"}'
+```
+
+### 6. 查看反馈记录
+
+```bash
+crewmoor feedback show <instance>
+```
+
+## 条件交付
+
+调度 Agent Stop 时，CrewMoor 自动检查：
+
+1. 当前分配的 Issue 是否已 closed
+2. 队列中是否有下一项（label=ready）
+
+若两者都满足，自动通过消息协议把下一项发给调度，一次，不重复。
+
+## 质量门禁
+
+CRAP ≤ 10，非测试代码无 `unwrap()`，零 Clippy 豁免。
+
+```bash
+cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
+```
+
+详见 [docs/quality-gates.md](docs/quality-gates.md)。
