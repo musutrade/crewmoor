@@ -1,69 +1,73 @@
 # CrewMoor
 
-CrewMoor 是一个轻量级 CLI，用于在 Herdr TUI 中协调一组 AI Agent 完成开发任务：分配需求、传递消息、记录反馈、跟踪交付。
+A lightweight CLI for coordinating AI agents in Herdr TUI: assign requirements, pass messages, record feedback, and track delivery.
+
+[中文说明](docs/README.zh.md)
 
 ```mermaid
-flowchart LR
-    You["你\n需求 / 决策"] -->|issue assign| D["调度 Agent"]
-    D -->|team bind + message| W["开发 / 评审 / 发布 Agent"]
-    W -->|feedback hook| D
-    D -->|issue done → next| You
+flowchart TD
+    You["You\nrequirements / decisions"]
+    D["Dispatcher agent"]
+    W["Developer / Reviewer / Publisher"]
+    You -->|"issue assign"| D
+    D -->|"team bind\nmessage send"| W
+    W -->|"feedback hook"| D
+    D -->|"issue done → next"| You
 ```
 
-## 子命令
+## Subcommands
 
-| 子命令 | 职责 |
+| Command | Responsibility |
 |---|---|
-| `crewmoor team` | 启动团队、绑定 worker，跟踪会话 |
-| `crewmoor message` | 在调度与 worker 之间传递消息 |
-| `crewmoor feedback` | 记录 Hook 事件，转交调度 |
-| `crewmoor issue` | 分配 GitHub Issue，查询完成状态，取下一项 |
+| `crewmoor team` | Start a team, bind workers, track sessions |
+| `crewmoor message` | Send messages between dispatcher and workers |
+| `crewmoor feedback` | Record Hook events and forward to dispatcher |
+| `crewmoor issue` | Assign a GitHub Issue, check completion, fetch next |
 
-## 快速上手
+## Quick start
 
-> **前提**：已安装 `herdr`、`gh`（已登录），Herdr TUI 正在运行。
+> **Prerequisites**: `herdr` and `gh` (authenticated) installed, Herdr TUI running.
 
-### 1. 安装
+### 1. Install
 
 ```bash
 cargo install --path .
 ```
 
-### 2. 注册 Hook 回调
+### 2. Register the Hook callback
 
 ```bash
 crewmoor feedback install
 ```
 
-安装后，Agent 的 Stop / SessionEnd 等事件会自动记录并转交调度。
+After installation, Stop / SessionEnd events from agents are recorded and forwarded to the dispatcher automatically.
 
-### 3. 启动团队
+### 3. Start a team
 
 ```bash
-# 在已有 pane 中启动角色，绑定 worker 到调度
-crewmoor team start  --team myteam --config team.toml
-crewmoor team bind   --team myteam --worker developer
-crewmoor team stop   --team myteam
+crewmoor team start --team myteam --config team.toml
+crewmoor team bind  --team myteam --worker developer
+crewmoor team stop  --team myteam
 ```
 
-### 4. 分配和跟踪需求
+### 4. Assign and track a requirement
 
 ```bash
-# 把 Issue #42 分配给调度实例
+# Assign Issue #42 to the dispatcher instance
 crewmoor issue assign ~/.local/state/crewmoor/registry musutrade/crewmoor 42 <instance>
 
-# 查看当前分配
+# Read current assignment
 crewmoor issue current ~/.local/state/crewmoor/registry <instance>
 
-# 查询 Issue 是否已关闭
+# Check whether the issue is closed
 crewmoor issue done ~/.local/state/crewmoor/registry <instance>
 
-# 取下一项可开发 Issue（默认 label=ready）
+# Fetch the next open issue (default label: ready)
 crewmoor issue next musutrade/crewmoor
 crewmoor issue next musutrade/crewmoor --label sprint
 ```
 
-### 5. 发送消息
+### 5. Send a message
 
 ```bash
 crewmoor message send --binding roles/developer/binding.json \
@@ -71,27 +75,27 @@ crewmoor message send --binding roles/developer/binding.json \
   '{"task":"implement feature X"}'
 ```
 
-### 6. 查看反馈记录
+### 6. View feedback records
 
 ```bash
 crewmoor feedback show <instance>
 ```
 
-## 条件交付
+## Conditional delivery
 
-调度 Agent Stop 时，CrewMoor 自动检查：
+When the dispatcher agent stops, CrewMoor checks automatically:
 
-1. 当前分配的 Issue 是否已 closed
-2. 队列中是否有下一项（label=ready）
+1. Is the currently assigned issue closed?
+2. Is there a next open issue in the queue (label=ready)?
 
-若两者都满足，自动通过消息协议把下一项发给调度，一次，不重复。
+If both are true, the next issue is sent to the dispatcher once, without resending.
 
-## 质量门禁
+## Quality gates
 
-CRAP ≤ 10，非测试代码无 `unwrap()`，零 Clippy 豁免。
+CRAP ≤ 10, no `unwrap()` in non-test code, zero Clippy exemptions.
 
 ```bash
 cargo +stable run --locked --manifest-path tools/quality/Cargo.toml -- verify
 ```
 
-详见 [docs/quality-gates.md](docs/quality-gates.md)。
+See [docs/quality-gates.md](docs/quality-gates.md) for details.
