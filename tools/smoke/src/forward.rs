@@ -6,9 +6,13 @@ use crate::{
     run::Run,
 };
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, Instant},
+};
 
-/// Quiet period that must pass with no new Hook prompt or notice for the chain to count as stopped.
+/// Quiet period, from the last observed change, for the chain to count as stopped.
 const SETTLE: u64 = 90;
 
 pub fn execute(run: &Run) -> Result<()> {
@@ -42,14 +46,20 @@ impl Paths {
     }
 }
 
-/// Native-hook journal lines with this event name.
-fn hooks(team: &Team, role: &str, event: &str) -> usize {
+/// Journal records of `role` that match `keep`.
+fn count(team: &Team, role: &str, keep: impl Fn(&Value) -> bool) -> usize {
     team.journal(role)
         .unwrap_or_default()
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|e| e["source"] == "native-hook" && e["event"] == event)
+        .filter(|e| keep(e))
         .count()
+}
+/// Native-hook journal records with this event name.
+fn hooks(team: &Team, role: &str, event: &str) -> usize {
+    count(team, role, |e| {
+        e["source"] == "native-hook" && e["event"] == event
+    })
 }
 fn lines(path: &Path) -> usize {
     fs::read_to_string(path)
@@ -66,16 +76,34 @@ fn counts(run: &Run, team: &Team) -> Value {
         "lead_notices": lines(&w.join("lead-notices.jsonl")),
         "lead_halts": lines(&w.join("lead-halts.jsonl")),
         "lead_replies": usize::from(w.join("lead-reply.exit").exists()),
-        "worker_rejections": team.journal("worker").unwrap_or_default()
-            .matches("\"source\":\"session-rejected\"").count(),
+        "worker_rejections": count(team, "worker", |e| {
+            e["source"] == "session-rejected" && e["native"]["from"] == "native-hook"
+        }),
+        "worker_unconfirmed": count(team, "worker", |e| e["source"] == "native-hook-unconfirmed"),
     })
 }
-/// Both roles start with an initial prompt, so both sessions register before bind.
+fn n(value: &Value, key: &str) -> u64 {
+    value[key].as_u64().unwrap_or(u64::MAX)
+}
+/// Save a phase result; a failed check fails the phase and so the driver.
+fn verdict(run: &Run, name: &str, pass: bool, record: Value) -> Result<()> {
+    let mut record = record;
+    record["pass"] = json!(pass);
+    run.save(&format!("{name}.json"), &record)?;
+    println!("check {name}: pass={pass}");
+    if pass {
+        Ok(())
+    } else {
+        Err(format!("{name} check failed; see {name}.json").into())
+    }
+}
+/// Both roles start with an initial prompt. Bind only after each initial turn has ended,
+/// so every later worker Stop is forwarded and the expected notice count is fixed.
 fn bind(run: &Run, team: &Team) -> Result<()> {
     for role in ["lead", "worker"] {
-        let registered = || matches!(team.session(role), Ok(Some(_)));
-        if !run.wait(&format!("session-start-{role}"), LONG, registered)? {
-            return Err(format!("{role} SessionStart not registered").into());
+        let ended = || matches!(team.session(role), Ok(Some(_))) && hooks(team, role, "Stop") >= 1;
+        if !run.wait(&format!("initial-turn-{role}"), LONG, ended)? {
+            return Err(format!("{role} initial turn not recorded").into());
         }
     }
     let (code, _) = run.exec(
@@ -84,37 +112,59 @@ fn bind(run: &Run, team: &Team) -> Result<()> {
     )?;
     let refs =
         |role: &str| -> Result<bool> { Ok(team.instance(role)?.join("binding-ref.json").exists()) };
-    run.save(
-        "bind.json",
-        &json!({"exit":code,"worker_binding_ref":refs("worker")?,
-        "lead_binding_ref":refs("lead")?,"counts":counts(run, team)}),
-    )?;
-    if code != 0 {
-        return Err("team bind failed".into());
-    }
-    Ok(())
+    let (worker, lead) = (refs("worker")?, refs("lead")?);
+    verdict(
+        run,
+        "bind",
+        code == 0 && worker && !lead,
+        json!({"exit":code,"worker_binding_ref":worker,"lead_binding_ref":lead,
+        "counts":counts(run, team)}),
+    )
 }
-/// Waits `SETTLE` s for any change; `met` false is the expected, stopped chain.
+/// Quiet means no count changed for `SETTLE` s, measured from the last change seen.
 fn settle(run: &Run, team: &Team, label: &str) -> Result<(Value, bool)> {
-    let snapshot = counts(run, team);
-    let moved = run.wait(label, SETTLE, || counts(run, team) != snapshot)?;
-    Ok((snapshot, !moved))
+    let start = Instant::now();
+    let mut last = counts(run, team);
+    let mut changed_at = Instant::now();
+    let mut changes = 0u32;
+    let quiet_for = Duration::from_secs(SETTLE);
+    while changed_at.elapsed() < quiet_for && start.elapsed() < Duration::from_secs(LONG) {
+        std::thread::sleep(Duration::from_secs(2));
+        let now = counts(run, team);
+        if now != last {
+            last = now;
+            changed_at = Instant::now();
+            changes += 1;
+        }
+    }
+    let quiet = changed_at.elapsed() >= quiet_for;
+    let seconds = start.elapsed().as_secs();
+    run.save(
+        &format!("settle-{label}.json"),
+        &json!({"quiet":quiet,"changes":changes,"seconds":seconds,"counts":last}),
+    )?;
+    println!("settle {label}: quiet={quiet} after {seconds}s, {changes} change(s)");
+    Ok((last, quiet))
 }
 /// The dispatcher convention from docs/hook-forward.md, given to the lead once.
 fn convention(run: &Run, team: &Team, p: &Paths) -> Result<()> {
+    let before = counts(run, team);
     flow::prompt(run, team, "lead", "prompt-lead-convention", &lead(p))?;
     let ready = run.work.join("lead-ready.txt");
-    if !run.wait("lead-ready", LONG, || ready.exists())? {
-        return Err("lead did not acknowledge the convention".into());
-    }
-    let (after, stopped) = settle(run, team, "settle-after-convention")?;
-    run.save(
-        "convention.json",
-        &json!({"counts":after,"stopped":stopped,
-        "lead_stop_not_forwarded":after["worker_prompts"] == 1}),
+    let acked = run.wait("lead-ready", LONG, || ready.exists())?;
+    let (after, quiet) = settle(run, team, "after-convention")?;
+    // The lead's own Stop must not reach the worker.
+    let not_forwarded = n(&after, "worker_prompts") == n(&before, "worker_prompts");
+    verdict(
+        run,
+        "convention",
+        acked && quiet && not_forwarded && n(&after, "lead_notices") == 0,
+        json!({"before":before,"after":after,"lead_ready":acked,"quiet":quiet,
+        "lead_stop_not_forwarded":not_forwarded}),
     )
 }
-/// Items 1, 2 and 4: one small worker task, its forwarded Stop, at most one reply.
+/// Items 1, 2 and 4: one worker task; its Stop and the Stop after the one reply are
+/// forwarded; the lead replies once and the chain goes quiet.
 fn task(run: &Run, team: &Team, p: &Paths) -> Result<()> {
     let before = counts(run, team);
     flow::prompt(run, team, "worker", "prompt-worker-task", &worker(p))?;
@@ -123,20 +173,32 @@ fn task(run: &Run, team: &Team, p: &Paths) -> Result<()> {
     let received = run.wait("worker-received", LONG, || {
         w.join("worker-received.json").exists()
     })?;
+    let stops = n(&before, "worker_stops") + 2;
     let second = run.wait("second-notice", LONG, || {
-        lines(&w.join("lead-notices.jsonl")) >= 2
+        hooks(team, "worker", "Stop") as u64 >= stops && lines(&w.join("lead-notices.jsonl")) >= 2
     })?;
-    let (after, stopped) = settle(run, team, "settle-after-task")?;
-    run.save(
-        "task.json",
-        &json!({"before":before,"after":after,"lead_replied":replied,
-        "worker_received_reply":received,"second_notice":second,"stopped":stopped,
+    let (after, quiet) = settle(run, team, "after-task")?;
+    let reply_exit = fs::read_to_string(w.join("lead-reply.exit")).unwrap_or_default();
+    let one_reply = n(&after, "lead_replies") == 1
+        && reply_exit.trim() == "0"
+        && n(&after, "worker_prompts") == n(&before, "worker_prompts") + 2;
+    let pass = replied
+        && received
+        && second
+        && quiet
+        && one_reply
+        && n(&after, "lead_notices") == 2
+        && n(&after, "lead_halts") == 0
+        && n(&after, "worker_unconfirmed") == 0;
+    verdict(
+        run,
+        "task",
+        pass,
+        json!({"before":before,"after":after,"lead_replied":replied,
+        "worker_received_reply":received,"second_notice":second,"quiet":quiet,
+        "one_reply":one_reply,"reply_exit":reply_exit.trim(),
         "journal_worker":team.journal("worker")?,"journal_lead":team.journal("lead")?}),
-    )?;
-    if !(replied && received && second) {
-        return Err("forwarded Stop exchange incomplete; see work/".into());
-    }
-    Ok(())
+    )
 }
 /// Item 3: after /clear the worker's next turn is rejected by its Hook and the halt
 /// notice goes to the lead, which stops dispatching and writes a report.
@@ -145,13 +207,11 @@ fn halt(run: &Run, team: &Team, p: &Paths) -> Result<()> {
     flow::prompt(run, team, "worker", "prompt-clear", "/clear")?;
     flow::prompt(run, team, "worker", "prompt-after-clear", AFTER_CLEAR)?;
     let rejected = run.wait("hook-rejection", LONG, || {
-        team.journal("worker").is_ok_and(|j| {
-            j.contains("\"source\":\"session-rejected\"") && j.contains("\"from\":\"native-hook\"")
-        })
+        counts(run, team)["worker_rejections"].as_u64() > Some(0)
     })?;
     let report = run.work.join("lead-halt-report.md");
     let reported = run.wait("lead-halt-report", LONG, || report.exists())?;
-    let (after, stopped) = settle(run, team, "settle-after-halt")?;
+    let (after, quiet) = settle(run, team, "after-halt")?;
     let show = vec![
         p.crewmoor.clone(),
         "feedback".into(),
@@ -160,10 +220,21 @@ fn halt(run: &Run, team: &Team, p: &Paths) -> Result<()> {
         flow::role_value(&team.dir, "worker", "context.json", "/instance")?,
     ];
     run.exec("feedback-show-worker", &show)?;
-    run.save(
-        "halt.json",
-        &json!({"before":before,"after":after,"hook_rejection_recorded":rejected,
-        "lead_halt_report":reported,"stopped":stopped,
+    let no_dispatch = n(&after, "lead_replies") == 1
+        && n(&after, "worker_prompts") == n(&before, "worker_prompts");
+    let pass = rejected
+        && reported
+        && quiet
+        && no_dispatch
+        && n(&after, "lead_halts") >= 1
+        && n(&after, "worker_unconfirmed") == 0;
+    verdict(
+        run,
+        "halt",
+        pass,
+        json!({"before":before,"after":after,"hook_rejection_recorded":rejected,
+        "lead_halt_report":reported,"quiet":quiet,"no_further_dispatch":no_dispatch,
+        "all_halts_logged":after["lead_halts"] == after["worker_rejections"],
         "journal_worker":team.journal("worker")?}),
     )
 }
