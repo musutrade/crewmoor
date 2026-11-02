@@ -94,6 +94,12 @@ fn verify_location(member: &Member, identity: &Identity, value: &Value) -> Resul
     }
     Ok(())
 }
+/// Confirm delivery after `terminal.send` has returned.
+///
+/// The pre-send gate in `route()` (mod.rs) already verified both dispatcher and worker.
+/// This is a conservative post-send check: if either session changed in the narrow window
+/// between send and here, the result is `SUBMISSION_UNCONFIRMED` — the message was
+/// physically delivered but its receipt cannot be certified.
 pub fn submitted(binding: &Binding, value: &Value, transport: &impl Transport) -> Result<u64> {
     let turn = value["turn"]
         .as_u64()

@@ -20,6 +20,11 @@ struct Input {
     error: Option<String>,
     stop_hook_active: Option<bool>,
     agent_id: Option<String>,
+    // Present on Claude Stop: count lets the dispatcher know tasks exist without storing content.
+    #[serde(default)]
+    background_tasks: Vec<serde_json::Value>,
+    #[serde(default)]
+    session_crons: Vec<serde_json::Value>,
 }
 pub fn events(agent: &AgentKind) -> &'static [&'static str] {
     match agent {
@@ -108,6 +113,16 @@ fn metadata(input: &Input) -> Result<Value> {
     }
     if let Some(value) = input.stop_hook_active {
         result["stop_hook_active"] = json!(value);
+    }
+    if input.hook_event_name == "Stop" {
+        let bt = input.background_tasks.len();
+        let sc = input.session_crons.len();
+        if bt > 0 {
+            result["background_tasks_count"] = json!(bt);
+        }
+        if sc > 0 {
+            result["session_crons_count"] = json!(sc);
+        }
     }
     error_metadata(input, &mut result);
     Ok(result)

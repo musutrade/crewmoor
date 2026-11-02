@@ -78,6 +78,9 @@ fn changed_native_terminal_or_core_identity_refuses_before_send() {
 }
 #[test]
 fn native_rejection_lost_reply_and_invalid_acceptance_never_resend() {
+    // "changed-after-send": worker terminal identity changes between send and the post-send
+    // check in submitted(); route() already verified both ends before send, so this is the
+    // conservative second check documented on submitted(). Error must be SUBMISSION_UNCONFIRMED.
     for mode in ["blocked", "lost", "missing-turn", "changed-after-send"] {
         let fixture = Fixture::new();
         let binding = fixture.bind();
