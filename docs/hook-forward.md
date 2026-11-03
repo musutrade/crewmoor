@@ -20,6 +20,14 @@ are forwarded; the dispatcher's own events are never forwarded.
 | `SessionStart` | native-hook | No | — |
 | `UserPromptSubmit` | native-hook | No | — |
 | All others | native-hook | No | — |
+| Refused input | hook-rejected | No | — |
+
+The registered instance marker, Agent kind and established native session associate
+each Hook. The launch cwd corroborates only the first unknown-session main
+SessionStart. Later same-session Stop events from a parent or child cwd are
+recorded and forwarded normally. Foreign native sessions still write and forward
+session-rejected halt facts; other refused inputs leave sanitized hook-rejected
+facts in `feedback show` and never forward an old record.
 
 **Record-first, forward-after.** The callback forwards exactly the record that its own
 append wrote while holding the journal lock. It never re-reads the latest journal line. If

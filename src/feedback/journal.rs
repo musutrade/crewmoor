@@ -20,11 +20,14 @@ pub struct Event {
     pub summary: Option<String>,
 }
 pub const REJECTED: &str = "session-rejected";
+pub const HOOK_REJECTED: &str = "hook-rejected";
 /// What one append wrote while holding the journal lock.
 pub enum Appended {
     Recorded(Event),
     /// The session differed; only this rejection notice was written.
     Rejected(Event),
+    /// Input was refused; this sanitized notice establishes no session and is not a halt.
+    Refused,
 }
 pub fn append(registry: &Path, context: &Context, event: &Event, enroll: bool) -> Result<()> {
     match record(registry, context, event, enroll)? {
@@ -32,6 +35,7 @@ pub fn append(registry: &Path, context: &Context, event: &Event, enroll: bool) -
         Appended::Rejected(_) => {
             Err("native session differs; feedback not associated; rejection recorded".into())
         }
+        Appended::Refused => Err("native Hook refused; rejection recorded".into()),
     }
 }
 pub fn record(registry: &Path, context: &Context, event: &Event, enroll: bool) -> Result<Appended> {
@@ -53,6 +57,18 @@ pub fn note(registry: &Path, instance: &str, event: &Event) -> Result<()> {
     let root = model::instance_dir(registry, instance)?;
     let _lock = crate::record::Lock::take(&root)?;
     write_event(&root, event)
+}
+pub fn refuse(registry: &Path, instance: &str, event: &str, reason: &str) -> Result<Appended> {
+    let notice = Event {
+        received_ms: now()?,
+        source: HOOK_REJECTED.into(),
+        event: event.into(),
+        native_session_id: String::new(),
+        native: json!({"reason":reason}),
+        summary: None,
+    };
+    note(registry, instance, &notice)?;
+    Ok(Appended::Refused)
 }
 fn write_event(root: &Path, event: &Event) -> Result<()> {
     let mut bytes = serde_json::to_vec(event)?;
@@ -141,9 +157,11 @@ pub fn show(registry: &Path, instance: &str) -> Result<Value> {
     let last_hook = events.iter().rev().find(|e| e.source == "native-hook");
     let last_report = events.iter().rev().find(|e| e.source.ends_with("-report"));
     let rejected = events.iter().rev().find(|e| e.source == REJECTED);
+    let hook_rejected = events.iter().rev().find(|e| e.source == HOOK_REJECTED);
     Ok(
         json!({"context":context,"agent_state":"unknown","latest_native_event":last_hook,
-        "latest_business_report":last_report,"latest_session_rejection":rejected,"events":events}),
+        "latest_business_report":last_report,"latest_session_rejection":rejected,
+        "latest_hook_rejection":hook_rejected,"events":events}),
     )
 }
 /// Snapshot of fully appended records: an unterminated last line is an append still in

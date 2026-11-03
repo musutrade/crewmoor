@@ -225,7 +225,15 @@ fn codex_has_its_own_event_set_and_repeated_sessionstart_is_not_ready_or_a_new_i
     }
     let view = feedback::show(dir.path(), &context.instance).unwrap();
     assert_eq!(view["context"]["instance"], context.instance);
-    assert_eq!(view["events"].as_array().unwrap().len(), 6);
+    let events = view["events"].as_array().unwrap();
+    assert_eq!(events.len(), 11);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["source"] == "native-hook")
+            .count(),
+        6
+    );
     assert_eq!(view["agent_state"], "unknown");
     assert!(view["latest_business_report"].is_null());
 }
@@ -244,16 +252,21 @@ fn unknown_marker_does_not_read_stdin_and_known_context_failure_never_blocks_age
     let mismatched = hook::run("codex", dir.path(), &known, None);
     assert!(mismatched.status.success());
     assert!(String::from_utf8_lossy(&mismatched.stderr).contains("not recorded"));
-    let output = hook::run("claude", dir.path(), &known, Some(b""));
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"{}\n");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("not recorded"));
     assert!(
         feedback::show(dir.path(), &context.instance).unwrap()["events"]
             .as_array()
             .unwrap()
             .is_empty()
     );
+    let output = hook::run("claude", dir.path(), &known, Some(b""));
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"{}\n");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not recorded"));
+    let view = feedback::show(dir.path(), &context.instance).unwrap();
+    let events = view["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["native"]["reason"], "invalid-input");
+    assert!(view["latest_native_event"].is_null());
 }
 
 #[test]
@@ -358,10 +371,12 @@ fn main_binding_requires_expected_session_and_subagent_facts_never_create_an_ins
     );
     let view = feedback::show(dir.path(), &context.instance).unwrap();
     let events = view["events"].as_array().unwrap();
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 4);
     assert_eq!(events[0]["source"], feedback::REJECTED);
     assert_eq!(events[0]["native"]["associated_session"], "expected");
-    assert_eq!(events[1]["source"], "native-hook");
+    assert_eq!(events[1]["native"]["reason"], "subagent-enrollment");
+    assert_eq!(events[2]["source"], "native-hook");
+    assert_eq!(events[3]["native"]["reason"], "uncollected-event");
     assert_eq!(view["latest_business_report"], Value::Null);
 }
 

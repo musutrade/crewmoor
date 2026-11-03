@@ -10,7 +10,7 @@ pub use cli::cli;
 pub use deliver::{DELIVERED_FILE, DELIVERY_UNCONFIRMED};
 pub use event::{ingest, report};
 pub use forward::report_to;
-pub use journal::{REJECTED, registered_session, require_unchanged, show};
+pub use journal::{HOOK_REJECTED, REJECTED, registered_session, require_unchanged, show};
 pub use model::{
     BindingRef, Context, Evidence, Registration, load_binding_ref, load_dispatcher_binding_ref,
     register, write_binding_ref, write_dispatcher_binding_ref,
@@ -46,9 +46,14 @@ pub fn process_hook_event(
     transport: &impl Transport,
     gh: &impl crate::issue::Gh,
 ) -> HookOutcome {
-    let appended = ingest_hook(agent, registry, instance, bytes);
-    let recorded = matches!(appended, Ok(Appended::Recorded(_)));
-    let written = appended.ok();
+    let written = match ingest_hook(agent, registry, instance, bytes) {
+        Ok(written) => Some(written),
+        Err(_) => {
+            eprintln!("CrewMoor Hook ingest failed; feedback not recorded; task is not replayed");
+            None
+        }
+    };
+    let recorded = matches!(written, Some(Appended::Recorded(_)));
     let forward_error = written
         .as_ref()
         .and_then(|written| forward_written(registry, instance, written, transport));
@@ -72,10 +77,7 @@ pub(crate) fn associated(
     instance: &str,
 ) -> Result<crate::config::AgentKind> {
     let agent_kind: crate::config::AgentKind = serde_json::from_value(agent.into())?;
-    let context = model::load(registry, instance)?;
-    if context.registration.agent != agent_kind {
-        return Err("unassociated Agent kind".into());
-    }
+    model::load_for_agent(registry, instance, &agent_kind)?;
     Ok(agent_kind)
 }
 fn ingest_hook(agent: &str, registry: &Path, instance: &str, bytes: &[u8]) -> Result<Appended> {
@@ -92,7 +94,7 @@ fn forward_written(
         Appended::Recorded(event) if matches!(event.event.as_str(), "Stop" | "SessionEnd") => {
             (event, false)
         }
-        Appended::Recorded(_) => return None,
+        Appended::Recorded(_) | Appended::Refused => return None,
         Appended::Rejected(event) => (event, true),
     };
     let mut error = try_forward(registry, instance, record, is_halt, transport)
