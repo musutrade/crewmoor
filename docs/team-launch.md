@@ -58,6 +58,15 @@ Generation also reuses the launch host guard: the selected core server and its
 reported holders must have valid process identities and no developer routing
 metadata. A refusal emits no configuration and does not alter the existing host.
 
+Explicit `space_id` must already exist. The target's `tab_id` and role-level
+overrides may name existing or new tabs; all use the same placement validator
+as launch. `team start` checks the selected space before writing team state,
+including teams with no role tab overrides. The connected App creates unknown
+tabs through native adoption labels and removes empty new tabs after their
+terminals end. Typing a different valid ID creates an extra tab. ID syntax and
+exact configured machine-prefix checks remain, and CrewMoor never writes layout
+documents. Project placement with both target IDs omitted is unchanged.
+
 Discovery and ordinary launch-option validation finish before any output.
 Stdout mode contains valid reviewable TOML only; errors go to stderr.
 `--output` uses `create_new`, refusing existing files and symlinks. No team state,

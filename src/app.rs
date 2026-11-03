@@ -209,8 +209,9 @@ pub fn check_layout(r: &mut Record, runner: &impl crate::native::Runner) -> Resu
     }
     existing_layout(&app, &doc)
 }
+/// Explicit placement requires an existing space; App adoption may create its tab.
 pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
-    let (space_id, tab_id) = app.local_ids()?;
+    let (space_id, _) = app.local_ids()?;
     let spaces = doc["value"]["spaces"]
         .as_array()
         .ok_or("App layout unavailable; request withheld")?;
@@ -218,10 +219,7 @@ pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
         .iter()
         .find(|s| s["id"].as_str() == Some(space_id))
         .ok_or("configured App space does not exist; request withheld")?;
-    let tabs = space["tabs"].as_array().ok_or("App tabs unavailable")?;
-    if !tabs.iter().any(|t| t["id"].as_str() == Some(tab_id)) {
-        return Err("configured App tab does not exist in this space; request withheld".into());
-    }
+    space["tabs"].as_array().ok_or("App tabs unavailable")?;
     Ok(())
 }
 pub fn clean_process(identity: &process::Identity) -> Result<()> {

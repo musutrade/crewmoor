@@ -352,19 +352,18 @@ fn core_team_example_and_target_rules() {
         server_version: "0.9.4".into(),
     });
     assert!(team.validate().is_err());
-    // An unreadable target fails the dispatcher's launch before any core call.
+    // An unreadable target fails explicit placement preflight before any write/core call.
     let mut team = setup.team();
     team.app_target = Some(setup.dir.path().join("missing.toml"));
     team.validate().unwrap();
-    let error = team::start(
+    team::start(
         team,
         &setup.state(),
         &mut layout(&setup),
         &mut |cfg, root| engine::launch(cfg, root, &Host(&setup.fakes[0])),
     )
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("role lead start failed"));
+    .unwrap_err();
+    assert!(!setup.team_dir().exists());
     assert!(setup.fakes[0].calls.borrow().is_empty());
 }
 
@@ -444,9 +443,16 @@ fn core_team_role_without_tab_id_falls_back_beside_one_with_it() {
 fn core_team_role_tab_id_rules_are_checked_before_any_write() {
     let setup = Setup::new();
     let mut team = setup.team();
-    team.roles[0].tab_id = Some("tb bad".into());
-    assert!(start_team(&setup, team).is_err());
-    assert!(!setup.team_dir().exists());
+    for bad in [
+        "tb bad",
+        "other-machine/tb-new",
+        "user-machine/tb/extra",
+        "",
+    ] {
+        team.roles[0].tab_id = Some(bad.into());
+        assert!(start_team(&setup, team.clone()).is_err());
+        assert!(!setup.team_dir().exists());
+    }
     fs::write(
         setup.dir.path().join("project-target.toml"),
         format!(
@@ -462,32 +468,59 @@ fn core_team_role_tab_id_rules_are_checked_before_any_write() {
     let error = start_team(&setup, team).unwrap_err().to_string();
     assert!(error.contains("needs space_id"));
     assert!(!setup.team_dir().exists());
-    // Every effective tab must already exist in the App, wherever the missing one is.
-    for (index, role) in [(1, "dispatcher"), (0, "worker")] {
-        let mut team = setup.team();
-        team.roles[1 - index].tab_id = Some("tb-existing".into());
-        team.roles[index].tab_id = Some("tb-missing".into());
-        let error = start_team(&setup, team).unwrap_err().to_string();
-        assert!(error.contains("tab does not exist"), "{role}: {error}");
-        assert!(!setup.team_dir().exists(), "{role}");
-        for fake in &setup.fakes {
-            assert!(fake.calls.borrow().is_empty(), "{role}");
-        }
-    }
-    // A fallback role is checked too: the target tab is missing from this layout.
-    *setup.fakes[0].app_doc.borrow_mut() = Some(json!({"version":1,"value":{"spaces":[
-        {"id":"sp-existing","tabs":[{"id":"tb-worker"}]}]}}));
-    let mut team = setup.team();
-    team.roles[0].tab_id = Some("tb-worker".into());
-    let error = start_team(&setup, team).unwrap_err().to_string();
-    assert!(error.contains("tab does not exist"));
-    assert!(!setup.team_dir().exists());
-    assert!(setup.fakes.iter().all(|f| f.calls.borrow().is_empty()));
 }
 
 #[test]
-fn core_team_without_role_tab_id_never_reads_the_layout_before_start() {
+fn core_team_new_role_tabs_are_forwarded_without_precreation() {
+    let setup = Setup::new();
+    let mut team = setup.team();
+    for role in &mut team.roles {
+        role.tab_id = Some(format!("user-machine/tb-new-{}", role.role));
+    }
+    start_team(&setup, team).unwrap();
+    assert_eq!(setup.layout_reads.get(), 1);
+    for role in ["lead", "worker"] {
+        assert_eq!(
+            tab_labels(&setup, role),
+            (json!("sp-existing"), json!(format!("tb-new-{role}")))
+        );
+    }
+    setup.stop().unwrap();
+}
+
+#[test]
+fn core_team_new_target_tab_is_checked_by_space_even_without_role_overrides() {
+    let setup = Setup::new();
+    let path = setup.dir.path().join("app-target.toml");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("tb-existing", "user-machine/tb-new-target");
+    fs::write(path, text).unwrap();
+    start_team(&setup, setup.team()).unwrap();
+    assert_eq!(setup.layout_reads.get(), 1);
+    assert_eq!(tab_labels(&setup, "lead").1, json!("tb-new-target"));
+    assert_eq!(tab_labels(&setup, "worker").1, json!("tb-new-target"));
+    setup.stop().unwrap();
+}
+
+#[test]
+fn core_team_missing_explicit_space_withholds_before_any_write_with_or_without_role_tabs() {
+    let setup = Setup::new();
+    *setup.fakes[0].app_doc.borrow_mut() = Some(json!({"version":1,"value":{"spaces":[
+        {"id":"other-space","tabs":[]}]}}));
+    for tab in [None, Some("tb-new".into())] {
+        let mut team = setup.team();
+        team.roles[0].tab_id = tab;
+        let error = start_team(&setup, team).unwrap_err().to_string();
+        assert!(error.contains("space does not exist"));
+        assert!(!setup.team_dir().exists());
+        assert!(setup.fakes.iter().all(|f| f.calls.borrow().is_empty()));
+    }
+}
+
+#[test]
+fn core_team_without_role_tab_id_checks_explicit_space_before_start() {
     let setup = Setup::new();
     start_team(&setup, setup.team()).unwrap();
-    assert_eq!(setup.layout_reads.get(), 0);
+    assert_eq!(setup.layout_reads.get(), 1);
 }

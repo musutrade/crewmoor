@@ -3,7 +3,7 @@ team = "sample-core-team"
 task = "sample-task"
 runtime = "core"
 runtime_binary = "/home/gem/.local/bin/herdr-core"
-runtime_version = "hc 0.1.16"
+runtime_version = "hc 0.1.17"
 # Existing App/core target (see app-target.toml); filled from read-only confirmation.
 # CrewMoor connects to that socket and never starts or stops the core.
 app_target = "/absolute/crewmoor/app-target.toml"
@@ -19,8 +19,9 @@ cwd = "/absolute/project"
 agent = "claude"
 agent_executable = "/home/gem/.local/bin/claude"
 agent_version = "2.1.316 (Claude Code)"
-# Optional: this role's own App tab (an existing tab in app_target's space_id).
-# Omit to use the app_target tab_id. Create tabs with `herdr-app do tab.new`.
+# Optional: this role's own existing or new tab in app_target's EXISTING space_id.
+# Omit to use the target tab_id, which may also be new. App adopts unknown tab IDs.
+# A mistyped valid ID creates an extra tab; no tab precreation is required.
 # tab_id = "tb-lead-tab-id"
 
 [[roles]]

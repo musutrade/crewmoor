@@ -200,19 +200,20 @@ fn external_unknown_terminal_cannot_release_binding_or_claim_target_stopped() {
     assert!(!*fake.stopped.borrow());
 }
 #[test]
-fn app_missing_layout_or_wrong_space_tab_withholds_without_creating_layout() {
+fn app_missing_layout_or_space_withholds_without_creating_layout() {
     let dir = common::directory();
     let app = binding(dir.path());
     for doc in [
         json!({}),
         json!({"value":{"spaces":[]}}),
-        json!({"value":{"spaces":[{"id":"sp-existing","tabs":[{"id":"another-tab"}]}]}}),
+        json!({"value":{"spaces":[{"id":"another-space","tabs":[]}]}}),
+        json!({"value":{"spaces":[{"id":"sp-existing","tabs":null}]}}),
     ] {
         assert!(app::existing_layout(&app, &doc).is_err());
     }
     let (dir, mut cfg, fake) = common::setup(Runtime::Core);
     let mut app = binding(dir.path());
-    app.tab_id = Some("wrong-existing-target".into());
+    app.space_id = Some("missing-explicit-space".into());
     cfg.app = Some(app);
     let root = dir.path().join("i");
     assert!(engine::launch(cfg, &root, &fake).is_err());
@@ -220,6 +221,21 @@ fn app_missing_layout_or_wrong_space_tab_withholds_without_creating_layout() {
     assert!(!r.request_issued);
     assert!(r.binding().is_ok());
     assert!(!*fake.created.borrow());
+    assert!(!*fake.stopped.borrow());
+}
+#[test]
+fn app_new_target_tab_is_validated_and_labelled_while_space_remains_required() {
+    let (dir, mut cfg, fake) = common::setup(Runtime::Core);
+    let mut target = binding(dir.path());
+    target.tab_id = Some("user-machine/tb-new-target".into());
+    cfg.app = Some(target);
+    let mut record = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+    assert!(record.request_issued);
+    let (_, params) =
+        app::request(&record, &crewmoor::core::launch_args(&record).unwrap()).unwrap();
+    assert_eq!(params["labels"]["herdr.space"], "sp-existing");
+    assert_eq!(params["labels"]["herdr.tab"], "tb-new-target");
+    engine::stop(&mut record, &fake).unwrap();
     assert!(!*fake.stopped.borrow());
 }
 #[test]
