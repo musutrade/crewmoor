@@ -129,7 +129,7 @@ native rejection and uncertain submission, environment isolation and the public
 CLI. These are synthetic transport tests; no real Agent is involved.
 
 The separately authorized actual existing TUI session exchange and its exact
-identities/results are recorded in [Issue #9 real acceptance](issue-9-real-acceptance.md).
+identities/results are recorded in [Issue #9 real acceptance](issue-evidence-index.md#issue-9).
 
 ## Existing herdr-core / App connection
 
@@ -215,5 +215,5 @@ It covers both directions, exact framing/parameters, rejected identities and
 executable/session associations, unavailable endpoints, native rejection,
 uncertain delivery and the public CLI. These are not real Agent exchanges.
 The separately coordinated real core exchange is recorded in
-[Issue #11 acceptance](issue-11-real-acceptance.md); current App version is
+[Issue #11 acceptance](issue-evidence-index.md#issue-11); current App version is
 unknown and GUI observation is a separate untested path.

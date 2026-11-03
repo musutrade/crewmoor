@@ -10,7 +10,7 @@ Use an existing [message binding](messages.md) and its two
 in one team and one runtime instance. No new registration mechanism, role discovery or message
 protocol is introduced. The same message path supports its existing TUI/core
 routes; the separately coordinated live coverage for this step is stated in
-[the acceptance record](issue-6-step1-acceptance.md).
+[the acceptance record](issue-evidence-index.md#issue-6).
 
 ```text
 crewmoor feedback report-to BINDING SESSION agent|skill TYPE SUMMARY

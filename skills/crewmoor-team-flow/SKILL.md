@@ -133,6 +133,10 @@ crewmoor team stop TEAM_DIR
 `~/.claude/projects/*/memory/`），不修改 `~/.codex/.env` 或其链接目标，
 保留用户认证、工具和代理设置。独立开发/审计 worktree 与 Cargo target 按任务分配。
 
+- 批次状态统一放 `~/.local/state/crewmoor/batches/<batch>/`；brief、团队配置、决策、消息、证据及 dev/audit/release worktree 都在该批次目录下。`teams/`、`feedback/`、`target/` 保持原位。
+- 仓库 `docs/` 只保留工具文档；历史 issue 验收证据移至对应批次的 `evidence/`，引用通过索引说明存放位置，不把证据重新写回仓库。
+- 移动含已登记 worktree 的批次时使用 `git worktree move`，不直接 `mv`；结束后核对 worktree 登记和干净状态，不 prune/reset/clean/remove 或删除分支。
+
 本文件是受版本审查的技能源码。发布它不会自动修改本机已安装技能。需要同步时，
 先记录准确目标路径、旧哈希、已审查 source revision/新哈希和备份/恢复路径；
 在该 revision 已审查并获准使用后，逐文件备份、比较、复制和核验，不创建新的
