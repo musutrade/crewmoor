@@ -2,6 +2,6 @@
   "id": "msg-001",
   "from": "lead",
   "to": "dev",
-  "reply_to": "lead",
+  "reply_to": null,
   "content": "Please implement the assigned issue and report back when done."
 }

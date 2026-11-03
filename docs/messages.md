@@ -21,14 +21,18 @@ and the running server is 0.9.4; the server was retained. The schema describes t
 CLI build, while the observed server returns establish the actual supported
 identity and prompt fields. No newer schema-only field is required.
 
-## Bind the existing pair once
+## Team-owned pairs
 
-Reuse each role's existing [feedback context](agent-feedback.md). When an
-existing session has no feedback marker, `crewmoor feedback register REGISTRY
-CONFIG` may create an explicit context with its **already verified**
-`native_session_id`, team, role and Agent kind. This creates no Agent and does
-not manufacture a SessionStart, hooks state or business report. No Hook
-installation, trust change, session restart or environment edit is needed.
+For a team, use [team start and team bind](team-launch.md): the user works
+directly in the returned dispatcher pane, and each worker has one fixed pair
+binding. Reuse that binding for requests and replies; do not bind it again.
+Do not register or adopt an unrelated existing session to supply an outer
+dispatcher. The native prompt/send operations below describe the implementation,
+not an additional business channel for team members.
+
+The lower-level `message bind` API remains available for already owned, recorded
+pairs with [feedback contexts](agent-feedback.md). It does not create or adopt
+Agents. For that API, use actual returned identities and verified task ownership:
 
 Put this configuration in a private local JSON file, with actual absolute paths,
 feedback instance UUIDs and exact returned pane handles:

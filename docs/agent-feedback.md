@@ -99,8 +99,10 @@ Allowed report types are `ready`, `progress`, `complete`, `blocked`; sources are
 
 Issue #6's [first-step report forwarding entry](feedback-forward.md) explicitly
 records one new authored report and transfers that exact fact to the bound
-dispatcher. Ordinary reports and native Hook callbacks stay local; no global
-forwarding is enabled, and dispatcher follow-up handling remains outside this step.
+dispatcher. Ordinary reports stay local. A bound worker's native Stop/SessionEnd
+and session rejection use the separate [Hook forwarding](hook-forward.md) path;
+unbound roles and the dispatcher's own events stay local. Neither path infers
+business completion from a native event.
 
 ## Recorded real Claude path
 

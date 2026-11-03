@@ -1,4 +1,4 @@
-# Issue #15 team in the user's existing Herdr server. Copy and replace /absolute/project.
+# One dispatcher layer in the user's existing Herdr server. Replace paths/versions.
 team = "sample-team"
 task = "sample-task"
 runtime = "tui"
@@ -11,9 +11,10 @@ dispatcher = "lead"
 
 [host]
 socket = "/home/gem/.config/herdr/herdr.sock"
-server_version = "0.9.4"
+server_version = "0.9.5"
 
 [[roles]]
+# The user enters tasks directly in this returned pane; no outer Agent is needed.
 role = "lead"
 cwd = "/absolute/project"
 agent = "claude"

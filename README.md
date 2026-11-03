@@ -9,12 +9,12 @@ Supports **Herdr TUI** and **Herdr App** (via herdr-core). Orca support planned.
 ```mermaid
 flowchart TD
     You["You\nrequirements / decisions"]
-    D["Dispatcher agent"]
+    D["Team-owned dispatcher agent"]
     W["Developer / Reviewer / Publisher"]
-    You -->|"issue assign"| D
-    D -->|"team bind\nmessage send"| W
-    W -->|"feedback hook"| D
-    D -->|"issue done → next"| You
+    You -->|"type in dispatcher pane"| D
+    D -->|"message send"| W
+    W -->|"message send / Hook notice"| D
+    D -->|"progress / decisions"| You
 ```
 
 ## Runtime support
@@ -26,6 +26,12 @@ flowchart TD
 | Orca | Planned |
 
 A team runs in one runtime instance. Different teams may use different runtimes.
+
+The user works directly in the dispatcher pane created by `team start`. That
+dispatcher assigns work and reports results through the fixed worker bindings;
+there is one dispatch layer. The launcher hands over the returned team directory
+and dispatcher location, then leaves ongoing coordination to that dispatcher.
+Existing sessions are not imported into this workflow.
 
 ## Subcommands
 
@@ -56,39 +62,52 @@ crewmoor feedback hooks plan claude install REGISTRY BINARY PLAN_DIR
 crewmoor feedback hooks apply PLAN_DIR
 ```
 
-After installation, Stop / SessionEnd events from agents are recorded and forwarded to the dispatcher automatically.
+Repeat for each Agent kind used (`claude` or `codex`), preserving existing
+handlers and completing any native Hook review. Only registered task instances
+are collected; worker Stop / SessionEnd forwarding starts after `team bind`.
+See [Hook installation](docs/agent-feedback.md) and the versioned
+[crewmoor-team-flow skill](skills/crewmoor-team-flow/SKILL.md).
 
 ### 3. Start a team
 
 **Herdr TUI** (`runtime = "tui"`, team config includes `host`):
 
 ```bash
-crewmoor team start team.toml ~/.local/state/crewmoor
-crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
-crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
+crewmoor team start /absolute/team.toml /absolute/state
+# Use the returned team_dir; sample-team/worker are from examples/team-tui.toml.
+crewmoor team bind /absolute/state/teams/sample-team worker
 ```
 
 **Herdr App / herdr-core** (`runtime = "core"`, team config includes `app_target`):
 
 ```bash
-crewmoor team start team-core.toml ~/.local/state/crewmoor
-crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
-crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
+crewmoor team start /absolute/team-core.toml /absolute/state
+crewmoor team bind /absolute/state/teams/sample-core-team worker
 ```
 
 See [`examples/team-core.toml`](examples/team-core.toml) for a core-mode team config template.
+
+Read `roles[]` in the start result: select the role named by the configuration's
+`dispatcher`, and open its returned `handle` (TUI pane or core terminal). Enter
+requirements and decisions there in ordinary language; the human needs no
+separate role or self-binding. The launcher supplies `team_dir`, CLI path and
+worker binding paths to that dispatcher. Bind each worker after both native
+SessionStart events have established their sessions. If a session or binding
+is missing, report it once; do not poll, re-launch or adopt another session.
+`accepted` is launch admission, not Agent readiness or task completion.
+See the [complete handover chain](docs/team-launch.md).
 
 ### 4. Assign and track a requirement
 
 ```bash
 # Assign Issue #42 to the dispatcher instance
-crewmoor issue assign ~/.local/state/crewmoor/registry musutrade/crewmoor 42 <instance>
+crewmoor issue assign ~/.local/state/crewmoor/feedback musutrade/crewmoor 42 <instance>
 
 # Read current assignment
-crewmoor issue current ~/.local/state/crewmoor/registry <instance>
+crewmoor issue current ~/.local/state/crewmoor/feedback <instance>
 
 # Check whether the issue is closed
-crewmoor issue done ~/.local/state/crewmoor/registry <instance>
+crewmoor issue done ~/.local/state/crewmoor/feedback <instance>
 
 # Fetch the next open issue (default label: ready)
 crewmoor issue next musutrade/crewmoor
@@ -98,17 +117,29 @@ crewmoor issue next musutrade/crewmoor --label sprint
 ### 5. Send a message
 
 ```bash
-# Bind first (creates the binding file)
-crewmoor message bind msg-config.json roles/developer/binding.json
-
-# Then send
-crewmoor message send roles/developer/binding.json message.json
+# Reuse the pair binding written by team bind; do not bind the pair again.
+crewmoor message send /absolute/state/teams/sample-team/roles/worker/binding.json /absolute/request.json
 ```
+
+The dispatcher authors a flat request such as
+`{"id":"request-001","from":"lead","to":"worker","reply_to":null,"content":"Implement the assigned requirement and report the result."}`.
+The worker actively replies through the same binding with a new `id`, reversed
+roles and `reply_to: "request-001"`. `reply_to` refers to the original message
+ID, not a role name. `transport: accepted` means submission only; the authored
+reply establishes actual receipt and business progress. Direct `herdr agent
+prompt` or `hc send` is the transport implementation, not another business
+channel for team members. See [message semantics](docs/messages.md).
 
 ### 6. View feedback records
 
 ```bash
 crewmoor feedback show ~/.local/state/crewmoor/feedback <instance>
+```
+
+When the team's work is finished, close only its recorded resources:
+
+```bash
+crewmoor team stop /absolute/state/teams/sample-team
 ```
 
 ## Herdr App / herdr-core
@@ -187,11 +218,13 @@ herdr-app do tab.new --name lead --space <space_id>
 
 ## Session integrity
 
-CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). If the session changes — agent restart, re-login, or context reset — the team halts immediately and writes a visible rejection record. No silent continuation.
+CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). A different native session writes a visible `session-rejected` fact; subsequent normal sends involving that dispatcher or worker are refused, preserving the original binding and association. Stop dispatch to that role and report the change to the user. Do not automatically rebind, restart or recover it. A worker rejection may forward one halt notice to an unchanged dispatcher. The dispatcher's own events stay local: the user is already in its pane, and there is no upstream Agent. View either role's facts with `feedback show`; a turn ending is not business completion.
 
 ## No daemon
 
-There is no background process or state machine. Conditional delivery runs entirely inside the Hook callback (2-second window). A failed delivery writes an unconfirmed record; the next Stop retries automatically. A call that never started leaves no marker and retries cleanly.
+There is no background process or state machine. Conditional delivery runs inside
+the bounded Hook callback. A delivery refused before submission can be considered
+on a later Stop; an accepted or unconfirmed submission is marked and not resent.
 
 ## Conditional delivery
 

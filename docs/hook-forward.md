@@ -99,8 +99,11 @@ continues local-only (no forwarding, no error).
 
 ## Dispatcher skill convention
 
-These rules govern how the dispatcher processes forwarded Hook events.  They are
-skill-layer policy and do not modify the `herdr-team-flow` global skill.
+These rules govern how the team-owned dispatcher processes forwarded Hook events.
+They are shared with the versioned
+[crewmoor-team-flow skill](../skills/crewmoor-team-flow/SKILL.md). The user works
+directly in this dispatcher pane; there is no upstream Agent or extra forwarding
+layer. Publishing this source does not silently replace a global skill.
 
 1. **Stop is a notice.** A forwarded `Stop` or `SessionEnd` tells the dispatcher the
    worker completed a turn. If there is nothing to do (e.g. no queued work), do **not**
@@ -122,8 +125,9 @@ skill-layer policy and do not modify the `herdr-team-flow` global skill.
 
 ### Anti-loop guarantee
 
-- The dispatcher has no binding-ref written for it, so its own `Stop` events are
-  never forwarded.
+- The dispatcher has no worker `binding-ref.json`, so its own events are not
+  forwarded upstream. Its separate `dispatcher-binding-ref.json` can drive
+  conditional issue delivery; that is not a second dispatch layer.
 - Workers can receive at most one message per forwarded notice (rule 2 above).
 - After a halt, no further work is dispatched until user action (rule 3 above).
 
@@ -136,7 +140,7 @@ The following are **outside** this step:
 - `StopFailure` (Codex has no such event; add when needed).
 - Automatic recovery or retry after halt.
 - Forwarding `SessionStart` or `UserPromptSubmit`.
-- Any change to `herdr-team-flow`.
+- An outer dispatcher or automatic global-skill installation.
 - Core team entry (#16) or queue/broker infrastructure.
 
 ---
@@ -156,7 +160,7 @@ The following are **outside** this step:
 - An agent-report rejection is never forwarded as a Hook halt.
 - Halt sends keep the fixed worker→dispatcher direction (outsider and dispatcher senders are
   refused).
-- Dispatcher events never forwarded (no binding-ref written for dispatcher by `team bind`).
+- Dispatcher events never forwarded (no worker binding-ref written for dispatcher by `team bind`).
 - Subprocess integration: `crewmoor feedback hook` returns `{}\n`, records the Stop and forwards it;
   a failed forward prints one stderr line and adds one unconfirmed record.
 

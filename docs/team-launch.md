@@ -14,9 +14,9 @@ crewmoor team stop  /absolute/state/teams/TEAM
 
 `team start` creates `<state>/teams/<team>/` once and prints its absolute path.
 An existing directory is refused, never overwritten. Restarting a team uses a
-new state directory; the old one stays as evidence. Hand this path to the
-dispatcher in the assignment message. There is no environment variable or
-discovery.
+new state directory; the old one stays as evidence. Hand the returned path and
+role locations to the team-owned dispatcher during startup handover. There is no
+environment variable or discovery.
 
 | Path | Writer | Content |
 |---|---|---|
@@ -25,6 +25,56 @@ discovery.
 | `roles/<role>/launch/record.json` | Issue #2 launch | Launch record: handle, admission, process facts |
 | `<team>.<role>.json` | Issue #2 launch | Owner binding of that role's launch record |
 | `roles/<worker>/binding.json` | `team bind` | That worker's pair binding with the dispatcher |
+
+## Human entry and one dispatcher
+
+The user-facing Agent is the `dispatcher` role started and recorded by this
+team. The launcher selects that role in returned `roles[]`, hands over its
+`handle`, `feedback_instance` and `team_dir`, and ends its startup role. The user
+opens that TUI pane or App/core terminal and enters requirements directly.
+Human input is ordinary native input, without a second Agent, a self-addressed
+Message or a new binding. Agent-to-Agent business traffic uses
+`crewmoor message send` through the worker pair bindings.
+
+The shortest existing chain is:
+
+1. `team start CONFIG STATE`: register and launch the dispatcher first, then workers;
+   read returned role/handle/instance identities. Admission or a located process
+   is not hooks state, readiness or business completion; an unknown start outcome
+   must not be blindly repeated.
+2. Supply the team directory, CLI path and exact binding paths to the dispatcher.
+   A Codex `initial_prompt` may carry startup instructions through native argv,
+   before later team messages. Keep workers waiting for assignments.
+3. After both genuine SessionStart hooks establish the pair's sessions, run
+   `team bind TEAM_DIR WORKER_ROLE` once per worker. Report a missing session or
+   binding once, without adding a polling loop or ready gate.
+4. The user continues directly in the dispatcher pane. The dispatcher authors
+   a flat request with a unique `id` and sends it through
+   `TEAM_DIR/roles/WORKER_ROLE/binding.json`. The worker actively replies through
+   that same binding with a new `id` and `reply_to` equal to the request ID.
+   The transport validates identifiers, not a conversation history.
+5. Bound worker Stop/SessionEnd events are forwarded notices, not business
+   completion. They need no generic acknowledgement. The dispatcher's own events
+   stay local; there is no upstream Agent. Its Stop can separately trigger the
+   existing conditional issue delivery.
+
+Do not retain an outer coordination Agent, import an existing session or bypass
+the fixed bindings with native `herdr agent prompt` / `hc send`; those are
+transport implementation details. If either role's native session changes,
+normal sends involving it refuse, `feedback show` exposes the rejection and the
+original binding remains unchanged. Report the affected role to the user; do not
+rebind, restart or adopt its replacement automatically. A worker halt notice can
+reach an unchanged dispatcher; a changed dispatcher has no upstream forwarding
+promise.
+
+The versioned [crewmoor-team-flow source](../skills/crewmoor-team-flow/SKILL.md)
+defines the protocol, reply correlation and Stop/halt handling. It is a reviewable
+repository artifact, not an automatic global-instructions update. To synchronize
+an authorized reviewed revision locally, record exact installed paths and hashes,
+back up each existing file outside its skill directory, compare with the reviewed
+source, copy that file into the existing skill directory, then verify identical
+bytes. Preserve the backups for restoration; do not replace files changed since
+the plan. This does not create a symlink or edit other skills, memory or settings.
 
 ## Configuration
 
@@ -35,9 +85,11 @@ loaded, so a role name can never point outside its team directory.
 `runtime` is declared once for the whole team; a role cannot set its own runtime
 (`deny_unknown_fields` rejects it). One team uses one container. `team start`
 accepts `runtime = "tui"` with an existing `host`; see
-[examples/team-tui.toml](../examples/team-tui.toml). The core team entry is not
-implemented; see [#16](https://github.com/musutrade/crewmoor/issues/16). Core
-marker injection itself is part of this change (App/core `terminal.run` `env`).
+[examples/team-tui.toml](../examples/team-tui.toml). `runtime = "core"` uses an
+existing `app_target`; see [examples/team-core.toml](../examples/team-core.toml)
+and [App launch](app-launch.md). Both use the same team start/bind/message chain
+and native Hook identities. Runtime creation differs: TUI uses workspace/Agent
+creation; App/core uses its existing socket and `terminal.run` with per-role env.
 
 ```toml
 team = "issue15-smoke"
@@ -51,7 +103,7 @@ dispatcher = "lead"
 
 [host]
 socket = "/home/gem/.config/herdr/herdr.sock"
-server_version = "0.9.4"
+server_version = "0.9.5"
 
 [[roles]]
 role = "lead"
