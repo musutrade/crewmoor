@@ -218,7 +218,7 @@ herdr-app do tab.new --name lead --space <space_id>
 
 ## Session integrity
 
-CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). A different native session writes a visible `session-rejected` fact; subsequent normal sends involving that dispatcher or worker are refused, preserving the original binding and association. Stop dispatch to that role and report the change to the user. Do not automatically rebind, restart or recover it. A worker rejection may forward one halt notice to an unchanged dispatcher. The dispatcher's own events stay local: the user is already in its pane, and there is no upstream Agent. View either role's facts with `feedback show`; a turn ending is not business completion.
+CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). A different native session writes a visible `session-rejected` fact; subsequent normal sends involving that dispatcher or worker are refused, preserving the original binding and association. Stop dispatch to that role and report the change to the user. Do not automatically rebind, restart or recover it. Each rejected worker Hook event may forward one halt notice to an unchanged dispatcher. Multiple rejected events can therefore produce multiple notices; there is no transport deduplication. The dispatcher reports a halt to the user once. The dispatcher's own events stay local: the user is already in its pane, and there is no upstream Agent. View either role's facts with `feedback show`; a turn ending is not business completion.
 
 ## No daemon
 

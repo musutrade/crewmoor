@@ -229,6 +229,12 @@ New #15 code calls those per-container functions and adds no new scattered
 branch. A third container should first provide the capabilities below; a shared
 interface can be extracted then.
 
+The following table preserves the historical #15 capability snapshot, including
+its server 0.9.4 / core 0.1.15 versions and then-unverified core path. It does not
+declare current installed versions or acceptance. Current teams pin their actual
+runtime/host versions (TUI CLI/server 0.9.5 in the 2026-11-03 #40 batch); use the
+current runtime chains and examples above.
+
 | Capability | Herdr TUI 0.9.5 (server 0.9.4) | herdr-core 0.1.15 |
 |---|---|---|
 | Create and start with env | `workspace create --env K=V`, then `agent start --pane` | App RPC `terminal.run` with `env` object. The `hc run` CLI has no env flag, so core markers need an App/core target. **Not real-accepted.** |

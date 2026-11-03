@@ -16,10 +16,11 @@ returns `type: agent_prompted`. These are location and transport facts.
 Checked against the [official stable LLM index](https://herdr.dev/llms.txt),
 [v0.9.5 Agent automation](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.5/docs/next/website/src/content/docs/agent-automation.mdx),
 installed `herdr --skill`, `herdr agent prompt --help`, `herdr api schema --json`
-and actual `agent get`/`agent prompt` returns. On this machine the CLI is 0.9.5
-and the running server is 0.9.4; the server was retained. The schema describes the
-CLI build, while the observed server returns establish the actual supported
-identity and prompt fields. No newer schema-only field is required.
+and actual `agent get`/`agent prompt` returns. That historical Issue #9 check used
+CLI 0.9.5 and server 0.9.4, retaining that server. It is not a statement of the
+current host version: team configuration must pin the actual installed host
+(CLI/server 0.9.5 in the 2026-11-03 #40 batch). The schema describes the CLI build;
+observed server responses establish supported identity and prompt fields.
 
 ## Team-owned pairs
 

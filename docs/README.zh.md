@@ -153,7 +153,7 @@ CrewMoor 读取该文件、核对运行中的 core 身份，并通过已有 sock
 
 ## 会话完整性
 
-CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 Hook，不由进程状态推断）。不同原生 session 会留下可见的 `session-rejected` 事实；后续涉及该 dispatcher 或 worker 的普通发送均拒绝，保留原 binding 和关联。立即停止向该角色派工并报告用户，不自动 rebind、重启或恢复。worker 的拒收可向未变更的 dispatcher 转发一次 halt 通知；dispatcher 自己的事件保留在本地，因为用户已经直接面对它，不另设上游 Agent。两端事实均可用 `feedback show` 查看；轮次结束不等于业务完成。
+CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 Hook，不由进程状态推断）。不同原生 session 会留下可见的 `session-rejected` 事实；后续涉及该 dispatcher 或 worker 的普通发送均拒绝，保留原 binding 和关联。立即停止向该角色派工并报告用户，不自动 rebind、重启或恢复。worker 每条被拒的 Hook 事件都可能向未变更的 dispatcher 转发一条 halt 通知；多条拒收事件可产生多条通知，传输层不去重，由 dispatcher 向用户报告一次 halt；dispatcher 自己的事件保留在本地，因为用户已经直接面对它，不另设上游 Agent。两端事实均可用 `feedback show` 查看；轮次结束不等于业务完成。
 
 ## 无后台进程
 
