@@ -54,6 +54,9 @@ session is not a server status field. A stale core identity fails for explicit
 profile regeneration. The present launch/bind contract uses the same version for
 core client and server, so generation **rejects** a core mismatch rather than
 claiming compatibility or adding another version field.
+Generation also reuses the launch host guard: the selected core server and its
+reported holders must have valid process identities and no developer routing
+metadata. A refusal emits no configuration and does not alter the existing host.
 
 Discovery and ordinary launch-option validation finish before any output.
 Stdout mode contains valid reviewable TOML only; errors go to stderr.

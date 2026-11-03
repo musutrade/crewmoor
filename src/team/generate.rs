@@ -183,6 +183,7 @@ fn core(target: &Path, client: &str) -> Result<(String, Value)> {
     let app = core_target(target)?;
     let (status, doc) = app_target::discover(&app.socket)?;
     let server = core_version(&app, &status, client)?;
+    app::check_host_processes(&native::identity_from(&status)?, &status)?;
     if app.space_id.is_some() {
         app::existing_layout(&app, &doc)?;
     }

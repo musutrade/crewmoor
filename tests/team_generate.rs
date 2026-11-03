@@ -2,13 +2,13 @@ use crewmoor::{app, team::Team};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     os::unix::{
         fs::{PermissionsExt, symlink},
         net::UnixListener,
     },
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Child, Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -17,6 +17,7 @@ struct Fixture {
     dir: tempfile::TempDir,
     _listener: UnixListener,
     input: Value,
+    processes: Vec<Child>,
 }
 fn executable(root: &Path, name: &str, config: Value) -> PathBuf {
     let path = root.join(name);
@@ -58,6 +59,7 @@ impl Fixture {
             dir,
             _listener: listener,
             input,
+            processes: Vec::new(),
         }
     }
     fn root(&self) -> &Path {
@@ -81,6 +83,42 @@ impl Fixture {
         fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
     }
     fn core(&mut self, server: &str, id: &str, doc: Value) -> thread::JoinHandle<Vec<Value>> {
+        self.core_status(server, id, doc, |_| {})
+    }
+    fn process(&mut self, contaminated: bool) -> u32 {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
+        for marker in app::HOST_MARKERS {
+            command.env_remove(marker);
+        }
+        if contaminated {
+            command.env("CODEX_SESSION_ID", "synthetic-test-marker");
+        }
+        let mut child = command
+            .arg("hold")
+            .env("CREWMOOR_TRANSPORT_HANDSHAKE", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut handshake = [0];
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_exact(&mut handshake)
+            .unwrap();
+        assert_eq!(&handshake, b"R");
+        let pid = child.id();
+        self.processes.push(child);
+        pid
+    }
+    fn core_status(
+        &mut self,
+        server: &str,
+        id: &str,
+        doc: Value,
+        update: impl FnOnce(&mut Value),
+    ) -> thread::JoinHandle<Vec<Value>> {
         self.input["runtime"] = json!("core");
         self.input.as_object_mut().unwrap().remove("host");
         self.input["runtime_binary"] = json!(executable(
@@ -103,9 +141,20 @@ impl Fixture {
         self.input["app_target"] = json!(target);
         self.input["roles"][1]["tab_id"] = json!("client-route/tb-two");
         // StatusResult has core.id/name/version; session is NOT fabricated as a server field.
-        let status = json!({"core":{"id":id,"name":"server-host-name"},"version":server,
-            "pid":1234,"uptime_ms":0,"holders":[],"live":0,"finished":0});
+        let mut status = json!({"core":{"id":id,"name":"server-host-name"},"version":server,
+            "pid":self.process(false),"uptime_ms":0,"holders":[],"live":0,"finished":0});
+        update(&mut status);
         serve(listener, vec![status, doc])
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        for child in &mut self.processes {
+            if child.try_wait().unwrap().is_none() {
+                child.kill().unwrap();
+            }
+            child.wait().unwrap();
+        }
     }
 }
 fn layout() -> Value {
@@ -412,6 +461,32 @@ fn core_mismatch_stale_identity_or_invalid_placement_is_rejected_without_output(
         if change == "mismatch" {
             assert!(String::from_utf8_lossy(&out.stderr).contains("client/server versions differ"));
         }
+    }
+}
+#[test]
+fn core_host_guard_rejects_contaminated_server_or_holder_before_emission() {
+    for target in ["server", "holder", "missing-process", "missing-inventory"] {
+        let mut f = Fixture::new();
+        let contaminated = f.process(true);
+        let server = f.core_status("0.1.17", "actual-core", layout(), |status| match target {
+            "server" => status["pid"] = json!(contaminated),
+            "holder" => status["holders"] = json!([{"instance":"test-holder","pid":contaminated}]),
+            "missing-process" => status["pid"] = json!(u32::MAX),
+            _ => {
+                status.as_object_mut().unwrap().remove("holders");
+            }
+        });
+        let output = f.root().join("not-created.toml");
+        let out = f.run(&["--output", output.to_str().unwrap()]);
+        failed(&out);
+        assert!(!output.exists());
+        if ["server", "holder"].contains(&target) {
+            assert!(
+                String::from_utf8_lossy(&out.stderr).contains("App host has developer metadata")
+            );
+        }
+        assert_eq!(server.join().unwrap().len(), 2);
+        assert!(!f.root().join("registry").exists());
     }
 }
 #[test]
