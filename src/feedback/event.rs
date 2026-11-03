@@ -54,6 +54,7 @@ pub fn ingest(registry: &Path, instance: &str, agent: &AgentKind, bytes: &[u8]) 
         journal::Appended::Rejected(_) => {
             Err("native session differs; feedback not associated; rejection recorded".into())
         }
+        journal::Appended::Refused => Err("native Hook refused; rejection recorded".into()),
     }
 }
 /// One native Hook event, and exactly what its append wrote.
@@ -64,8 +65,17 @@ pub fn hook(
     bytes: &[u8],
 ) -> Result<journal::Appended> {
     let context = model::load(registry, instance)?;
-    let input = checked_input(&context, agent, bytes)?;
-    let native = metadata(&input)?;
+    let input: Input = match serde_json::from_slice(bytes) {
+        Ok(input) => input,
+        Err(_) => return journal::refuse(registry, instance, "unknown", "invalid-input"),
+    };
+    if let Err(reason) = checked_input(registry, &context, agent, &input) {
+        return refuse_input(registry, instance, &input, reason);
+    }
+    let native = match metadata(&input) {
+        Ok(native) => native,
+        Err(_) => return refuse_input(registry, instance, &input, "invalid-metadata"),
+    };
     let enroll = input.hook_event_name == "SessionStart";
     journal::record(
         registry,
@@ -81,20 +91,62 @@ pub fn hook(
         enroll,
     )
 }
-fn checked_input(context: &super::Context, agent: &AgentKind, bytes: &[u8]) -> Result<Input> {
-    let input: Input = serde_json::from_slice(bytes)?;
-    if context.registration.agent != *agent || input.cwd.canonicalize()? != context.registration.cwd
-    {
-        return Err("Agent/cwd does not match registered CrewMoor instance".into());
+fn checked_input(
+    registry: &Path,
+    context: &super::Context,
+    agent: &AgentKind,
+    input: &Input,
+) -> std::result::Result<(), &'static str> {
+    if context.registration.agent != *agent {
+        return Err("agent-mismatch");
     }
     if !events(agent).contains(&input.hook_event_name.as_str()) {
-        return Err("uncollected native event".into());
+        return Err("uncollected-event");
     }
     let enroll = input.hook_event_name == "SessionStart";
     if enroll && input.agent_id.is_some() {
-        return Err("subagent cannot establish main instance identity".into());
+        return Err("subagent-enrollment");
     }
-    Ok(input)
+    model::identifier(&input.session_id).map_err(|_| "invalid-session")?;
+    initial_association(registry, context, input, enroll)
+}
+fn initial_association(
+    registry: &Path,
+    context: &super::Context,
+    input: &Input,
+    enroll: bool,
+) -> std::result::Result<(), &'static str> {
+    if journal::registered_session(registry, context)
+        .map_err(|_| "association-unavailable")?
+        .is_some()
+    {
+        return Ok(());
+    }
+    if !enroll {
+        return Err("session-unbound");
+    }
+    // cwd can change during a session. It only corroborates its first main SessionStart;
+    // journal::record checks the immutable session again under the append lock.
+    if input.cwd.canonicalize().ok().as_ref() != Some(&context.registration.cwd) {
+        return Err("initial-cwd-mismatch");
+    }
+    Ok(())
+}
+fn refuse_input(
+    registry: &Path,
+    instance: &str,
+    input: &Input,
+    reason: &str,
+) -> Result<journal::Appended> {
+    let event = input.hook_event_name.as_str();
+    let event = if events(&AgentKind::Claude).contains(&event)
+        || events(&AgentKind::Codex).contains(&event)
+    {
+        event
+    } else {
+        "unknown"
+    };
+    journal::refuse(registry, instance, event, reason)
 }
 fn metadata(input: &Input) -> Result<Value> {
     let mut result = json!({});

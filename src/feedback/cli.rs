@@ -142,7 +142,12 @@ fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
     }
     let mut bytes = Vec::new();
     let read = std::io::stdin().take(1_048_577).read_to_end(&mut bytes);
-    if read.is_err() || bytes.len() > 1_048_576 {
+    if read.is_err() {
+        let _ = super::journal::refuse(registry, instance, "unknown", "input-unreadable");
+        return false;
+    }
+    if bytes.len() > 1_048_576 {
+        let _ = super::journal::refuse(registry, instance, "unknown", "input-too-large");
         return false;
     }
     let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport, &gh);

@@ -516,8 +516,9 @@ fn an_agent_report_rejection_is_never_forwarded_as_a_hook_halt() {
     assert!(feedback::report(dir, instance, "other-session", "agent", "progress", "x").is_err());
     let rejected = fixture.events();
     assert_eq!(rejected.last().unwrap()["native"]["from"], "agent-report");
-    // Same session, wrong cwd: the Hook input is refused before anything is written.
-    let wrong = json!({"session_id":"other-session","cwd":"/","hook_event_name":"Stop"});
+    // Invalid metadata refuses this input independently of the earlier report rejection.
+    let wrong = json!({"session_id":"other-session","cwd":"/","hook_event_name":"Stop",
+        "turn_id":"PRIVATE\nMETADATA"});
     let outcome = feedback::process_hook_event(
         "codex",
         dir,
@@ -529,8 +530,12 @@ fn an_agent_report_rejection_is_never_forwarded_as_a_hook_halt() {
     assert!(!outcome.recorded);
     assert!(outcome.forward_error.is_none());
     assert_eq!(fixture.submissions(), 0);
-    assert_eq!(fixture.events().len(), rejected.len());
-    // The same session with the right cwd writes its own native rejection and forwards it.
+    assert_eq!(fixture.events().len(), rejected.len() + 1);
+    assert_eq!(
+        fixture.events().last().unwrap()["source"],
+        feedback::HOOK_REJECTED
+    );
+    // Valid native input writes its own session rejection and forwards it.
     assert!(
         !fixture
             .hook_event("worker", "other-session", "Stop")
@@ -540,6 +545,54 @@ fn an_agent_report_rejection_is_never_forwarded_as_a_hook_halt() {
     let content = fixture.last_message_content();
     assert_eq!(content["record"]["native"]["from"], "native-hook");
     assert_eq!(content["system_halt_notification"], true);
+}
+
+#[test]
+fn bound_parent_and_child_cwd_stops_forward_but_foreign_session_still_halts() {
+    let fixture = Fixture::new();
+    let child = fixture.dir.path().join("child");
+    fs::create_dir(&child).unwrap();
+    for (index, cwd) in [fixture.dir.path().parent().unwrap(), child.as_path()]
+        .into_iter()
+        .enumerate()
+    {
+        let payload = json!({"session_id":"worker-session","cwd":cwd,"hook_event_name":"Stop"});
+        let outcome = feedback::process_hook_event(
+            "codex",
+            fixture.dir.path(),
+            &fixture.worker_instance,
+            &serde_json::to_vec(&payload).unwrap(),
+            &fixture.trace,
+            &fixture.gh,
+        );
+        assert!(outcome.recorded);
+        assert!(outcome.forward_error.is_none());
+        assert_eq!(fixture.submissions(), index + 1);
+        let content = fixture.last_message_content();
+        assert_eq!(content["record"]["source"], "native-hook");
+        assert_eq!(content["record"]["event"], "Stop");
+        assert_eq!(content["system_halt_notification"], false);
+    }
+    let payload = json!({"session_id":"foreign-session","cwd":"/","hook_event_name":"Stop"});
+    let outcome = feedback::process_hook_event(
+        "codex",
+        fixture.dir.path(),
+        &fixture.worker_instance,
+        &serde_json::to_vec(&payload).unwrap(),
+        &fixture.trace,
+        &fixture.gh,
+    );
+    assert!(!outcome.recorded);
+    assert!(outcome.forward_error.is_none());
+    assert_eq!(fixture.submissions(), 3);
+    assert_eq!(
+        fixture.last_message_content()["record"]["source"],
+        feedback::REJECTED
+    );
+    assert_eq!(
+        fixture.last_message_content()["system_halt_notification"],
+        true
+    );
 }
 
 #[test]
