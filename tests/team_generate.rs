@@ -87,7 +87,7 @@ impl Fixture {
     }
     fn process(&mut self, contaminated: bool) -> u32 {
         let mut command = Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
-        for marker in app::HOST_MARKERS {
+        for marker in app::CHILD_MARKERS {
             command.env_remove(marker);
         }
         if contaminated {
@@ -521,13 +521,10 @@ fn core_generation_rejects_wrong_base_tab_prefix_before_discovery() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("invalid App machine/local identity"));
 }
 #[test]
-fn core_host_guard_rejects_contaminated_server_or_holder_before_emission() {
-    for target in ["server", "holder", "missing-process", "missing-inventory"] {
+fn core_host_requires_process_identity_and_holder_inventory_before_emission() {
+    for target in ["missing-process", "missing-inventory"] {
         let mut f = Fixture::new();
-        let contaminated = f.process(true);
         let server = f.core_status("0.1.17", "actual-core", layout(), |status| match target {
-            "server" => status["pid"] = json!(contaminated),
-            "holder" => status["holders"] = json!([{"instance":"test-holder","pid":contaminated}]),
             "missing-process" => status["pid"] = json!(u32::MAX),
             _ => {
                 status.as_object_mut().unwrap().remove("holders");
@@ -537,11 +534,27 @@ fn core_host_guard_rejects_contaminated_server_or_holder_before_emission() {
         let out = f.run(&["--output", output.to_str().unwrap()]);
         failed(&out);
         assert!(!output.exists());
-        if ["server", "holder"].contains(&target) {
-            assert!(
-                String::from_utf8_lossy(&out.stderr).contains("App host has developer metadata")
-            );
-        }
+        assert_eq!(server.join().unwrap().len(), 2);
+        assert!(!f.root().join("registry").exists());
+    }
+}
+#[test]
+fn core_generation_does_not_reject_host_metadata_removed_by_the_launch_argv() {
+    for target in ["server", "holder"] {
+        let mut f = Fixture::new();
+        let marked = f.process(true);
+        let server = f.core_status("0.1.17", "actual-core", layout(), |status| match target {
+            "server" => status["pid"] = json!(marked),
+            _ => status["holders"] = json!([{"instance":"test-holder","pid":marked}]),
+        });
+        let out = f.run(&[]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let team: Team = toml::from_str(std::str::from_utf8(&out.stdout).unwrap()).unwrap();
+        assert_eq!(team.runtime_version, "hc 0.1.17");
         assert_eq!(server.join().unwrap().len(), 2);
         assert!(!f.root().join("registry").exists());
     }

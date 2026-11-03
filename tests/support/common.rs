@@ -73,7 +73,7 @@ fn spawn(r: &Record) -> Result<Child> {
     use std::io::Read;
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
     if r.config.app.is_some() {
-        for marker in crewmoor::app::HOST_MARKERS {
+        for marker in crewmoor::app::CHILD_MARKERS {
             command.env_remove(marker);
         }
     } else {
@@ -123,7 +123,7 @@ impl Fake {
             "live"
         };
         let mut value = json!({"address":self.address(),"labels":{"crewmoor-owner":r.owner,"crewmoor-team":r.config.team},
-            "argv":r.config.argv(),"cwd":r.config.cwd,"state":state,"created_ms":42,
+            "argv":crewmoor::core::launch_argv(r),"cwd":r.config.cwd,"state":state,"created_ms":42,
             "screen":"exact","cols":80,"rows":24,"pid":child_pid(&self.agent),"name":r.config.role});
         if *self.changed.borrow() {
             value["created_ms"] = json!(43);

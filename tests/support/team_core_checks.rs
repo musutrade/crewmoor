@@ -34,7 +34,7 @@ struct Setup {
 }
 fn clean_host() -> std::process::Child {
     let mut command = std::process::Command::new(FIXTURE);
-    for marker in crewmoor::app::HOST_MARKERS {
+    for marker in crewmoor::app::CHILD_MARKERS {
         command.env_remove(marker);
     }
     let mut child = command

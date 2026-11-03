@@ -53,7 +53,7 @@ fn both_agents_use_target_profile_and_persist_project_before_one_native_request(
         assert_eq!(params["labels"]["crewmoor-project"], project.id);
         assert_eq!(params["labels"]["herdr.space"], project.space_id);
         assert_eq!(params["keep"], true);
-        assert_eq!(params["argv"], json!(first.config.argv()));
+        assert_eq!(params["argv"], json!(crewmoor::core::launch_argv(&first)));
         if kind == AgentKind::Claude {
             assert!(!first.config.argv().contains(&"--no-daemon".into()));
         }

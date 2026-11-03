@@ -46,7 +46,8 @@ fn app_both_agents_use_keep_local_labels_and_preserve_external_host_even_when_em
             let (method, params) = app::request(&r, &args).unwrap();
             assert_eq!(method, "terminal.run");
             assert_eq!(params["keep"], true);
-            assert_eq!(params["argv"], json!(r.config.argv()));
+            assert_eq!(params["argv"], json!(crewmoor::core::launch_argv(&r)));
+            assert_eq!(params["argv"][0], "/usr/bin/env");
             assert_eq!(params["labels"]["herdr.space"], "sp-existing");
             assert_eq!(params["labels"]["herdr.tab"], "tb-existing");
             assert_eq!(params["env"], json!({}));
@@ -132,7 +133,7 @@ fn app_rpc_allows_only_existing_socket_terminal_operations_and_decodes_real_erro
 }
 fn clean_child(cwd: &std::path::Path, dirty: bool) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_transport-fixture"));
-    for key in app::HOST_MARKERS {
+    for key in app::CHILD_MARKERS {
         cmd.env_remove(key);
     }
     if dirty {
@@ -161,7 +162,7 @@ fn end(child: &mut Child) {
     assert!(child.wait().unwrap().success());
 }
 #[test]
-fn host_marker_values_are_never_reported_and_contamination_or_missing_identity_withholds() {
+fn host_markers_do_not_block_child_isolation_but_core_and_process_identity_remain_required() {
     let dir = common::directory();
     let mut cfg = common::config(dir.path(), Runtime::Core);
     cfg.app = Some(binding(dir.path()));
@@ -172,20 +173,17 @@ fn host_marker_values_are_never_reported_and_contamination_or_missing_identity_w
     let mut status = json!({"core":{"id":"own-core"},"holders":[]});
     app::check_host(&r, &status).unwrap();
     status["holders"] = json!([{"instance":"user-holder","pid":dirty.id()}]);
-    let error = app::check_host(&r, &status).unwrap_err().to_string();
-    assert!(!error.contains("synthetic-no-secret"));
+    app::check_host(&r, &status).unwrap();
     assert!(!r.request_issued);
     status["holders"] = json!([]);
     r.server = Some(process::identity(dirty.id()).unwrap());
+    app::check_host(&r, &status).unwrap();
+    r.server.as_mut().unwrap().start_ticks = "changed".into();
     assert!(app::check_host(&r, &status).is_err());
     r.server = None;
     assert!(app::check_host(&r, &status).is_err());
     status["core"]["id"] = json!("other-core");
     assert!(app::check_host(&r, &status).is_err());
-    assert!(app::contaminated(b"CODEX_CI=1\0"));
-    assert!(!app::contaminated(
-        b"CODEX_HOME=retained\0HTTPS_PROXY=retained\0HC_SESSION=app-stable\0"
-    ));
     end(&mut clean);
     end(&mut dirty);
 }
