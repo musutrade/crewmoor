@@ -1,10 +1,14 @@
 // Transport-level test double. Never used as a real container or Agent.
+mod discovery;
 mod environment;
 mod live_environment;
 mod message_transport;
 mod probe;
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().collect();
+    if let Some(value) = discovery::dispatch(&args) {
+        return result(value);
+    }
     if let Some(value) = message_transport::dispatch(&args) {
         return result(value);
     }

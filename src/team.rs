@@ -1,5 +1,6 @@
 //! Thin team entries over existing launch (#2), feedback registration (#4) and
 //! message binding (#9). One team directory per start; never reused or overwritten.
+mod generate;
 use crate::{
     Result,
     config::{AgentKind, Config, Host, Runtime},
@@ -146,7 +147,7 @@ impl Team {
             Runtime::Core => role_dir(dir, &role.role),
         }
     }
-    fn launch_config(&self, role: &Role, dir: &Path, instance: &str) -> Result<Config> {
+    fn launch_config(&self, role: &Role, dir: &Path, instance: Option<&str>) -> Result<Config> {
         let app = self.role_app(role)?;
         let app_target = app.is_none().then(|| self.app_target.clone()).flatten();
         Ok(Config {
@@ -165,7 +166,7 @@ impl Team {
             app,
             app_target,
             host: self.host.clone(),
-            feedback_instance: Some(instance.into()),
+            feedback_instance: instance.map(String::from),
             initial_prompt: role.initial_prompt.clone(),
         })
     }
@@ -252,7 +253,7 @@ fn start_role(
         &root.join("context.json"),
         &serde_json::to_vec_pretty(&context)?,
     )?;
-    let config = team.launch_config(role, dir, &context.instance)?;
+    let config = team.launch_config(role, dir, Some(&context.instance))?;
     let record = launch(config, &launch_root(dir, &role.role))?;
     Ok(
         json!({"role":role.role,"feedback_instance":context.instance,
@@ -389,10 +390,12 @@ fn stop_role(
     let stopped = operate(&root)?;
     Ok(json!(stopped.phase))
 }
-const USAGE: &str =
-    "usage: crewmoor team start CONFIG STATE | bind TEAM_DIR WORKER | stop TEAM_DIR";
+const USAGE: &str = "usage: crewmoor team generate TEMPLATE [--output NEW_TEAM.toml] | start CONFIG STATE | bind TEAM_DIR WORKER | stop TEAM_DIR";
 pub fn cli(args: &[String]) -> Result<()> {
     let (cmd, rest) = args.split_first().ok_or(USAGE)?;
+    if cmd == "generate" {
+        return generate::cli(rest);
+    }
     let value = match cmd.as_str() {
         "start" => start_cli(rest),
         "bind" => bind_cli(rest),

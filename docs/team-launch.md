@@ -10,6 +10,58 @@ crewmoor team bind  /absolute/state/teams/TEAM WORKER_ROLE
 crewmoor team stop  /absolute/state/teams/TEAM
 ```
 
+## Generate factual fields from the existing environment
+
+```text
+crewmoor team generate /absolute/template.toml
+crewmoor team generate /absolute/template.toml --output /absolute/new-team.toml
+```
+
+Choose task inputs in [the TUI template](../examples/team-generate-tui.toml) or
+[the core template](../examples/team-generate-core.toml) first. `team`, `task`,
+`runtime`, `feedback_registry`, `evidence`, `dispatcher`, role names, existing
+absolute `cwd`, Agent kinds, `agent_args`, `initial_prompt` and any role `tab_id`
+come from that file. The generator does not select a model, invent a startup
+prompt, canonicalize business cwd choices or create a role. Existing complete
+team configurations also work as templates; only factual version/path fields
+are replaced.
+
+Omit `runtime_binary` to look up `herdr` (TUI) or `hc` (core) on the current PATH;
+omit a role's `agent_executable` to look up its explicit Agent kind (`claude` or
+`codex`). An explicit executable is a file path, relative to the invocation cwd
+or absolute. It must exist and be executable: no PATH/default fallback occurs
+for an explicit hint. The selected file is canonicalized, and that same actual
+binary's `--version` supplies `runtime_version` / `agent_version`. Supplied stale
+version strings are replaced. User authentication, tool and proxy configuration
+are preserved; only inherited Agent/container routing markers are removed by the
+existing native-query helper.
+
+For TUI, `[host].socket` is a mandatory explicit selection of an existing server.
+The generator calls `status server --json` on that endpoint and uses its actual
+`version` and `socket` for `host.server_version` / `host.socket`, checking the
+returned socket against the selected endpoint. The client version stays separate:
+a client `herdr 0.9.5` with a server `0.9.4` generates those distinct values. No
+server version is inferred from the client executable or terminal/process state.
+
+For core, `app_target` must name an existing absolute profile. Create one
+separately with `app-target generate` if needed; team generation never creates or
+rewrites that file. It reuses the existing-socket `server.status` and
+`doc.get {name: "herdr-app"}` discovery, checks `core.id` against the selected
+profile, and uses existing App/layout validators for explicit placement and role
+tabs. Profile bytes, explicit session, App machine/ID prefix and space/tab choices
+are kept. The machine routing name need not equal `server.status.core.name`;
+session is not a server status field. A stale core identity fails for explicit
+profile regeneration. The present launch/bind contract uses the same version for
+core client and server, so generation **rejects** a core mismatch rather than
+claiming compatibility or adding another version field.
+
+Discovery and ordinary launch-option validation finish before any output.
+Stdout mode contains valid reviewable TOML only; errors go to stderr.
+`--output` uses `create_new`, refusing existing files and symlinks. No team state,
+hidden target sidecar, Agent, service or layout is created. Discovery is a
+point-in-time observation; `team start` still rechecks actual versions and
+identities. Review the generated file, then pass it directly to `team start`.
+
 ## Team directory
 
 `team start` creates `<state>/teams/<team>/` once and prints its absolute path.

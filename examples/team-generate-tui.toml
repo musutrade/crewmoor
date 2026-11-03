@@ -1,0 +1,25 @@
+# Copy and explicitly choose task/roles/agents/cwds/args before running generate.
+# Factual executable/version fields are optional; omitted executables use PATH.
+team = "sample-team"
+task = "sample-task"
+runtime = "tui"
+feedback_registry = "/absolute/feedback-registry"
+evidence = "native"
+dispatcher = "lead"
+
+[host]
+# Select the already-running server explicitly; version comes from its status JSON.
+socket = "/home/gem/.config/herdr/herdr.sock"
+
+[[roles]]
+role = "lead"
+cwd = "/absolute/project"
+agent = "claude"
+agent_args = []
+
+[[roles]]
+role = "worker"
+cwd = "/absolute/project"
+agent = "codex"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "You are the worker. Wait for a crewmoor team assignment."

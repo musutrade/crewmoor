@@ -1,0 +1,21 @@
+# Copy and choose all task/placement inputs; generate does not create an app-target.
+team = "sample-core-team"
+task = "sample-task"
+runtime = "core"
+app_target = "/absolute/existing-app-target.toml"
+feedback_registry = "/absolute/feedback-registry"
+evidence = "native"
+dispatcher = "lead"
+
+[[roles]]
+role = "lead"
+cwd = "/absolute/project"
+agent = "claude"
+agent_args = []
+
+[[roles]]
+role = "worker"
+cwd = "/absolute/project"
+agent = "codex"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "You are the worker. Wait for a crewmoor team assignment."
