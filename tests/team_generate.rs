@@ -462,7 +462,15 @@ fn core_mismatch_stale_identity_or_invalid_placement_is_rejected_without_output(
 fn core_generation_preserves_new_target_and_role_tabs_in_an_existing_space() {
     for overrides in [false, true] {
         let mut f = Fixture::new();
-        let server = f.core("0.1.17", "actual-core", layout());
+        let mut doc = layout();
+        // Official SharedSpace has serde(default), so an empty space may omit tabs.
+        if !overrides {
+            doc["value"]["spaces"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("tabs");
+        }
+        let server = f.core("0.1.17", "actual-core", doc);
         let target = PathBuf::from(f.input["app_target"].as_str().unwrap());
         let mut app: app::Binding = toml::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         app.tab_id = Some("client-route/tb-new-target".into());

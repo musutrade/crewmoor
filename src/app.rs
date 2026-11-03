@@ -219,7 +219,10 @@ pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
         .iter()
         .find(|s| s["id"].as_str() == Some(space_id))
         .ok_or("configured App space does not exist; request withheld")?;
-    space["tabs"].as_array().ok_or("App tabs unavailable")?;
+    // App's SharedSpace defaults omitted tabs to an empty list.
+    if let Some(tabs) = space.get("tabs") {
+        tabs.as_array().ok_or("App tabs unavailable")?;
+    }
     Ok(())
 }
 pub fn clean_process(identity: &process::Identity) -> Result<()> {

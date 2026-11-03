@@ -427,16 +427,21 @@ fn core_team_without_role_tab_id_keeps_the_target_tab() {
 }
 
 #[test]
-fn core_team_role_without_tab_id_falls_back_beside_one_with_it() {
+fn core_team_new_target_tab_and_new_role_override_preserve_each_source() {
     let setup = Setup::new();
-    for fake in &setup.fakes {
-        *fake.app_doc.borrow_mut() = Some(tab_doc());
-    }
+    let target = setup.dir.path().join("app-target.toml");
+    let text = fs::read_to_string(&target)
+        .unwrap()
+        .replace("tb-existing", "tb-new-target");
+    fs::write(target, text).unwrap();
     let mut team = setup.team();
-    team.roles[0].tab_id = Some("tb-worker".into());
+    team.roles[0].tab_id = Some("tb-new-worker".into());
     start_team(&setup, team).unwrap();
-    assert_eq!(tab_labels(&setup, "lead").1, json!("tb-existing"));
-    assert_eq!(tab_labels(&setup, "worker").1, json!("tb-worker"));
+    assert_eq!(tab_labels(&setup, "lead").1, json!("tb-new-target"));
+    assert_eq!(tab_labels(&setup, "worker").1, json!("tb-new-worker"));
+    assert!(setup.record("lead").project.is_none());
+    assert!(setup.record("worker").project.is_none());
+    setup.stop().unwrap();
 }
 
 #[test]
@@ -468,6 +473,7 @@ fn core_team_role_tab_id_rules_are_checked_before_any_write() {
     let error = start_team(&setup, team).unwrap_err().to_string();
     assert!(error.contains("needs space_id"));
     assert!(!setup.team_dir().exists());
+    assert_eq!(setup.layout_reads.get(), 0);
 }
 
 #[test]
@@ -480,6 +486,7 @@ fn core_team_new_role_tabs_are_forwarded_without_precreation() {
     start_team(&setup, team).unwrap();
     assert_eq!(setup.layout_reads.get(), 1);
     for role in ["lead", "worker"] {
+        assert!(setup.record(role).project.is_none());
         assert_eq!(
             tab_labels(&setup, role),
             (json!("sp-existing"), json!(format!("tb-new-{role}")))
@@ -523,4 +530,20 @@ fn core_team_without_role_tab_id_checks_explicit_space_before_start() {
     let setup = Setup::new();
     start_team(&setup, setup.team()).unwrap();
     assert_eq!(setup.layout_reads.get(), 1);
+}
+
+#[test]
+fn core_team_project_placement_without_role_tabs_skips_preflight_layout_read() {
+    let setup = Setup::new();
+    let target = setup.dir.path().join("app-target.toml");
+    let mut app: crewmoor::app::Binding =
+        toml::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+    app.space_id = None;
+    app.tab_id = None;
+    fs::write(target, toml::to_string(&app).unwrap()).unwrap();
+    start_team(&setup, setup.team()).unwrap();
+    assert_eq!(setup.layout_reads.get(), 0);
+    assert!(setup.record("lead").project.is_some());
+    assert!(setup.record("worker").project.is_some());
+    setup.stop().unwrap();
 }
