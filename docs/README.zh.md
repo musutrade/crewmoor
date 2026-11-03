@@ -9,12 +9,12 @@
 ```mermaid
 flowchart TD
     You["你\n需求 / 决策"]
-    D["调度 Agent"]
+    D["团队创建的 dispatcher"]
     W["开发 / 评审 / 发布 Agent"]
-    You -->|"issue assign"| D
-    D -->|"team bind\nmessage send"| W
-    W -->|"feedback hook"| D
-    D -->|"issue done → next"| You
+    You -->|"直接在 dispatcher pane 输入"| D
+    D -->|"message send"| W
+    W -->|"message send / Hook 通知"| D
+    D -->|"进展 / 决策"| You
 ```
 
 ## 容器兼容性
@@ -26,6 +26,11 @@ flowchart TD
 | Orca | 计划中 |
 
 一个团队运行在一个容器实例中，不同团队可使用不同容器。
+
+用户直接面对 `team start` 创建的 dispatcher，在它的 pane 中下达需求和决策。
+dispatcher 使用固定 worker binding 派工并接收回报，只设这一层调度。
+启动方交出返回的团队目录和 dispatcher 位置后，由 dispatcher 继续协调；
+不把用户既有会话收养进团队。
 
 ## 子命令
 
@@ -55,39 +60,48 @@ crewmoor feedback hooks plan claude install REGISTRY BINARY PLAN_DIR
 crewmoor feedback hooks apply PLAN_DIR
 ```
 
-安装后，Agent 的 Stop / SessionEnd 等事件会自动记录并转交调度。
+对团队使用的每种 Agent（`claude` / `codex`）分别安装，保留其他处理器并完成原生
+Hook 审阅。仅收集已注册的任务实例；`team bind` 后，worker 的 Stop / SessionEnd
+才会自动转发给 dispatcher。详见 [Hook 安装](agent-feedback.md) 和版本化的
+[crewmoor-team-flow 技能](../skills/crewmoor-team-flow/SKILL.md)。
 
 ### 3. 启动团队
 
 **Herdr TUI**（`runtime = "tui"`，配置含 `host`）：
 
 ```bash
-crewmoor team start team.toml ~/.local/state/crewmoor
-crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
-crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
+crewmoor team start /absolute/team.toml /absolute/state
+# 使用返回的 team_dir；sample-team/worker 对应 examples/team-tui.toml。
+crewmoor team bind /absolute/state/teams/sample-team worker
 ```
 
 **Herdr App / herdr-core**（`runtime = "core"`，配置含 `app_target`）：
 
 ```bash
-crewmoor team start team-core.toml ~/.local/state/crewmoor
-crewmoor team bind  ~/.local/state/crewmoor/teams/myteam developer
-crewmoor team stop  ~/.local/state/crewmoor/teams/myteam
+crewmoor team start /absolute/team-core.toml /absolute/state
+crewmoor team bind /absolute/state/teams/sample-core-team worker
 ```
 
 配置模板见 [`examples/team-core.toml`](../examples/team-core.toml)。
+
+从启动结果的 `roles[]` 中找到配置 `dispatcher` 指定的角色，打开它返回的 `handle`
+（TUI pane 或 core terminal），直接用自然语言输入任务。用户不需要另注册角色或
+建立自发自收 binding。启动方把 `team_dir`、CLI 路径和 worker binding 路径交给
+dispatcher。两端原生 SessionStart 建立 session 后，逐一绑定 worker；缺少 session
+或 binding 时只报告一次，不轮询、重复启动或收养会话。启动请求 `accepted` 不代表
+Agent ready 或业务完成。完整链路见 [团队启动与交接](team-launch.md)。
 
 ### 4. 分配和跟踪需求
 
 ```bash
 # 把 Issue #42 分配给调度实例
-crewmoor issue assign ~/.local/state/crewmoor/registry musutrade/crewmoor 42 <instance>
+crewmoor issue assign ~/.local/state/crewmoor/feedback musutrade/crewmoor 42 <instance>
 
 # 查看当前分配
-crewmoor issue current ~/.local/state/crewmoor/registry <instance>
+crewmoor issue current ~/.local/state/crewmoor/feedback <instance>
 
 # 查询 Issue 是否已关闭
-crewmoor issue done ~/.local/state/crewmoor/registry <instance>
+crewmoor issue done ~/.local/state/crewmoor/feedback <instance>
 
 # 取下一项可开发 Issue（默认 label=ready）
 crewmoor issue next musutrade/crewmoor
@@ -97,17 +111,28 @@ crewmoor issue next musutrade/crewmoor --label sprint
 ### 5. 发送消息
 
 ```bash
-# 先 bind（生成 binding 文件）
-crewmoor message bind msg-config.json roles/developer/binding.json
-
-# 再 send
-crewmoor message send roles/developer/binding.json message.json
+# 复用 team bind 生成的固定 binding，不重复绑定。
+crewmoor message send /absolute/state/teams/sample-team/roles/worker/binding.json /absolute/request.json
 ```
+
+dispatcher 创建平铺请求，例如
+`{"id":"request-001","from":"lead","to":"worker","reply_to":null,"content":"实现已分配需求并主动回报结果。"}`。
+worker 用同一 binding 主动回复：新 `id`、交换 `from` / `to`，
+`reply_to: "request-001"`。`reply_to` 指原请求消息 ID，不是角色名。
+`transport: accepted` 仅代表提交受理；主动回复才证明实际收件和业务进展。
+团队成员不把底层 `herdr agent prompt` / `hc send` 当作另一条业务通信通道。
+详见 [消息语义](messages.md)。
 
 ### 6. 查看反馈记录
 
 ```bash
 crewmoor feedback show ~/.local/state/crewmoor/feedback <instance>
+```
+
+业务结束后，仅清理团队记录的自有资源：
+
+```bash
+crewmoor team stop /absolute/state/teams/sample-team
 ```
 
 ## Herdr App / herdr-core
@@ -128,11 +153,12 @@ CrewMoor 读取该文件、核对运行中的 core 身份，并通过已有 sock
 
 ## 会话完整性
 
-CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 Hook，不由进程状态推断）。session 发生变化时——Agent 重启、重新登录或上下文重置——团队立即停止并写入可见的拒绝记录，不会静默继续。
+CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 Hook，不由进程状态推断）。不同原生 session 会留下可见的 `session-rejected` 事实；后续涉及该 dispatcher 或 worker 的普通发送均拒绝，保留原 binding 和关联。立即停止向该角色派工并报告用户，不自动 rebind、重启或恢复。worker 每条被拒的 Hook 事件都可能向未变更的 dispatcher 转发一条 halt 通知；多条拒收事件可产生多条通知，传输层不去重，由 dispatcher 向用户报告一次 halt；dispatcher 自己的事件保留在本地，因为用户已经直接面对它，不另设上游 Agent。两端事实均可用 `feedback show` 查看；轮次结束不等于业务完成。
 
 ## 无后台进程
 
-没有常驻进程，也没有状态机。条件交付完全在 Hook 回调内完成（2 秒窗口）。交付失败会写入 unconfirmed 记录，下次 Stop 自动重试。调用未能启动时不写标记，下次直接重试。
+没有常驻进程，也没有状态机。条件交付在有时间界限的 Hook 回调内执行；
+提交前即被拒绝的交付可在后续 Stop 再考虑，已受理或结果不明的提交留有标记，不重复发送。
 
 ## 条件交付
 

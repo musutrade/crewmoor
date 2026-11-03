@@ -13,6 +13,7 @@ evidence = "native"
 dispatcher = "lead"
 
 [[roles]]
+# The user enters tasks directly in this returned terminal; no outer Agent is needed.
 role = "lead"
 cwd = "/absolute/project"
 agent = "claude"

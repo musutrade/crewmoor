@@ -36,4 +36,4 @@ hooks 状态接入见 [Issue #4](https://github.com/musutrade/crewmoor/issues/4)
 
 全部实现及测试驱动使用 Rust 最新稳定版，不做旧版兼容。沿用 CRAP ≤ 10、非测试代码禁止 `unwrap()`、零 Clippy 豁免的质量门禁。并行验证使用各自独立的 `CARGO_TARGET_DIR`，不清理共享构建目录。
 
-各角色通过 herdr-team-flow 主动交接与回报，不互相轮询。GitHub 操作显式指定 `musutrade/crewmoor`，避免因当前目录误操作其他仓库。用户最新范围决定优先，公约不扩大安装、真实测试或发布授权。
+用户直接在 `team start` 创建并记录的 dispatcher pane 下达任务，只设一层调度，不收养已有会话。各角色通过 [crewmoor-team-flow](skills/crewmoor-team-flow/SKILL.md) 的 `crewmoor message send` 主动交接与回报，不互相轮询，不另用容器原生 prompt/send 传递业务消息。`reply_to` 指原请求消息 ID，不是角色名。GitHub 操作显式指定 `musutrade/crewmoor`，避免因当前目录误操作其他仓库。用户最新范围决定优先，公约不扩大安装、真实测试或发布授权。

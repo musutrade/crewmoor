@@ -16,19 +16,24 @@ returns `type: agent_prompted`. These are location and transport facts.
 Checked against the [official stable LLM index](https://herdr.dev/llms.txt),
 [v0.9.5 Agent automation](https://raw.githubusercontent.com/herdrdev/herdr/v0.9.5/docs/next/website/src/content/docs/agent-automation.mdx),
 installed `herdr --skill`, `herdr agent prompt --help`, `herdr api schema --json`
-and actual `agent get`/`agent prompt` returns. On this machine the CLI is 0.9.5
-and the running server is 0.9.4; the server was retained. The schema describes the
-CLI build, while the observed server returns establish the actual supported
-identity and prompt fields. No newer schema-only field is required.
+and actual `agent get`/`agent prompt` returns. That historical Issue #9 check used
+CLI 0.9.5 and server 0.9.4, retaining that server. It is not a statement of the
+current host version: team configuration must pin the actual installed host
+(CLI/server 0.9.5 in the 2026-11-03 #40 batch). The schema describes the CLI build;
+observed server responses establish supported identity and prompt fields.
 
-## Bind the existing pair once
+## Team-owned pairs
 
-Reuse each role's existing [feedback context](agent-feedback.md). When an
-existing session has no feedback marker, `crewmoor feedback register REGISTRY
-CONFIG` may create an explicit context with its **already verified**
-`native_session_id`, team, role and Agent kind. This creates no Agent and does
-not manufacture a SessionStart, hooks state or business report. No Hook
-installation, trust change, session restart or environment edit is needed.
+For a team, use [team start and team bind](team-launch.md): the user works
+directly in the returned dispatcher pane, and each worker has one fixed pair
+binding. Reuse that binding for requests and replies; do not bind it again.
+Do not register or adopt an unrelated existing session to supply an outer
+dispatcher. The native prompt/send operations below describe the implementation,
+not an additional business channel for team members.
+
+The lower-level `message bind` API remains available for already owned, recorded
+pairs with [feedback contexts](agent-feedback.md). It does not create or adopt
+Agents. For that API, use actual returned identities and verified task ownership:
 
 Put this configuration in a private local JSON file, with actual absolute paths,
 feedback instance UUIDs and exact returned pane handles:
