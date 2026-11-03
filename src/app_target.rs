@@ -18,10 +18,16 @@ pub fn cli(args: &[String]) -> Result<()> {
 fn generate(args: &[String]) -> Result<()> {
     let opts = Opts::parse(args)?;
     let socket = opts.socket()?;
-    let status = app::exchange(&socket, "server.status", serde_json::json!({}))?;
-    let doc = app::exchange(&socket, "doc.get", serde_json::json!({"name":"herdr-app"}))?;
+    let (status, doc) = discover(&socket)?;
     let toml = render(&socket, &status, &doc)?;
     write_output(&opts.output, &toml)
+}
+
+/// Existing-socket discovery shared with team generation; neither query starts a service.
+pub(crate) fn discover(socket: &Path) -> Result<(Value, Value)> {
+    let status = app::exchange(socket, "server.status", serde_json::json!({}))?;
+    let doc = app::exchange(socket, "doc.get", serde_json::json!({"name":"herdr-app"}))?;
+    Ok((status, doc))
 }
 
 fn render(socket: &Path, status: &Value, doc: &Value) -> Result<String> {
@@ -76,7 +82,7 @@ fn append_spaces(out: &mut String, machine: &str, doc: &Value) {
     }
 }
 
-fn write_output(output: &Option<PathBuf>, content: &str) -> Result<()> {
+pub(crate) fn write_output(output: &Option<PathBuf>, content: &str) -> Result<()> {
     match output {
         Some(path) => {
             let mut f = std::fs::OpenOptions::new()

@@ -36,7 +36,7 @@ dispatcher 使用固定 worker binding 派工并接收回报，只设这一层�
 
 | 子命令 | 职责 |
 |---|---|
-| `crewmoor team` | 启动团队、绑定 worker，跟踪会话 |
+| `crewmoor team` | 发现配置事实、启动团队、绑定 worker，跟踪会话 |
 | `crewmoor message` | 在调度与 worker 之间传递消息 |
 | `crewmoor feedback` | 记录 Hook 事件，转交调度 |
 | `crewmoor issue` | 分配 GitHub Issue，查询完成状态，取下一项 |
@@ -70,6 +70,7 @@ Hook 审阅。仅收集已注册的任务实例；`team bind` 后，worker 的 S
 **Herdr TUI**（`runtime = "tui"`，配置含 `host`）：
 
 ```bash
+crewmoor team generate /absolute/team-template.toml --output /absolute/team.toml
 crewmoor team start /absolute/team.toml /absolute/state
 # 使用返回的 team_dir；sample-team/worker 对应 examples/team-tui.toml。
 crewmoor team bind /absolute/state/teams/sample-team worker
@@ -78,11 +79,20 @@ crewmoor team bind /absolute/state/teams/sample-team worker
 **Herdr App / herdr-core**（`runtime = "core"`，配置含 `app_target`）：
 
 ```bash
+crewmoor team generate /absolute/core-template.toml --output /absolute/team-core.toml
 crewmoor team start /absolute/team-core.toml /absolute/state
 crewmoor team bind /absolute/state/teams/sample-core-team worker
 ```
 
 配置模板见 [`examples/team-core.toml`](../examples/team-core.toml)。
+
+生成器读取实际可执行路径、版本及服务端事实，保留模板中的任务、角色、cwd、参数和
+prompt。生成模板见 [TUI](../examples/team-generate-tui.toml) 和
+[core](../examples/team-generate-core.toml)。TUI 必须明确选择已有 server socket；
+core 必须引用已有 app-target，不创建隐藏 sidecar。不传 `--output` 时 stdout 仅为
+可审阅 TOML，指定输出必须是新文件；生成过程不启动 Agent 或服务。TUI 客户端与
+服务端版本分别记录；当前 core 启动/绑定合同不支持版本不一致，生成时明确拒绝。
+详见 [生成字段和校验语义](team-launch.md#generate-factual-fields-from-the-existing-environment)。
 
 从启动结果的 `roles[]` 中找到配置 `dispatcher` 指定的角色，打开它返回的 `handle`
 （TUI pane 或 core terminal），直接用自然语言输入任务。用户不需要另注册角色或

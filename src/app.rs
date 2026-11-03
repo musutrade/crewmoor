@@ -189,6 +189,10 @@ pub fn check_host(r: &Record, status: &Value) -> Result<()> {
         return Err("App core changed".into());
     }
     let server = r.server.as_ref().ok_or("missing external server")?;
+    check_host_processes(server, status)
+}
+/// Reuse the launch host guard for read-only generation before emitting a configuration.
+pub(crate) fn check_host_processes(server: &process::Identity, status: &Value) -> Result<()> {
     clean_process(server)?;
     for holder in crate::holders::read(status)? {
         clean_process(&holder.process)?;

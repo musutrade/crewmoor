@@ -37,7 +37,7 @@ Existing sessions are not imported into this workflow.
 
 | Command | Responsibility |
 |---|---|
-| `crewmoor team` | Start a team, bind workers, track sessions |
+| `crewmoor team` | Generate factual config, start a team, bind workers, track sessions |
 | `crewmoor message` | Send messages between dispatcher and workers |
 | `crewmoor feedback` | Record Hook events and forward to dispatcher |
 | `crewmoor issue` | Assign a GitHub Issue, check completion, fetch next |
@@ -73,6 +73,7 @@ See [Hook installation](docs/agent-feedback.md) and the versioned
 **Herdr TUI** (`runtime = "tui"`, team config includes `host`):
 
 ```bash
+crewmoor team generate /absolute/team-template.toml --output /absolute/team.toml
 crewmoor team start /absolute/team.toml /absolute/state
 # Use the returned team_dir; sample-team/worker are from examples/team-tui.toml.
 crewmoor team bind /absolute/state/teams/sample-team worker
@@ -81,11 +82,20 @@ crewmoor team bind /absolute/state/teams/sample-team worker
 **Herdr App / herdr-core** (`runtime = "core"`, team config includes `app_target`):
 
 ```bash
+crewmoor team generate /absolute/core-template.toml --output /absolute/team-core.toml
 crewmoor team start /absolute/team-core.toml /absolute/state
 crewmoor team bind /absolute/state/teams/sample-core-team worker
 ```
 
 See [`examples/team-core.toml`](examples/team-core.toml) for a core-mode team config template.
+
+Generation reads current executable/version/server facts and preserves task and
+role choices from your template. Start with the [TUI](examples/team-generate-tui.toml)
+or [core](examples/team-generate-core.toml) generation template. TUI requires an
+explicit existing server socket; core requires an existing app-target profile.
+Stdout is TOML when `--output` is omitted; a named output must be new. Generation
+starts no Agent or service. Core client/server version mismatches are rejected by
+the present launch contract; TUI client/server versions remain separate.
 
 Read `roles[]` in the start result: select the role named by the configuration's
 `dispatcher`, and open its returned `handle` (TUI pane or core terminal). Enter
