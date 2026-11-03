@@ -156,10 +156,17 @@ socket    = "/run/user/1000/herdr-core/default.sock"
 core_id   = "<hc server status 中的 id>"
 machine   = "<机器名>"
 space_id  = "<Herdr App 中的 space id>"   # 可选；省略则使用 project placement
-tab_id    = "<Herdr App 中的 tab id>"     # 与 space_id 同时省略或同时填写
+tab_id    = "<已有或新的 tab id>"         # 与 space_id 同时省略或同时填写
 ```
 
 CrewMoor 读取该文件、核对运行中的 core 身份，并通过已有 socket 完成所有终端发送，不启动也不停止 core 进程。
+
+显式选择的 space 仍须已存在。`app-target.toml` 的 `tab_id` 和角色级 `tab_id`
+都可使用新 ID，由已连接的 App 按原生标签自动收养并创建未命名 tab，无需预建。
+ID 格式及配置中的精确 `<machine>/` 前缀仍受校验；合法但写错的 ID 会多出一个 tab。
+自有终端结束后，App 移除空的新 tab；CrewMoor 不写布局或删除用户的 tab/space。
+同时省略 space/tab 的 project placement 行为保持原有规则；角色级 tab 仍只适用于
+显式 space 的 core 团队。示例见 [team-core.toml](../examples/team-core.toml)。
 
 ## 会话完整性
 

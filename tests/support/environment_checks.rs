@@ -117,3 +117,77 @@ fn read_only_receipt_probe_reports_only_whitelisted_marker_names() {
         }
     }
 }
+#[test]
+fn app_direct_exec_strips_inherited_metadata_preserves_native_scope_and_execs_exact_agent_argv() {
+    use crewmoor::{app, config::AgentKind, feedback::INSTANCE_ENV, native::strings};
+    for agent in [AgentKind::Claude, AgentKind::Codex] {
+        for instance in [None, Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] {
+            let (dir, mut config, _) = common::setup(Runtime::Core);
+            config.agent = agent.clone();
+            config.app = Some(super::app_checks::binding(dir.path()));
+            config.feedback_instance = instance.map(Into::into);
+            config.agent_args = strings(&["--model", "two words ' ; $(not-a-shell)\n保留"]);
+            let record = Record::prepare(config, &dir.path().join("app-env")).unwrap();
+            let (_, params) = app::request(&record, &strings(&["run"])).unwrap();
+            let argv: Vec<String> = serde_json::from_value(params["argv"].clone()).unwrap();
+            let mut cmd = Command::new(&argv[0]);
+            cmd.args(&argv[1..]);
+            for key in app::CHILD_MARKERS {
+                cmd.env(key, "synthetic-inherited-marker");
+            }
+            let preserved: Vec<_> = PRESERVED
+                .iter()
+                .copied()
+                .chain([
+                    "HC_SESSION",
+                    "HC_SOCKET",
+                    "HC_TERMINAL_ID",
+                    "HC_TERMINAL_SOCKET",
+                    "HC_SCOPE",
+                    "HC_RUNTIME",
+                    "TERM",
+                    "TERM_PROGRAM",
+                    "COLORTERM",
+                ])
+                .collect();
+            for key in &preserved {
+                cmd.env(key, "crewmoor-environment-fixture");
+            }
+            for (key, value) in params["env"].as_object().unwrap() {
+                cmd.env(key, value.as_str().unwrap());
+            }
+            if let Some(instance) = instance {
+                cmd.env("CREWMOOR_EXPECTED_INSTANCE", instance);
+            } else {
+                cmd.env_remove("CREWMOOR_EXPECTED_INSTANCE");
+            }
+            let removed: Vec<_> = app::CHILD_MARKERS
+                .iter()
+                .copied()
+                .filter(|key| *key != INSTANCE_ENV || instance.is_none())
+                .collect();
+            cmd.env("CREWMOOR_APP_ENV_PROBE", "1")
+                .env("CREWMOOR_PROBE_REMOVED", removed.join(","))
+                .env("CREWMOOR_PROBE_PRESERVED", preserved.join(","))
+                .current_dir(dir.path())
+                .stdout(std::process::Stdio::piped());
+            let child = cmd.spawn().unwrap();
+            let pid = child.id();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success());
+            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["removed"], true);
+            assert_eq!(report["preserved"], true);
+            assert_eq!(report["feedback"], true);
+            assert_eq!(report["argv"], serde_json::json!(record.config.argv()));
+            assert_eq!(
+                report["executable"],
+                serde_json::json!(record.config.agent_executable.canonicalize().unwrap())
+            );
+            assert_eq!(
+                report["pid"], pid,
+                "env must exec the Agent in the same child"
+            );
+        }
+    }
+}

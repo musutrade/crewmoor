@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
+    os::unix::fs::PermissionsExt,
     os::unix::net::UnixStream,
     path::PathBuf,
     time::Duration,
@@ -28,6 +29,7 @@ impl Binding {
         component(&self.core_id)?;
         component(&self.machine)?;
         crate::config::absolute(&self.socket)?;
+        check_env_program()?;
         self.validate_ids()?;
         Ok(())
     }
@@ -116,7 +118,7 @@ fn run_params(r: &Record) -> Result<Value> {
         env[crate::feedback::INSTANCE_ENV] = json!(instance);
     }
     Ok(
-        json!({"argv":r.config.argv(),"cwd":r.config.cwd,"name":r.config.role,
+        json!({"argv":child_argv(&r.config),"cwd":r.config.cwd,"name":r.config.role,
         "keep":true,"no_parent":true,"no_notify":true,"wait":false,"env":env,
         "labels":labels}),
     )
@@ -163,8 +165,17 @@ pub fn decode(reply: Value) -> Result<Value> {
         .ok_or("missing core RPC result")?
         .clone())
 }
-// Only these metadata keys are inspected; values and other environment are never reported.
-pub const HOST_MARKERS: &[&str] = &[
+/// Strip inherited launcher context in the new child, never alter the existing core.
+/// Native core terminal/session routing, authentication, tools and proxies are retained.
+pub const CHILD_MARKERS: &[&str] = &[
+    "HERDR_SOCKET_PATH",
+    "HERDR_SESSION",
+    "HERDR_CONFIG_PATH",
+    "HERDR_PANE_ID",
+    "HERDR_TAB_ID",
+    "HERDR_WORKSPACE_ID",
+    "HERDR_ENV",
+    crate::feedback::INSTANCE_ENV,
     "CODEX_THREAD_ID",
     "CODEX_SESSION_ID",
     "CODEX_TOOL_CALL_ID",
@@ -181,6 +192,31 @@ pub const HOST_MARKERS: &[&str] = &[
     "CLICOLOR_FORCE",
     "FORCE_COLOR",
 ];
+pub const ENV_PROGRAM: &str = "/usr/bin/env";
+fn check_env_program() -> Result<()> {
+    let meta = std::fs::metadata(ENV_PROGRAM)?;
+    if !meta.is_file() || meta.permissions().mode() & 0o111 == 0 {
+        return Err("App child environment executable unavailable".into());
+    }
+    Ok(())
+}
+/// core 0.1.17 env is a string overlay, so remove keys with env's direct exec argv.
+pub fn child_argv(config: &crate::config::Config) -> Vec<String> {
+    let mut argv = child_prefix(config.feedback_instance.is_some());
+    argv.extend(config.argv());
+    argv
+}
+/// Only this fixed prefix is recognized when binding the resulting core terminal.
+pub fn child_prefix(feedback: bool) -> Vec<String> {
+    let mut argv = vec![ENV_PROGRAM.into()];
+    for key in CHILD_MARKERS {
+        if *key != crate::feedback::INSTANCE_ENV || !feedback {
+            argv.extend(["-u".into(), (*key).into()]);
+        }
+    }
+    argv.push("--".into());
+    argv
+}
 pub fn check_host(r: &Record, status: &Value) -> Result<()> {
     let Some(app) = &r.config.app else {
         return Ok(());
@@ -193,11 +229,11 @@ pub fn check_host(r: &Record, status: &Value) -> Result<()> {
 }
 /// Reuse the launch host guard for read-only generation before emitting a configuration.
 pub(crate) fn check_host_processes(server: &process::Identity, status: &Value) -> Result<()> {
-    clean_process(server)?;
+    process::same(server)?;
     for holder in crate::holders::read(status)? {
-        clean_process(&holder.process)?;
+        process::same(&holder.process)?;
     }
-    Ok(())
+    process::same(server)
 }
 pub fn check_layout(r: &mut Record, runner: &impl crate::native::Runner) -> Result<()> {
     let Some(app) = r.config.app.clone() else {
@@ -209,8 +245,9 @@ pub fn check_layout(r: &mut Record, runner: &impl crate::native::Runner) -> Resu
     }
     existing_layout(&app, &doc)
 }
+/// Explicit placement requires an existing space; App adoption may create its tab.
 pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
-    let (space_id, tab_id) = app.local_ids()?;
+    let (space_id, _) = app.local_ids()?;
     let spaces = doc["value"]["spaces"]
         .as_array()
         .ok_or("App layout unavailable; request withheld")?;
@@ -218,23 +255,9 @@ pub fn existing_layout(app: &Binding, doc: &Value) -> Result<()> {
         .iter()
         .find(|s| s["id"].as_str() == Some(space_id))
         .ok_or("configured App space does not exist; request withheld")?;
-    let tabs = space["tabs"].as_array().ok_or("App tabs unavailable")?;
-    if !tabs.iter().any(|t| t["id"].as_str() == Some(tab_id)) {
-        return Err("configured App tab does not exist in this space; request withheld".into());
+    // App's SharedSpace defaults omitted tabs to an empty list.
+    if let Some(tabs) = space.get("tabs") {
+        tabs.as_array().ok_or("App tabs unavailable")?;
     }
     Ok(())
-}
-pub fn clean_process(identity: &process::Identity) -> Result<()> {
-    process::same(identity)?;
-    let bytes = std::fs::read(format!("/proc/{}/environ", identity.pid))?;
-    if contaminated(&bytes) {
-        return Err("App host has developer metadata; terminal request withheld".into());
-    }
-    process::same(identity)
-}
-pub fn contaminated(bytes: &[u8]) -> bool {
-    bytes.split(|b| *b == 0).any(|entry| {
-        let key = entry.split(|b| *b == b'=').next().unwrap_or_default();
-        HOST_MARKERS.iter().any(|marker| key == marker.as_bytes())
-    })
 }

@@ -216,15 +216,9 @@ Rules:
 
 - Only `runtime = "core"` teams accept a per-role `tab_id`.
 - `app-target.toml` must set both `space_id` and `tab_id`; per-role tabs live in that space. Project placement (both omitted) does not support per-role tabs.
-- The tab must already exist in the App layout, the same check the team-level `tab_id` gets. A `<machine>/` prefix is accepted and stripped, as for `app-target.toml`.
+- The selected explicit space must already exist. Both a role's `tab_id` and the target file's `tab_id` may be existing or new. An exact configured `<machine>/` prefix is accepted and stripped; other prefixes and invalid IDs are rejected.
 
-CrewMoor does not create tabs. Create them in Herdr App first, either from the App interface (the `+` in the tab bar) or with the App's official command, which prints the new tab id:
-
-```bash
-herdr-app do tab.new --name lead --space <space_id>
-```
-
-`herdr tab create` is a Herdr TUI command and does not create Herdr App tabs.
+CrewMoor passes these IDs as native adoption labels. The connected App creates a new unnamed tab when needed; no tab precreation is required. A mistyped but valid tab ID creates an extra tab. After owned terminals end, the App removes empty new tabs. CrewMoor does not write the App layout or delete user tabs/spaces. With both target IDs omitted, project placement keeps its existing behavior.
 
 ## Session integrity
 

@@ -47,41 +47,18 @@ pub fn command(record: &Record) -> Command {
     cmd
 }
 fn sanitize(cmd: &mut Command) {
-    for name in [
-        "HERDR_SOCKET_PATH",
-        "HERDR_SESSION",
-        "HERDR_CONFIG_PATH",
-        "HERDR_PANE_ID",
-        "HERDR_TAB_ID",
-        "HERDR_WORKSPACE_ID",
+    for name in crate::app::CHILD_MARKERS.iter().copied().chain([
         "HC_SOCKET",
         "HC_SESSION",
         "HC_TERMINAL_ID",
         "HC_TERMINAL_SOCKET",
         "HC_SCOPE",
         "HC_RUNTIME",
-        "HERDR_ENV",
-        "CREWMOOR_FEEDBACK_INSTANCE",
-        "CODEX_THREAD_ID",
-        "CODEX_SESSION_ID",
-        "CODEX_TOOL_CALL_ID",
-        "CODEX_CI",
-        "CODEX_VERSION",
-        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
-        "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS",
-        "CODEX_SANDBOX",
-        "CODEX_SANDBOX_NETWORK_DISABLED",
-        "CI",
-        "CONTINUOUS_INTEGRATION",
-        "NO_COLOR",
-        "CLICOLOR",
-        "CLICOLOR_FORCE",
-        "FORCE_COLOR",
         "TERM",
         "TERM_PROGRAM",
         "TERM_PROGRAM_VERSION",
         "COLORTERM",
-    ] {
+    ]) {
         cmd.env_remove(name);
     }
 }

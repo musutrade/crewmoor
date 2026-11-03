@@ -99,19 +99,22 @@ impl Team {
         app.validate(&self.runtime)?;
         Ok(Some(app))
     }
-    /// With per-role tabs, every role's effective tab (its own or the target's) must
-    /// exist in the App layout before the team directory is written or any role runs.
-    fn check_role_tabs(
+    /// Check every effective explicit placement before any write. Tabs may be new;
+    /// the selected space must exist. Project placement keeps native adoption.
+    fn check_placement(
         &self,
         layout: &mut impl FnMut(&crate::app::Binding) -> Result<Value>,
     ) -> Result<()> {
-        if self.roles.iter().all(|r| r.tab_id.is_none()) {
+        if self.runtime != Runtime::Core {
             return Ok(());
         }
         let target = self.app()?;
         let mut apps = Vec::new();
         for role in &self.roles {
             apps.push(self.role_app(role)?.unwrap_or_else(|| target.clone()));
+        }
+        if target.space_id.is_none() {
+            return Ok(());
         }
         let doc = layout(&target)?;
         for app in &apps {
@@ -207,7 +210,7 @@ fn new_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 /// Create `<state>/teams/<team>/` and start every role once, dispatcher first.
-/// `layout` reads the App layout document; it is called only for per-role tabs.
+/// `layout` reads the App document for explicit-space placement before any launch.
 pub fn start(
     team: Team,
     state: &Path,
@@ -215,7 +218,7 @@ pub fn start(
     launch: &mut impl FnMut(Config, &Path) -> Result<Record>,
 ) -> Result<Value> {
     team.validate()?;
-    team.check_role_tabs(layout)?;
+    team.check_placement(layout)?;
     let dir = create(&team, state)?;
     let mut roles = Vec::new();
     for role in team.ordered() {

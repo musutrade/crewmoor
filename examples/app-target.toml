@@ -6,3 +6,5 @@ core_id = "confirmed-core-id"
 machine = "vps"
 # Omit both space_id/tab_id for automatic project placement.
 # Or provide both to retain explicit existing-space placement.
+# space_id = "existing-space-id"
+# tab_id = "new-or-existing-tab-id" # App adopts new tabs; a valid typo creates an extra tab.

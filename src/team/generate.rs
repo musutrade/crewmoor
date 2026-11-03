@@ -103,7 +103,7 @@ fn render(team: Team, server_version: String, layout: Option<Value>) -> Result<S
     team.validate()?;
     validate_launches(&team)?;
     if let Some(layout) = layout {
-        team.check_role_tabs(&mut |_| Ok(layout.clone()))?;
+        team.check_placement(&mut |_| Ok(layout.clone()))?;
     }
     let serialized = toml::to_string(&team)?;
     Ok(format!(

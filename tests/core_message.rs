@@ -130,6 +130,52 @@ fn core_binding_needs_local_address_session_association_and_real_executable() {
     assert!(fixture.sends().is_empty());
 }
 #[test]
+fn core_binding_accepts_only_the_fixed_child_environment_prefix_and_pins_its_full_argv() {
+    let fixture = Fixture::new();
+    for handle in ["t0", "t1"] {
+        let mut argv = crewmoor::app::child_prefix(true);
+        argv.extend([
+            env!("CARGO_BIN_EXE_transport-fixture").to_owned(),
+            "hold".into(),
+        ]);
+        fixture.state.lock().unwrap()[handle]["argv"] = json!(argv);
+    }
+    let binding = fixture.bind();
+    message::send(&binding, &request(), &Native).unwrap();
+    assert_eq!(fixture.sends().len(), 1);
+    fixture.state.lock().unwrap()["t1"]["argv"][1] = json!("--ignore-environment");
+    assert!(message::send(&binding, &request(), &Native).is_err());
+    assert_eq!(fixture.sends().len(), 1);
+
+    for change in ["unset", "program", "assignment", "feedback"] {
+        let fixture = Fixture::new();
+        let mut argv = crewmoor::app::child_prefix(true);
+        match change {
+            "unset" => {
+                argv.remove(1);
+            }
+            "program" => {
+                argv[0] = "/bin/true".into();
+            }
+            "assignment" => {
+                argv.push("CODEX_THREAD_ID=wrong".into());
+            }
+            _ => {
+                argv = crewmoor::app::child_prefix(false);
+            }
+        }
+        argv.extend([
+            env!("CARGO_BIN_EXE_transport-fixture").to_owned(),
+            "hold".into(),
+        ]);
+        fixture.state.lock().unwrap()["t1"]["argv"] = json!(argv);
+        let config =
+            serde_json::from_value(serde_json::to_value(&fixture.config).unwrap()).unwrap();
+        assert!(Binding::bind(config, &Native).is_err(), "{change}");
+        assert!(fixture.sends().is_empty());
+    }
+}
+#[test]
 fn endpoint_never_starts_services_routes_remotely_or_forces_state() {
     let fixture = Fixture::new();
     for args in [

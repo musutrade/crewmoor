@@ -4,6 +4,9 @@ use serde_json::{Value, json};
 use std::process::Command;
 
 pub fn dispatch(args: &[String]) -> Option<Result<()>> {
+    if std::env::var_os("CREWMOOR_APP_ENV_PROBE").is_some() {
+        return Some(app_child(args));
+    }
     if args.iter().any(|arg| arg == "environment-parent") {
         return Some(parent(args.last()));
     }
@@ -11,6 +14,19 @@ pub fn dispatch(args: &[String]) -> Option<Result<()>> {
         return Some(node(args));
     }
     None
+}
+fn app_child(args: &[String]) -> Result<()> {
+    let removed = std::env::var("CREWMOOR_PROBE_REMOVED")?
+        .split(',')
+        .all(|key| std::env::var_os(key).is_none());
+    let feedback = std::env::var("CREWMOOR_EXPECTED_INSTANCE").ok()
+        == std::env::var(crewmoor::feedback::INSTANCE_ENV).ok();
+    let preserved = preserved()?;
+    let executable = std::fs::read_link("/proc/self/exe")?;
+    let report = json!({"removed":removed,"preserved":preserved,"feedback":feedback,
+        "argv":args,"executable":executable,"pid":std::process::id()});
+    println!("{report}");
+    Ok(())
 }
 fn load(root: Option<&String>) -> Result<Record> {
     Record::load(root.ok_or("missing probe state")?.as_ref())

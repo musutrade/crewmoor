@@ -67,7 +67,12 @@ fn capture_process(context: &Context, peer: &Peer, value: &Value) -> Result<Iden
     Ok(identity)
 }
 fn check_argv(identity: &Identity, executable: &std::path::Path) -> Result<()> {
-    let first = identity.argv.first().ok_or("missing Agent launch argv")?;
+    let prefix = crate::app::child_prefix(true);
+    let argv = identity
+        .argv
+        .strip_prefix(prefix.as_slice())
+        .unwrap_or(&identity.argv);
+    let first = argv.first().ok_or("missing Agent launch argv")?;
     if std::path::Path::new(first).canonicalize()? != executable.canonicalize()? {
         return Err("core launch executable differs".into());
     }

@@ -84,8 +84,14 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         ]));
     }
     args.push("--".into());
-    args.extend(r.config.argv());
+    args.extend(launch_argv(r));
     Ok(args)
+}
+pub fn launch_argv(r: &Record) -> Vec<String> {
+    match r.config.app {
+        Some(_) => crate::app::child_argv(&r.config),
+        None => r.config.argv(),
+    }
 }
 pub fn target(r: &Record, runner: &impl Runner) -> Result<Value> {
     let handle = r.handle.as_deref().ok_or("missing returned terminal")?;
@@ -122,7 +128,7 @@ fn verify_identity(r: &Record, value: &Value) -> Result<()> {
     if value["labels"]["crewmoor-team"].as_str() != Some(&r.config.team) {
         return Err("terminal team changed".into());
     }
-    if value["argv"] != serde_json::to_value(r.config.argv())? {
+    if value["argv"] != serde_json::to_value(launch_argv(r))? {
         return Err("terminal launch argv changed".into());
     }
     if value["cwd"].as_str() != r.config.cwd.to_str() {
