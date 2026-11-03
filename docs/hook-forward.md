@@ -165,5 +165,5 @@ The following are **outside** this step:
   a failed forward prints one stderr line and adds one unconfirmed record.
 
 These are synthetic. Real acceptance is documented in
-[docs/issue-6-step3-real-acceptance.md](issue-6-step3-real-acceptance.md) once the live
+[Issue #6 step 3 real acceptance (archived)](issue-evidence-index.md#issue-6) once the live
 run completes.
