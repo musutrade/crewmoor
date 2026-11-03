@@ -96,6 +96,18 @@ pub fn load(registry: &Path, instance: &str) -> Result<Context> {
     }
     Ok(context)
 }
+/// An unassociated Agent is outside journal scope, before native input is parsed.
+pub(super) fn load_for_agent(
+    registry: &Path,
+    instance: &str,
+    agent: &AgentKind,
+) -> Result<Context> {
+    let context = load(registry, instance)?;
+    if context.registration.agent != *agent {
+        return Err("unassociated Agent kind".into());
+    }
+    Ok(context)
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BindingRef {

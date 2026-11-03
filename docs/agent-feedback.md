@@ -53,7 +53,7 @@ crewmoor feedback register /absolute/registry /absolute/registration.json
 
 This creates one private UUID instance and returns its context. Set only the routing metadata `CREWMOOR_FEEDBACK_INSTANCE=<returned-instance>` when starting that task's Agent through its native environment capability. This key selects a previously registered task, not another Hook config. Agent/model startup still requires its own authorization. Issue #2 launch receipts and current containers are not modified by registration.
 
-Without that marker, the global callback returns `{}` without reading stdin or opening session records. An invalid/unregistered marker or wrong Agent kind is rejected before stdin is read. Association uses the registered instance marker, Agent kind and immutable native `session_id`. If the context has no pre-known session, only its first main SessionStart, with canonical cwd equal to the registered launch cwd, can bind the native ID; no prompt/Stop or subagent SessionStart guesses it. Once a session is known, its events can arrive from a parent, child or other current directory, including a directory that no longer exists. Session comparison still happens under the journal lock, and another native session is never adopted. A pre-known session can also carry an explicit Agent/skill report even if no Hook arrived. This is local trusted task routing, not cryptographic attestation of the caller.
+Without that marker, the global callback returns `{}` without reading stdin or opening session records. An invalid/unregistered marker or wrong Agent kind is rejected before stdin is read and creates no journal record or session association. Direct ingest uses the same Agent/instance guard before parsing native input. Association uses the registered instance marker, Agent kind and immutable native `session_id`. If the context has no pre-known session, only its first main SessionStart, with canonical cwd equal to the registered launch cwd, can bind the native ID; no prompt/Stop or subagent SessionStart guesses it. Once a session is known, its events can arrive from a parent, child or other current directory, including a directory that no longer exists. Session comparison still happens under the journal lock, and another native session is never adopted. A pre-known session can also carry an explicit Agent/skill report even if no Hook arrived. This is local trusted task routing, not cryptographic attestation of the caller.
 
 Checked on 2026-11-03 against Claude Code 2.1.316's installed input schema and the [official common input fields](https://code.claude.com/docs/en/hooks#common-input-fields): `cwd` is the current directory when the hook runs, while `session_id` identifies the session. The [official Codex Hooks guide](https://learn.chatgpt.com/docs/hooks) and [0.166.0 native Stop input schema](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/hooks/schema/generated/stop.command.input.schema.json) likewise provide `session_id` and `cwd`. Neither cwd nor transcript path is used as a continuing session identity; transcripts are never opened.
 
@@ -72,10 +72,10 @@ associated session. `latest_business_report` now selects only `*-report` records
 
 ### Refused Hook input (Issue #39)
 
-For a registered instance, refused input writes a separate `source: hook-rejected`
+For a registered instance with matching Agent kind, refused input writes a separate `source: hook-rejected`
 fact visible in `events` and `latest_hook_rejection`. It contains only an allowlisted
 event name (or `unknown`), receipt time and a fixed `native.reason` category such as
-`initial-cwd-mismatch`, `session-unbound`, `agent-mismatch`, `invalid-input`,
+`initial-cwd-mismatch`, `session-unbound`, `invalid-input`,
 `invalid-session`, `invalid-metadata`, `subagent-enrollment`, `uncollected-event`,
 `association-unavailable`, `input-unreadable` or `input-too-large`. Its session is
 empty and its summary is null. Raw payloads, cwd/transcript paths, prompts and

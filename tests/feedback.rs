@@ -252,15 +252,20 @@ fn unknown_marker_does_not_read_stdin_and_known_context_failure_never_blocks_age
     let mismatched = hook::run("codex", dir.path(), &known, None);
     assert!(mismatched.status.success());
     assert!(String::from_utf8_lossy(&mismatched.stderr).contains("not recorded"));
+    assert!(
+        feedback::show(dir.path(), &context.instance).unwrap()["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     let output = hook::run("claude", dir.path(), &known, Some(b""));
     assert!(output.status.success());
     assert_eq!(output.stdout, b"{}\n");
     assert!(String::from_utf8_lossy(&output.stderr).contains("not recorded"));
     let view = feedback::show(dir.path(), &context.instance).unwrap();
     let events = view["events"].as_array().unwrap();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0]["native"]["reason"], "agent-mismatch");
-    assert_eq!(events[1]["native"]["reason"], "invalid-input");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["native"]["reason"], "invalid-input");
     assert!(view["latest_native_event"].is_null());
 }
 

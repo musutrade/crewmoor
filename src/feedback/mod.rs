@@ -77,11 +77,7 @@ pub(crate) fn associated(
     instance: &str,
 ) -> Result<crate::config::AgentKind> {
     let agent_kind: crate::config::AgentKind = serde_json::from_value(agent.into())?;
-    let context = model::load(registry, instance)?;
-    if context.registration.agent != agent_kind {
-        journal::refuse(registry, instance, "unknown", "agent-mismatch")?;
-        return Err("unassociated Agent kind".into());
-    }
+    model::load_for_agent(registry, instance, &agent_kind)?;
     Ok(agent_kind)
 }
 fn ingest_hook(agent: &str, registry: &Path, instance: &str, bytes: &[u8]) -> Result<Appended> {

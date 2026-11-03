@@ -64,7 +64,7 @@ pub fn hook(
     agent: &AgentKind,
     bytes: &[u8],
 ) -> Result<journal::Appended> {
-    let context = model::load(registry, instance)?;
+    let context = model::load_for_agent(registry, instance, agent)?;
     let input: Input = match serde_json::from_slice(bytes) {
         Ok(input) => input,
         Err(_) => return journal::refuse(registry, instance, "unknown", "invalid-input"),
@@ -97,9 +97,6 @@ fn checked_input(
     agent: &AgentKind,
     input: &Input,
 ) -> std::result::Result<(), &'static str> {
-    if context.registration.agent != *agent {
-        return Err("agent-mismatch");
-    }
     if !events(agent).contains(&input.hook_event_name.as_str()) {
         return Err("uncollected-event");
     }

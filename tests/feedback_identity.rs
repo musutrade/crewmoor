@@ -37,6 +37,122 @@ fn input(cwd: &Path, event: &str) -> Value {
         "prompt":"PRIVATE_PROMPT","transcript_path":"/PRIVATE_TRANSCRIPT"})
 }
 
+struct NoCalls;
+impl crewmoor::message::Transport for NoCalls {
+    fn call(&self, _: &crewmoor::message::Config, _: &[String]) -> crewmoor::Result<Value> {
+        panic!("unassociated input must never call the transport");
+    }
+}
+impl crewmoor::issue::Gh for NoCalls {
+    fn call(&self, _: &[String]) -> crewmoor::Result<Value> {
+        panic!("unassociated input must never query issues");
+    }
+}
+
+#[test]
+fn both_wrong_agent_directions_are_outside_journal_scope_for_cli_and_direct_ingest() {
+    for (registered, wrong) in [
+        (AgentKind::Claude, AgentKind::Codex),
+        (AgentKind::Codex, AgentKind::Claude),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let context = register(dir.path(), dir.path(), registered, None);
+        let instance_dir = dir.path().join("instances").join(&context.instance);
+        let valid = serde_json::to_vec(&input(dir.path(), "SessionStart")).unwrap();
+        for bytes in [valid.as_slice(), b"malformed PRIVATE input"] {
+            assert!(feedback::ingest(dir.path(), &context.instance, &wrong, bytes).is_err());
+            let outcome = feedback::process_hook_event(
+                wrong.name(),
+                dir.path(),
+                &context.instance,
+                bytes,
+                &NoCalls,
+                &NoCalls,
+            );
+            assert!(!outcome.recorded);
+            assert!(outcome.forward_error.is_none());
+            assert!(outcome.delivery_error.is_none());
+        }
+        // Keep stdin open: completing this subprocess proves preflight never reads it.
+        let result = hook::run(
+            wrong.name(),
+            dir.path(),
+            &[(feedback::INSTANCE_ENV, &context.instance)],
+            None,
+        );
+        assert!(result.status.success());
+        assert_eq!(result.stdout, b"{}\n");
+        assert!(!instance_dir.join("events.jsonl").exists());
+        assert!(!instance_dir.join("native-session.json").exists());
+        let before = feedback::show(dir.path(), &context.instance).unwrap();
+        assert!(before["events"].as_array().unwrap().is_empty());
+
+        // Once the actual Agent binds, the same foreign calls cannot append or change it.
+        send(dir.path(), &context, input(dir.path(), "SessionStart")).unwrap();
+        let journal = std::fs::read(instance_dir.join("events.jsonl")).unwrap();
+        let session = std::fs::read(instance_dir.join("native-session.json")).unwrap();
+        assert!(feedback::ingest(dir.path(), &context.instance, &wrong, &valid).is_err());
+        assert!(feedback::ingest(dir.path(), &context.instance, &wrong, b"{").is_err());
+        assert!(
+            hook::run(
+                wrong.name(),
+                dir.path(),
+                &[(feedback::INSTANCE_ENV, &context.instance)],
+                None
+            )
+            .status
+            .success()
+        );
+        assert_eq!(
+            std::fs::read(instance_dir.join("events.jsonl")).unwrap(),
+            journal
+        );
+        assert_eq!(
+            std::fs::read(instance_dir.join("native-session.json")).unwrap(),
+            session
+        );
+        feedback::require_unchanged(dir.path(), &context).unwrap();
+
+        // Matching-Agent malformed input remains a visible, sanitized refusal.
+        assert!(
+            feedback::ingest(
+                dir.path(),
+                &context.instance,
+                &context.registration.agent,
+                b"PRIVATE malformed"
+            )
+            .is_err()
+        );
+        let view = feedback::show(dir.path(), &context.instance).unwrap();
+        assert_eq!(
+            view["latest_hook_rejection"]["native"],
+            json!({"reason":"invalid-input"})
+        );
+        assert!(!view.to_string().contains("PRIVATE"));
+        assert_eq!(view["latest_native_event"]["event"], "SessionStart");
+        assert!(view["latest_session_rejection"].is_null());
+    }
+}
+
+#[test]
+fn unregistered_markers_create_no_instance_or_records_for_either_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    for agent in [AgentKind::Claude, AgentKind::Codex] {
+        for marker in ["invalid-instance", "c0a9560103b04e6cbe97cf3c5832db13"] {
+            let result = hook::run(
+                agent.name(),
+                dir.path(),
+                &[(feedback::INSTANCE_ENV, marker)],
+                None,
+            );
+            assert!(result.status.success());
+            assert_eq!(result.stdout, b"{}\n");
+            assert!(feedback::ingest(dir.path(), marker, &agent, b"PRIVATE input").is_err());
+        }
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
 #[test]
 fn only_initial_main_sessionstart_needs_registration_cwd_then_identity_survives_cd() {
     for agent in [AgentKind::Claude, AgentKind::Codex] {
