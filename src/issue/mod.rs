@@ -1,6 +1,5 @@
 //! Explicit issue assignment for a feedback instance, read from GitHub through `gh`.
-//! The dispatcher writes assignments itself; nothing here assigns. Delivery of the next item
-//! on the dispatcher's own Stop lives in `feedback::deliver`.
+//! The dispatcher uses these commands explicitly; Hook callbacks never query issues.
 mod cli;
 pub mod gh;
 pub use cli::{cli, run};

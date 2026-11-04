@@ -43,11 +43,6 @@ impl crewmoor::message::Transport for NoCalls {
         panic!("unassociated input must never call the transport");
     }
 }
-impl crewmoor::issue::Gh for NoCalls {
-    fn call(&self, _: &[String]) -> crewmoor::Result<Value> {
-        panic!("unassociated input must never query issues");
-    }
-}
 
 #[test]
 fn both_wrong_agent_directions_are_outside_journal_scope_for_cli_and_direct_ingest() {
@@ -67,11 +62,9 @@ fn both_wrong_agent_directions_are_outside_journal_scope_for_cli_and_direct_inge
                 &context.instance,
                 bytes,
                 &NoCalls,
-                &NoCalls,
             );
             assert!(!outcome.recorded);
             assert!(outcome.forward_error.is_none());
-            assert!(outcome.delivery_error.is_none());
         }
         // Keep stdin open: completing this subprocess proves preflight never reads it.
         let result = hook::run(

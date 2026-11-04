@@ -43,7 +43,7 @@ dispatcher 使用固定 worker binding 派工并接收回报，只设这一层�
 
 ## 快速上手
 
-> **前提**：已安装 `gh`（已登录），以及以下之一：
+> **前提**：手动 GitHub issue 命令需要已登录的 `gh`，容器使用以下之一：
 > - **Herdr TUI**：`herdr` 正在运行
 > - **Herdr App**：`hc`（herdr-core）正在运行并已连接 Herdr App；准备好指向活跃 socket 的 `app-target.toml`
 
@@ -174,17 +174,18 @@ CrewMoor 在绑定时记录每个 Agent 的 session ID（来自 Agent 自己的 
 
 ## 无后台进程
 
-没有常驻进程，也没有状态机。条件交付在有时间界限的 Hook 回调内执行；
-提交前即被拒绝的交付可在后续 Stop 再考虑，已受理或结果不明的提交留有标记，不重复发送。
+没有常驻进程，也没有状态机。Hook 回调记录原生事件并转发已绑定 worker 的通知，
+不查询 GitHub 或派发需求。
 
-## 条件交付
+## 自动接续暂停
 
-调度 Agent Stop 时，CrewMoor 自动检查：
+Stop Hook 已移除需求完成状态查询、下一项选择及交付。通过这条 Hook 路径自动接续
+下一项的能力暂停，承接方案待 [#51](https://github.com/musutrade/crewmoor/issues/51)
+讨论确定；本步没有替代触发机制或后台实现。
 
-1. 当前分配的 Issue 是否已 closed
-2. 队列中是否有下一项（label=ready）
-
-若两者都满足，自动通过消息协议把下一项发给调度，一次，不重复。
+业务 Agent 仍可显式使用 `issue assign/current/done/next`。Stop 只表示本轮停止，
+不代表业务完成。[#45](https://github.com/musutrade/crewmoor/issues/45) 剩余的
+worker 转发超时预算问题单独处理，本次移除不代表该问题已全部修复。
 
 ## 质量门禁
 

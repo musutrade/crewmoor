@@ -49,9 +49,13 @@ unknown; it may already have been delivered. It is `not-submitted` when the send
 before the prompt call. Free-form error text is only written to stderr, never to disk. This
 record is not a session fact: `require_unchanged` and the session association ignore it.
 
-**Time bound.** Codex and Claude run each CrewMoor Hook with a 2 s timeout. All native
-calls of one forward share a 1.5 s deadline; a call past it is not started, and the forward
-is recorded as unconfirmed. The callback checks its context before reading stdin, and reads
+**Time bound.** The generated Codex and Claude Hook entries specify a 2 s timeout.
+The callback's worker-forward deadline defaults to 8 s, configurable through
+`CREWMOOR_FORWARD_BUDGET_MS`. A call past that shared deadline is not started, and the
+forward is recorded as unconfirmed if the callback can finish. The outer/inner budget
+mismatch remains [#45](https://github.com/musutrade/crewmoor/issues/45) work; removing
+GitHub queries does not resolve it or guarantee time to record a failure and answer `{}`.
+The callback checks its context before reading stdin, and reads
 at most 1 MiB. On the core runtime the deadline sets the socket read and write timeouts, so
 a peer that keeps sending small chunks can extend one call beyond it.
 
@@ -125,9 +129,13 @@ layer. Publishing this source does not silently replace a global skill.
 
 ### Anti-loop guarantee
 
-- The dispatcher has no worker `binding-ref.json`, so its own events are not
-  forwarded upstream. Its separate `dispatcher-binding-ref.json` can drive
-  conditional issue delivery; that is not a second dispatch layer.
+- The dispatcher has no worker `binding-ref.json`, so its own events stay local.
+  `team bind` no longer writes the automatic-delivery-only
+  `dispatcher-binding-ref.json`; callbacks ignore any legacy copy without removing it.
+- Hook callbacks do not query GitHub, choose a next issue or deliver it. Automatic
+  continuation through this path is paused pending
+  [#51](https://github.com/musutrade/crewmoor/issues/51). Manual issue commands remain
+  available; no replacement trigger is implemented.
 - Workers can receive at most one message per forwarded notice (rule 2 above).
 - After a halt, no further work is dispatched until user action (rule 3 above).
 
@@ -161,6 +169,9 @@ The following are **outside** this step:
 - Halt sends keep the fixed worker→dispatcher direction (outsider and dispatcher senders are
   refused).
 - Dispatcher events never forwarded (no worker binding-ref written for dispatcher by `team bind`).
+- Controlled public callback replay with synthetic OPEN/CLOSED issue responses, an
+  assignment and a legacy dispatcher reference executes no `gh` or next-item send;
+  the Rust poison-gh fixture has a manual-command positive control.
 - Subprocess integration: `crewmoor feedback hook` returns `{}\n`, records the Stop and forwards it;
   a failed forward prints one stderr line and adds one unconfirmed record.
 

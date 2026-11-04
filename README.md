@@ -45,7 +45,7 @@ Existing sessions are not imported into this workflow.
 
 ## Quick start
 
-> **Prerequisites**: `gh` (authenticated) installed, plus one of:
+> **Prerequisites**: `gh` (authenticated) for manual GitHub issue commands, plus one of:
 > - **Herdr TUI**: `herdr` running
 > - **Herdr App**: `hc` (herdr-core) running and connected to Herdr App; an `app-target.toml` pointing at the live socket
 
@@ -226,18 +226,20 @@ CrewMoor records each agent's session ID at bind time (from the agent's own Hook
 
 ## No daemon
 
-There is no background process or state machine. Conditional delivery runs inside
-the bounded Hook callback. A delivery refused before submission can be considered
-on a later Stop; an accepted or unconfirmed submission is marked and not resent.
+There is no background process or state machine. Hook callbacks record native events
+and forward bound worker notices; they do not query GitHub or dispatch requirements.
 
-## Conditional delivery
+## Automatic continuation paused
 
-When the dispatcher agent stops, CrewMoor checks automatically:
+The Stop Hook no longer checks issue completion, selects the next issue or delivers
+it to the dispatcher. Automatic continuation through this Hook path is paused until
+a replacement is agreed in [#51](https://github.com/musutrade/crewmoor/issues/51).
+No replacement trigger or background mechanism is implemented.
 
-1. Is the currently assigned issue closed?
-2. Is there a next open issue in the queue (label=ready)?
-
-If both are true, the next issue is sent to the dispatcher once, without resending.
+Manual `issue assign/current/done/next` commands remain available to the business
+Agent. Stop is a turn notice, not business completion. The remaining worker-forward
+timeout budget work in [#45](https://github.com/musutrade/crewmoor/issues/45) is
+separate; this removal does not resolve that budget mismatch.
 
 ## Quality gates
 

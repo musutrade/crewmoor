@@ -211,12 +211,19 @@ fn team_bind_needs_registered_sessions_then_binds_launched_resources_and_message
     let binding: Binding =
         serde_json::from_slice(&fs::read(dir.join("roles/worker/binding.json")).unwrap()).unwrap();
     assert!(binding.worker.process.is_some());
-    // The dispatcher side also references the binding so its own Stop can deliver.
+    // Only the worker references this binding for Hook forwarding.
     let registry = setup.base().join("registry");
-    let reference = feedback::load_dispatcher_binding_ref(&registry, &setup.instance("lead"))
+    let reference = feedback::load_binding_ref(&registry, &setup.instance("worker"))
         .unwrap()
-        .expect("dispatcher binding reference written on bind");
+        .expect("worker binding reference written on bind");
     assert_eq!(reference.binding, dir.join("roles/worker/binding.json"));
+    assert!(
+        !registry
+            .join("instances")
+            .join(setup.instance("lead"))
+            .join("dispatcher-binding-ref.json")
+            .exists()
+    );
     let report = Message {
         id: "report-1".into(),
         from: "worker".into(),
