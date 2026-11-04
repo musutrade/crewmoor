@@ -129,13 +129,9 @@ fn forward_budget() -> Duration {
         .unwrap_or(Duration::from_millis(DEFAULT_FORWARD_BUDGET_MS))
 }
 fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
-    // Forwarding, issue queries and delivery share one deadline.
+    // All native calls of this worker forward share one deadline.
     let deadline = std::time::Instant::now() + forward_budget();
     let transport = crate::message::Bounded::until(deadline);
-    let gh = crate::issue::gh::Bounded {
-        program: "gh".into(),
-        deadline,
-    };
     // An unknown or mismatched context never reads stdin.
     if super::associated(agent, registry, instance).is_err() {
         return false;
@@ -150,12 +146,9 @@ fn receive(agent: &str, registry: &Path, instance: &str) -> bool {
         let _ = super::journal::refuse(registry, instance, "unknown", "input-too-large");
         return false;
     }
-    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport, &gh);
+    let outcome = super::process_hook_event(agent, registry, instance, &bytes, &transport);
     if let Some(error) = outcome.forward_error {
         eprintln!("CrewMoor forward unconfirmed; not resent: {error}");
-    }
-    if let Some(error) = outcome.delivery_error {
-        eprintln!("CrewMoor issue delivery unconfirmed; not resent: {error}");
     }
     outcome.recorded
 }

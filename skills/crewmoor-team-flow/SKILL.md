@@ -96,8 +96,15 @@ Agent 状态仅以实际版本原生 hooks 提供的事实为准。未提供时�
 dispatcher。无需手动伪造 Hook 或重复发送已自动转发的通知。
 
 dispatcher 没有 worker `binding-ref.json`，自己的事件保留在本地，不向不存在的
-上游 Agent 转发。它另有 `dispatcher-binding-ref.json`，用于已有的条件下一项交付；
-这不是第二层调度。用户在 dispatcher 本人的 pane 中接收业务进展和异常说明。
+上游 Agent 转发。`team bind` 不再写入专用于自动交付的
+`dispatcher-binding-ref.json`；遗留文件不会被 callback 使用，也不自动清理。
+用户在 dispatcher 本人的 pane 中接收业务进展和异常说明。
+
+Stop Hook 不查询 GitHub、不选择或交付下一项需求；通过这条 Hook 路径自动接续
+的能力暂停，承接方案待 [#51](https://github.com/musutrade/crewmoor/issues/51)
+讨论确定。本步不提供 watcher、后台服务或替代触发机制。业务 Agent 仍可显式使用
+`issue assign/current/done/next`。保留的 worker 转发预算限制仍待 #45 处理，
+不把本次移除视为全部超时问题已解决。
 
 Stop/SessionEnd 是通知，没有业务动作时不回复。确需派下一项或确认一次收件时，
 每条通知至多回复一次，不建立通用 ACK 循环。worker 仍须主动发送业务交接。

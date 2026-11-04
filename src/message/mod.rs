@@ -69,28 +69,6 @@ pub fn send_halt_to_dispatcher<'a>(
     let recipient = route_halt(binding, message, transport)?;
     do_send(binding, recipient, message, transport)
 }
-/// Send a system notice to the dispatcher about its own work (the next issue item).
-/// Sender and recipient are both the dispatcher role; only the dispatcher is checked.
-pub fn send_to_dispatcher<'a>(
-    binding: &'a Binding,
-    message: &'a Message,
-    transport: &impl Transport,
-) -> Result<Receipt<'a>> {
-    let recipient = route_self(binding, message, transport)?;
-    do_send(binding, recipient, message, transport)
-}
-fn route_self<'a>(
-    binding: &'a Binding,
-    message: &Message,
-    transport: &impl Transport,
-) -> Result<&'a Member> {
-    message.validate()?;
-    let dispatcher = &binding.dispatcher.context.registration.role;
-    if &message.from != dispatcher || &message.to != dispatcher {
-        return Err("system notice must go from and to the bound dispatcher".into());
-    }
-    dispatcher_only(binding, transport)
-}
 fn route<'a>(
     binding: &'a Binding,
     message: &Message,

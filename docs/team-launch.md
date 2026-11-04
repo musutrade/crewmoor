@@ -119,8 +119,9 @@ The shortest existing chain is:
    The transport validates identifiers, not a conversation history.
 5. Bound worker Stop/SessionEnd events are forwarded notices, not business
    completion. They need no generic acknowledgement. The dispatcher's own events
-   stay local; there is no upstream Agent. Its Stop can separately trigger the
-   existing conditional issue delivery.
+   stay local; there is no upstream Agent. Hook automatic issue continuation is
+   paused pending [#51](https://github.com/musutrade/crewmoor/issues/51); manual
+   issue commands remain available.
 
 Do not retain an outer coordination Agent, import an existing session or bypass
 the fixed bindings with native `herdr agent prompt` / `hc send`; those are

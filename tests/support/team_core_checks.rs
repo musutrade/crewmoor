@@ -283,10 +283,17 @@ fn core_team_bind_uses_the_app_target_identity_and_messages_through_core() {
     assert!(binding.worker.process.is_none());
     assert_eq!(binding.worker.core.as_ref().unwrap().created_ms, 42);
     let registry = setup.base().join("registry");
-    let reference = feedback::load_dispatcher_binding_ref(&registry, &setup.instance("lead"))
+    let reference = feedback::load_binding_ref(&registry, &setup.instance("worker"))
         .unwrap()
-        .expect("dispatcher binding reference written on bind");
+        .expect("worker binding reference written on bind");
     assert_eq!(reference.binding, dir.join("roles/worker/binding.json"));
+    assert!(
+        !registry
+            .join("instances")
+            .join(setup.instance("lead"))
+            .join("dispatcher-binding-ref.json")
+            .exists()
+    );
     let report = report();
     let receipt = message::send(&binding, &report, &core).unwrap();
     assert_eq!(receipt.transport, "accepted");
