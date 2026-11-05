@@ -9,6 +9,7 @@ pub mod holders;
 pub mod issue;
 pub mod message;
 pub mod native;
+pub mod opencode;
 pub mod process;
 pub mod project;
 pub mod record;

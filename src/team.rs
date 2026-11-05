@@ -46,6 +46,8 @@ pub struct Role {
     pub initial_prompt: Option<String>,
     /// App tab for this role only (core teams); overrides the app_target `tab_id`.
     pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<crate::opencode::Options>,
 }
 impl Team {
     pub fn validate(&self) -> Result<()> {
@@ -171,6 +173,8 @@ impl Team {
             host: self.host.clone(),
             feedback_instance: instance.map(String::from),
             initial_prompt: role.initial_prompt.clone(),
+            opencode: role.opencode.clone(),
+            feedback_registry: Some(self.feedback_registry.clone()),
         })
     }
     fn registration(&self, role: &Role) -> Registration {

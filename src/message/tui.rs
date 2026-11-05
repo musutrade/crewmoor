@@ -36,6 +36,7 @@ pub fn capture(
         core: None,
         native_session: Some(session),
         process,
+        opencode: None,
     };
     session_matches(&member, agent)?;
     Ok(member)
@@ -45,6 +46,10 @@ pub fn session_matches(member: &Member, value: &Value) -> Result<()> {
     let registration = &member.context.registration;
     if text(value, "/agent")? != registration.agent.name() {
         return Err("bound Agent kind changed".into());
+    }
+    // Herdr reports a root/subtree, possibly retained on home. It is not a UI gate.
+    if registration.agent == crate::config::AgentKind::OpenCode {
+        return Ok(());
     }
     let container = value.get("agent_session").filter(|v| !v.is_null());
     let Some(container) = container else {

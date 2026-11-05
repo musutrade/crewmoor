@@ -33,6 +33,8 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         host: None,
         feedback_instance: None,
         initial_prompt: None,
+        opencode: None,
+        feedback_registry: None,
     }
 }
 #[derive(Default)]

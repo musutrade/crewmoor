@@ -42,6 +42,8 @@ pub struct Member {
     /// TUI Agent process located at bind time; absent in bindings saved before #15.
     #[serde(default)]
     pub process: Option<crate::process::Identity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<crate::opencode::binding::Bound>,
 }
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -131,6 +133,7 @@ impl Binding {
     /// The Agent's Hook facts come first; container fields are only an extra check.
     pub fn check(&self, member: &Member, transport: &impl Transport) -> Result<()> {
         crate::feedback::require_unchanged(&self.config.feedback_registry, &member.context)?;
+        crate::opencode::binding::check(&self.config, member)?;
         let value = get(&self.config, &member.handle, transport)?;
         self.verify(member, &value)?;
         super::tui::check_process(&self.config, member, transport)
@@ -168,12 +171,21 @@ fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<M
         .ok_or("native session not registered yet; bind after the Agent's SessionStart")?;
     crate::feedback::require_unchanged(&config.feedback_registry, &context)?;
     let value = get(config, &peer.handle, transport)?;
+    let opencode = crate::opencode::binding::capture(config, &context)?;
     if config.runtime == Runtime::Core {
-        let mut member = super::core::capture(context, peer, &value)?;
+        let mut member = super::core::capture(
+            context,
+            peer,
+            &value,
+            opencode.as_ref().map(|e| &e.launcher),
+        )?;
         member.native_session = Some(session);
+        member.opencode = opencode;
         return Ok(member);
     }
-    super::tui::capture(config, context, session, peer, &value, transport)
+    let mut member = super::tui::capture(config, context, session, peer, &value, transport)?;
+    member.opencode = opencode;
+    Ok(member)
 }
 fn default_runtime() -> Runtime {
     Runtime::Tui

@@ -39,6 +39,8 @@ pub struct Record {
     pub binding_scope: String,
     pub app_terminal: Option<String>,
     pub project: Option<crate::project::Project>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode_native: Option<serde_json::Value>,
 }
 impl Record {
     pub fn prepare(config: Config, root: &Path) -> Result<Self> {
@@ -77,6 +79,7 @@ impl Record {
             binding_scope,
             app_terminal: None,
             project: None,
+            opencode_native: None,
         };
         result.save()?;
         result.bind()?;

@@ -46,6 +46,7 @@ pub fn events(agent: &AgentKind) -> &'static [&'static str] {
             "Interrupt",
             "PermissionRequest",
         ],
+        AgentKind::OpenCode => &[],
     }
 }
 pub fn ingest(registry: &Path, instance: &str, agent: &AgentKind, bytes: &[u8]) -> Result<()> {

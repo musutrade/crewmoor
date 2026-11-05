@@ -32,6 +32,7 @@ fn four_combinations_use_native_handles_and_keep_hook_status_unknown() {
             cfg.agent_args = match agent {
                 AgentKind::Codex => strings(&["--no-alt-screen"]),
                 AgentKind::Claude => strings(&["--model", "claude-test-model"]),
+                AgentKind::OpenCode => Vec::new(),
             };
             *fake.minimal_agent.borrow_mut() = agent == AgentKind::Claude;
             let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();

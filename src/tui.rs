@@ -42,6 +42,9 @@ pub fn workspace_args(r: &Record) -> Vec<String> {
         args.push("--env".into());
         args.push(format!("{}={instance}", crate::feedback::INSTANCE_ENV));
     }
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        crate::opencode::prepare::workspace_env(r, &mut args);
+    }
     args
 }
 fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -66,8 +69,12 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         "5000",
         "--",
     ]);
-    args.extend(r.config.agent_args.clone());
-    args.extend(r.config.initial_prompt.clone());
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        args.extend(crate::opencode::prepare::arguments(&r.config));
+    } else {
+        args.extend(r.config.agent_args.clone());
+        args.extend(r.config.initial_prompt.clone());
+    }
     Ok(args)
 }
 fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {

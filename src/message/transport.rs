@@ -14,6 +14,14 @@ impl std::fmt::Display for NotStarted {
 impl std::error::Error for NotStarted {}
 pub trait Transport {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value>;
+    fn session_prompt(
+        &self,
+        config: &Config,
+        member: &super::Member,
+        text: &str,
+    ) -> Result<crate::opencode::api::PromptReceipt> {
+        crate::opencode::binding::prompt(config, member, text, Duration::from_secs(10))
+    }
 }
 pub struct Native;
 impl Transport for Native {
@@ -35,6 +43,18 @@ impl Bounded {
     }
 }
 impl Transport for Bounded {
+    fn session_prompt(
+        &self,
+        config: &Config,
+        member: &super::Member,
+        text: &str,
+    ) -> Result<crate::opencode::api::PromptReceipt> {
+        let left = self.deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(NotStarted.into());
+        }
+        crate::opencode::binding::prompt(config, member, text, left)
+    }
     fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
         let left = self.deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {

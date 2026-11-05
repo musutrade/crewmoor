@@ -41,6 +41,8 @@ pub struct Receipt<'a> {
     pub transport: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_turn: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_prompt: Option<crate::opencode::api::PromptReceipt>,
 }
 impl Message {
     fn validate(&self) -> Result<()> {
@@ -156,6 +158,9 @@ fn do_send<'a>(
     } else {
         serde_json::to_string(&envelope)?
     };
+    if recipient.context.registration.agent == crate::config::AgentKind::OpenCode {
+        return send_opencode(binding, recipient, envelope, &text, transport);
+    }
     let args = match binding.config.runtime {
         crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
         crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
@@ -166,6 +171,38 @@ fn do_send<'a>(
         envelope,
         transport: "accepted",
         native_turn,
+        native_prompt: None,
+    })
+}
+fn send_opencode<'a>(
+    binding: &'a Binding,
+    recipient: &'a Member,
+    envelope: Envelope<'a>,
+    text: &str,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let submitted = transport.session_prompt(&binding.config, recipient, text);
+    if submitted
+        .as_ref()
+        .is_err_and(|error| error.is::<NotStarted>())
+    {
+        return Err(NotStarted.into());
+    }
+    let verified = submitted
+        .and_then(|receipt| {
+            binding.guard()?;
+            binding.check(&binding.dispatcher, transport)?;
+            binding.check(&binding.worker, transport)?;
+            Ok(receipt)
+        })
+        .map_err(|error| {
+            format!("{SUBMISSION_UNCONFIRMED}: {error}; do not automatically resend")
+        })?;
+    Ok(Receipt {
+        envelope,
+        transport: "accepted",
+        native_turn: None,
+        native_prompt: Some(verified),
     })
 }
 fn submission(
