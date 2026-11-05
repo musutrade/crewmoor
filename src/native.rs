@@ -104,6 +104,13 @@ impl Runner for Native {
             let value = serde_json::from_slice::<Value>(&output.stderr).unwrap_or(Value::Null);
             return Err(crate::failure::NativeFailure::decode(&value).into());
         }
+        // Herdr 0.9.5 pane run uses send_ok_request and emits no success JSON.
+        if record.config.runtime == Runtime::Tui
+            && args.starts_with(&strings(&["pane", "run"]))
+            && output.stdout.is_empty()
+        {
+            return Ok(Value::Null);
+        }
         let value: Value = serde_json::from_slice(&output.stdout)?;
         payload(value, &record.config.runtime)
     }

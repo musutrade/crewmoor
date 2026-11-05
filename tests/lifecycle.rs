@@ -298,6 +298,26 @@ fn native_absence_requires_not_found_and_pid_reuse_is_not_a_live_recorded_proces
 }
 
 #[test]
+fn native_tui_pane_run_accepts_its_actual_empty_success_acknowledgement() {
+    let dir = common::directory();
+    let cfg = common::config(dir.path(), Runtime::Core);
+    let mut record = Record::prepare(cfg, &dir.path().join("i")).unwrap();
+    let args = strings(&["pane", "run", "owned-pane", "blank-ack"]);
+    assert!(Native.call(&record, &args).is_err());
+    record.config.runtime = Runtime::Tui;
+    assert_eq!(Native.call(&record, &args).unwrap(), Value::Null);
+    assert!(Native.call(&record, &strings(&["blank-ack"])).is_err());
+    assert!(
+        Native
+            .call(
+                &record,
+                &strings(&["pane", "run", "owned-pane", "fixture-failure"])
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn existing_codex_alias_supplies_one_no_daemon_without_running_authentication() {
     let dir = common::directory();
     let path = dir.path().join("argv.json");
