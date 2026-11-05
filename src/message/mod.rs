@@ -25,7 +25,15 @@ pub struct Message {
 #[derive(Debug, Serialize)]
 pub struct Envelope<'a> {
     pub team: &'a str,
+    /// Explicit feedback presentation; ordinary text is never inspected or decoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback_view: Option<FeedbackView>,
     pub message: &'a Message,
+}
+#[derive(Debug, Serialize)]
+pub struct FeedbackView {
+    pub version: u8,
+    pub fact: serde_json::Value,
 }
 #[derive(Debug, Serialize)]
 pub struct Receipt<'a> {
@@ -57,7 +65,7 @@ pub fn send<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route(binding, message, transport)?;
-    do_send(binding, recipient, message, transport)
+    do_send(binding, recipient, message, None, transport)
 }
 /// Send a halt notification to the dispatcher only.
 /// Skips the sender session check because the worker has a rejected session after `/clear`.
@@ -67,7 +75,27 @@ pub fn send_halt_to_dispatcher<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route_halt(binding, message, transport)?;
-    do_send(binding, recipient, message, transport)
+    do_send(binding, recipient, message, None, transport)
+}
+/// Add a readable copy only for the feedback producer's explicitly supplied fact.
+/// The legacy message content and all routing checks keep their existing semantics.
+pub(crate) fn send_feedback<'a>(
+    binding: &'a Binding,
+    message: &'a Message,
+    fact: &impl Serialize,
+    is_halt: bool,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let recipient = if is_halt {
+        route_halt(binding, message, transport)?
+    } else {
+        route(binding, message, transport)?
+    };
+    let view = FeedbackView {
+        version: 1,
+        fact: serde_json::to_value(fact)?,
+    };
+    do_send(binding, recipient, message, Some(view), transport)
 }
 fn route<'a>(
     binding: &'a Binding,
@@ -115,13 +143,19 @@ fn do_send<'a>(
     binding: &'a Binding,
     recipient: &'a Member,
     message: &'a Message,
+    feedback_view: Option<FeedbackView>,
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let envelope = Envelope {
         team: &binding.team,
+        feedback_view,
         message,
     };
-    let text = serde_json::to_string(&envelope)?;
+    let text = if envelope.feedback_view.is_some() {
+        serde_json::to_string_pretty(&envelope)?
+    } else {
+        serde_json::to_string(&envelope)?
+    };
     let args = match binding.config.runtime {
         crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
         crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),

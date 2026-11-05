@@ -82,6 +82,13 @@ impl Fixture {
     fn view(&self) -> Value {
         feedback::show(self.dir.path(), &self.binding.worker.context.instance).unwrap()
     }
+    fn submitted_text(&self) -> String {
+        let submitted: Value = serde_json::from_slice(
+            &fs::read(self.binding.config.socket.with_extension("submitted")).unwrap(),
+        )
+        .unwrap();
+        submitted["args"][4].as_str().unwrap().to_owned()
+    }
     fn change_context(&self, key: &str, value: Value) {
         let path = self
             .dir
@@ -163,12 +170,34 @@ fn system_forwards_exact_new_record_with_fixed_identity_and_no_unrelated_history
     assert!(view["latest_native_event"].is_null());
     assert!(!fact.to_string().contains("PRIVATE_OLD_HISTORY"));
     assert_eq!(fixture.trace.submissions.get(), 1);
-    let submitted: Value = serde_json::from_slice(
-        &fs::read(fixture.binding.config.socket.with_extension("submitted")).unwrap(),
-    )
-    .unwrap();
-    let actual: Value = serde_json::from_str(submitted["args"][4].as_str().unwrap()).unwrap();
+    let actual: Value = serde_json::from_str(&fixture.submitted_text()).unwrap();
     assert_eq!(actual, receipt["delivery"]["envelope"]);
+}
+#[test]
+fn readable_report_view_preserves_the_complete_fact_and_literal_summary() {
+    let fixture = Fixture::new();
+    for summary in [
+        "中文进展",
+        "引号 \"quoted\" 和路径 C:\\temp\\反馈",
+        "first line\n第二行",
+        "{\"record\":{\"event\":\"Stop\"}}",
+        "{invalid JSON",
+        "ordinary nonstructured text",
+    ] {
+        let receipt = fixture.report(summary).unwrap();
+        let text = fixture.submitted_text();
+        let wire: Value = serde_json::from_str(&text).unwrap();
+        assert!(text.contains("\"feedback_view\": {\n"));
+        assert!(text.contains("\"record\": {\n"));
+        assert_eq!(wire["feedback_view"]["version"], 1);
+        assert_eq!(wire["feedback_view"]["fact"], fact(&receipt));
+        assert_eq!(wire["feedback_view"]["fact"]["record"]["summary"], summary);
+        assert_eq!(
+            wire["feedback_view"]["fact"]["record"],
+            fixture.view()["latest_business_report"]
+        );
+        assert_eq!(wire, receipt["delivery"]["envelope"]);
+    }
 }
 #[test]
 fn source_session_type_and_summary_errors_create_no_report_or_submission() {

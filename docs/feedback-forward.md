@@ -44,6 +44,13 @@ the report into another message. Original native Hook payloads, transcripts,
 unrelated history and context cwd are not added to that content; #4's existing
 privacy filtering and intentionally supplied business summary remain intact.
 
+Forwarded feedback now includes a [readable version 1 feedback view](feedback-view.md)
+in the envelope, before the unchanged legacy message. The view carries the same
+complete fact as an object, and the feedback envelope is pretty-printed on both
+runtime paths. Ordinary messages do not opt into this view. Consumers that
+strictly reject unknown envelope fields must accept the optional view field;
+the legacy String content remains available to existing field-selecting readers.
+
 On success, stdout separates `recorded: true` from the derived `delivery`
 receipt. Delivery `transport: accepted` only means native transmission was
 accepted. Actual receipt requires the dispatcher to confirm the received

@@ -152,17 +152,23 @@ impl Fixture {
         self.trace.submissions.get()
     }
 
-    fn last_message_content(&self) -> Value {
+    fn last_envelope(&self) -> Value {
         let submitted: Value = serde_json::from_slice(
             &fs::read(self.binding.config.socket.with_extension("submitted")).unwrap(),
         )
         .unwrap();
-        serde_json::from_str(submitted["args"][4].as_str().unwrap())
-            .map(|v: Value| {
-                serde_json::from_str(v["message"]["content"].as_str().unwrap_or("{}"))
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default()
+        let text = submitted["args"][4].as_str().unwrap();
+        assert!(text.contains("\"feedback_view\": {\n"));
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn last_message_content(&self) -> Value {
+        let envelope = self.last_envelope();
+        let fact: Value =
+            serde_json::from_str(envelope["message"]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(envelope["feedback_view"]["version"], 1);
+        assert_eq!(envelope["feedback_view"]["fact"], fact);
+        fact
     }
 
     fn last_event(&self) -> Value {

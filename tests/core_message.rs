@@ -51,6 +51,59 @@ fn native_socket_protocol_delivers_both_directions_without_cli_autostart_or_stat
     assert!(view["latest_native_event"].is_null());
 }
 #[test]
+fn core_forwards_readable_hook_and_authored_report_with_unchanged_send_parameters() {
+    let fixture = Fixture::new();
+    let binding = fixture.bind();
+    let binding_path = fixture.dir.path().join("binding.json");
+    fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
+    crewmoor::feedback::write_binding_ref(
+        fixture.dir.path(),
+        &binding.worker.context.instance,
+        &binding_path,
+    )
+    .unwrap();
+    let report = crewmoor::feedback::report_to(
+        &binding,
+        "native-worker",
+        "skill",
+        "progress",
+        "中文 \"引号\" \\path\n下一行",
+        &Native,
+    )
+    .unwrap();
+    let payload =
+        json!({"session_id":"native-worker","hook_event_name":"Stop","cwd":fixture.dir.path()});
+    let outcome = crewmoor::feedback::process_hook_event(
+        "claude",
+        fixture.dir.path(),
+        &binding.worker.context.instance,
+        &serde_json::to_vec(&payload).unwrap(),
+        &Native,
+    );
+    assert!(outcome.recorded);
+    assert!(outcome.forward_error.is_none());
+    let sends = fixture.sends();
+    assert_eq!(sends.len(), 2);
+    assert_readable_core_feedback(&sends[0], "progress");
+    assert_readable_core_feedback(&sends[1], "Stop");
+    let wire: serde_json::Value = serde_json::from_str(sends[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(wire, report["delivery"]["envelope"]);
+}
+fn assert_readable_core_feedback(send: &serde_json::Value, event: &str) {
+    assert_eq!(send["terminal"], "t0");
+    assert_eq!(send["force"], false);
+    assert_eq!(send["wait"], false);
+    assert!(send.get("if").is_none());
+    let text = send["text"].as_str().unwrap();
+    assert!(text.contains("\"feedback_view\": {\n"));
+    let wire: serde_json::Value = serde_json::from_str(text).unwrap();
+    let legacy: serde_json::Value =
+        serde_json::from_str(wire["message"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(wire["feedback_view"]["version"], 1);
+    assert_eq!(wire["feedback_view"]["fact"], legacy);
+    assert_eq!(legacy["record"]["event"], event);
+}
+#[test]
 fn changed_native_terminal_or_core_identity_refuses_before_send() {
     for (field, value) in [
         ("address", json!("t-other")),

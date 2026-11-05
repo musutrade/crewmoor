@@ -88,6 +88,13 @@ Every forwarded message has `from = worker_role`, `to = dispatcher_role`,
 For halt notifications `system_halt_notification` is `true` and `record.source` is
 `"session-rejected"`.
 
+The delivered envelope also includes a [version 1 `feedback_view`](feedback-view.md)
+with this same complete fact as an object. Read that pretty-printed object
+directly; the legacy String content remains below it for existing consumers.
+This explicit view also covers halt notifications, preserves all message
+correlation fields, and never interprets ordinary JSON-looking message text.
+Strict envelope consumers must accept the additive view field before migration.
+
 ### Binding-ref
 
 `team bind` writes `<registry>/instances/<worker-uuid>/binding-ref.json`:

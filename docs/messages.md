@@ -100,6 +100,13 @@ same send command with that reply file. The Agent or skill knows the shared
 binding/binary paths from the task instructions. CrewMoor never generates the
 business answer. Callers may also use the public Rust `message::send` function.
 
+Ordinary messages keep this exact compact envelope and String content, including
+JSON-looking text. Only explicit Hook/report-to forwarding adds a versioned
+[`feedback_view`](feedback-view.md) alongside `message`, with the complete fact
+as a readable object and the legacy content preserved. That feedback envelope
+is pretty-printed; consumers rejecting unknown envelope fields need the
+documented additive-field migration. No content-based type detection occurs.
+
 Before prompting, the entry checks the same socket instance and both fixed
 identities. It uses literal argv, with inherited Agent/container routing markers
 removed and only the bound Herdr socket selected; authentication, tool settings
