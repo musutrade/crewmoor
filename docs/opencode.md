@@ -69,7 +69,12 @@ not start/restart/discover the user's default shared OpenCode service.
 
 TUI still uses official `agent start --kind opencode`. A workspace-private PATH
 entry runs this foreground launch, then the recorded canonical native executable.
-Only that new workspace's PATH changes; native children regain the original PATH.
+After shell initialization, one native `pane run` sets this entry first in that
+owned shell's PATH before agent start; user rc files can otherwise prepend the
+installed executable ahead of the workspace environment. This startup setting
+requires a known POSIX shell (bash, dash/sh, zsh or ksh); other shells are refused.
+Only that new workspace's PATH changes; native children retain the initialized
+shell's tool PATH with just this launch's private entry removed.
 The outer official start receives --standalone and the owned DB environment. The
 Rust entry consumes that selector; its actual interactive child receives --server
 and the configured --prompt, with no --standalone. Thus an unselected private

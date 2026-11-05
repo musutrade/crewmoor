@@ -27,9 +27,12 @@ pub fn run(args: &[String]) -> Result<()> {
     let password = uuid::Uuid::new_v4().simple().to_string();
     let mut server = start_server(&launch, &password)?;
     let result = interact(&launch, &context, &password, &mut server);
+    finish(&launch.root, result, server)
+}
+fn finish(root: &Path, result: Result<()>, mut server: Child) -> Result<()> {
     drop(server.stdin.take());
     let ended = server.wait();
-    save_exit(&launch.root, &result, &ended)?;
+    save_exit(root, &result, &ended)?;
     result?;
     if !ended?.success() {
         return Err("private OpenCode service exited unsuccessfully".into());
@@ -49,7 +52,7 @@ fn launch_context(config: &Config) -> Result<feedback::Context> {
 }
 
 fn start_server(launch: &prepare::Launch, password: &str) -> Result<Child> {
-    let mut command = launch.command();
+    let mut command = launch.command()?;
     command
         .args(["serve", "--stdio", "--port", "0", "--hostname", "127.0.0.1"])
         .current_dir(&launch.config.cwd)
@@ -185,7 +188,7 @@ fn check_server(config: &Config, server: &Child, info: &Value) -> Result<()> {
 
 fn start_tui(launch: &prepare::Launch, connected: &Connected) -> Result<Child> {
     let config = &launch.config;
-    let mut command = launch.command();
+    let mut command = launch.command()?;
     command
         .args(["--server", &connected.url, "--session", &connected.session])
         .args(prepare::arguments(config))

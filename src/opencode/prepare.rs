@@ -5,7 +5,13 @@ use crate::{
     record::Record,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, os::unix::fs::symlink, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::symlink,
+    path::{Path, PathBuf},
+    process::Command,
+};
 pub const LAUNCH_ENV: &str = "CREWMOOR_OPENCODE_LAUNCH";
 
 #[derive(Serialize, Deserialize)]
@@ -17,13 +23,7 @@ pub struct Launch {
 impl Launch {
     fn capture(record: &Record) -> Result<Self> {
         let mut environment = BTreeMap::new();
-        for key in [
-            "HOME",
-            "XDG_CONFIG_HOME",
-            "XDG_DATA_HOME",
-            "XDG_STATE_HOME",
-            "PATH",
-        ] {
+        for key in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"] {
             let value = std::env::var_os(key)
                 .map(|v| v.into_string().map_err(|_| "non-UTF8 child environment"))
                 .transpose()?;
@@ -35,7 +35,7 @@ impl Launch {
             environment,
         })
     }
-    pub fn command(&self) -> Command {
+    pub fn command(&self) -> Result<Command> {
         let mut command = Command::new(&self.config.agent_executable);
         for (key, value) in &self.environment {
             if let Some(value) = value {
@@ -44,8 +44,17 @@ impl Launch {
                 command.env_remove(key);
             }
         }
-        command
+        if let Some(path) = native_path(&self.root)? {
+            command.env("PATH", path);
+        }
+        Ok(command)
     }
+}
+fn native_path(root: &Path) -> Result<Option<std::ffi::OsString>> {
+    let entry = root.join("opencode-bin");
+    Ok(std::env::var_os("PATH")
+        .map(|path| std::env::join_paths(std::env::split_paths(&path).filter(|p| p != &entry)))
+        .transpose()?)
 }
 
 pub fn prepare(record: &Record) -> Result<()> {
@@ -127,6 +136,20 @@ pub fn workspace_env(record: &Record, args: &mut Vec<String>) {
             record.root.join("opencode.sqlite").display()
         ),
     ]);
+}
+/// One owned-shell startup setting after user rc files, before native agent start.
+pub fn tui_path(record: &Record, shell: &Path) -> Result<String> {
+    match shell.file_name().and_then(|value| value.to_str()) {
+        Some("bash" | "dash" | "sh" | "zsh" | "ksh") => {}
+        _ => return Err("OpenCode TUI entry requires a known POSIX startup shell".into()),
+    }
+    let directory = record.root.join("opencode-bin");
+    let directory = directory.to_str().ok_or("non-UTF8 OpenCode entry")?;
+    if directory.chars().any(char::is_control) {
+        return Err("control character in OpenCode entry path".into());
+    }
+    let quoted = directory.replace('\'', "'\\''");
+    Ok(format!("export PATH='{quoted}':\"$PATH\""))
 }
 pub fn read() -> Result<Launch> {
     let path = std::env::var_os(LAUNCH_ENV).ok_or("missing owned OpenCode launch file")?;

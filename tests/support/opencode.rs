@@ -98,11 +98,10 @@ fn headers(reader: &mut impl BufRead) -> Result<usize> {
 }
 fn respond(stream: &mut TcpStream, status: u16, value: &Value) -> Result<()> {
     let text = value.to_string();
-    write!(
-        stream,
+    stream.write_all(format!(
         "HTTP/1.1 {status} fixture\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{text}",
         text.len()
-    )?;
+    ).as_bytes())?;
     Ok(())
 }
 fn route(url: &str, method: &str, path: &str, body: Value, created: &mut Value) -> (u16, Value) {
@@ -152,13 +151,14 @@ fn trace(method: &str, path: &str, body: &Value) -> Result<()> {
     let Some(pathname) = std::env::var_os("CM_OPENCODE_TEST_TRACE") else {
         return Ok(());
     };
-    let row = json!({"method":method,"path":path,"body":body});
+    let row =
+        json!({"method":method,"path":path,"body":body,"native_path":std::env::var("PATH").ok()});
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
         .open(pathname)?;
-    writeln!(file, "{row}")?;
+    file.write_all(format!("{row}\n").as_bytes())?;
     Ok(())
 }
 fn sse(mut stream: TcpStream, end: End) {

@@ -13,7 +13,25 @@ pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     }
     r.container_id = Some(container(r, &server)?);
     create_workspace(r, runner)?;
+    configure_opencode_entry(r, runner)?;
     request_agent(r, runner)
+}
+fn configure_opencode_entry(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    if r.config.agent != crate::config::AgentKind::OpenCode {
+        return Ok(());
+    }
+    let pane = r.handle.as_deref().ok_or("missing returned pane")?;
+    let value = runner.call(r, &strings(&["pane", "process-info", "--pane", pane]))?;
+    let info = &value["process_info"];
+    if info["pane_id"].as_str() != Some(pane) {
+        return Err("startup shell pane changed".into());
+    }
+    let shell = shell_process(info).ok_or("missing owned startup shell")?;
+    let command = crate::opencode::prepare::tui_path(r, &shell.executable)?;
+    r.terminal_process = Some(shell);
+    r.save()?;
+    runner.call(r, &strings(&["pane", "run", pane, &command]))?;
+    Ok(())
 }
 fn expected_version(r: &Record) -> Result<&str> {
     if let Some(host) = &r.config.host {

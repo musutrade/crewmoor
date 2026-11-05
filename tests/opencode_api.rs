@@ -37,7 +37,7 @@ fn request(listener: TcpListener, status: u16, body: Value) -> thread::JoinHandl
         let mut bytes = vec![0; size];
         reader.read_exact(&mut bytes).unwrap();
         let body_text = body.to_string();
-        write!(stream,"HTTP/1.1 {status} test\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body_text}",body_text.len()).unwrap();
+        stream.write_all(format!("HTTP/1.1 {status} test\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body_text}",body_text.len()).as_bytes()).unwrap();
         (headers, serde_json::from_slice(&bytes).unwrap())
     })
 }

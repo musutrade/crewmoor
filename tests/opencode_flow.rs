@@ -248,6 +248,16 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .args(prepare::tui_arguments(&record.config))
         .env(prepare::LAUNCH_ENV, prepare::launch_file(&record))
         .env("CM_OPENCODE_TEST_TRACE", root.path().join("trace.jsonl"))
+        .env(
+            "PATH",
+            std::env::join_paths([
+                record.root.join("opencode-bin"),
+                "/post-rc/tools".into(),
+                record.root.join("opencode-bin"),
+                "/usr/bin".into(),
+            ])
+            .unwrap(),
+        )
         .current_dir(root.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -270,6 +280,7 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     );
     let endpoint = endpoint.unwrap();
     endpoint.confirm_exit().unwrap();
+    crewmoor::opencode::confirm_exit(&record).unwrap();
     let exit: Value =
         serde_json::from_slice(&fs::read(record.root.join("opencode-exit.json")).unwrap()).unwrap();
     assert_eq!(exit["native_lease_closed"], true);
@@ -280,6 +291,15 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     let trace = fs::read_to_string(root.path().join("trace.jsonl")).unwrap();
     assert!(trace.contains("--prompt"));
     assert!(!trace.contains("--model"));
+    let native_rows: Vec<Value> = trace
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        native_rows
+            .iter()
+            .all(|row| row["native_path"] == "/post-rc/tools:/usr/bin")
+    );
     assert_eq!(
         feedback::registered_session(&registry, &context)
             .unwrap()
