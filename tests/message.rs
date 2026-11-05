@@ -150,14 +150,17 @@ fn ordinary_content_is_never_interpreted_as_a_feedback_view() {
             content: content.into(),
             ..request()
         };
-        let receipt = message::send(&binding, &message, &Native).unwrap();
+        message::send(&binding, &message, &Native).unwrap();
         let submitted = fixture.submitted();
         let wire: Value = serde_json::from_str(submitted["args"][4].as_str().unwrap()).unwrap();
         assert_eq!(wire["message"]["content"], content);
         assert!(wire.get("feedback_view").is_none());
         assert_eq!(
             submitted["args"][4],
-            serde_json::to_string(&receipt.envelope).unwrap()
+            format!(
+                "{{\"team\":\"message-test\",\"message\":{}}}",
+                serde_json::to_string(&message).unwrap()
+            )
         );
     }
 }
