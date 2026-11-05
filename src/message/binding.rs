@@ -167,7 +167,7 @@ fn same_team(dispatcher: &Context, worker: &Context) -> Result<()> {
 fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<Member> {
     let (context, session) = capture_context(config, peer)?;
     let value = get(config, &peer.handle, transport)?;
-    let opencode = crate::opencode::binding::capture(config, &context)?;
+    let opencode = crate::opencode::binding::capture(config, &context, peer)?;
     if config.runtime == Runtime::Core {
         let mut member = super::core::capture(
             context,
@@ -179,7 +179,15 @@ fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<M
         member.opencode = opencode;
         return Ok(member);
     }
-    let mut member = super::tui::capture(config, context, session, peer, &value, transport)?;
+    let mut member = super::tui::capture(
+        config,
+        context,
+        session,
+        peer,
+        &value,
+        opencode.as_ref().map(|e| &e.launcher),
+        transport,
+    )?;
     member.opencode = opencode;
     Ok(member)
 }

@@ -82,6 +82,10 @@ entry cannot start the user's shared service or run its startup prompt.
 App/core uses the same launch through its existing terminal.run/hc run path,
 keeping placement, native address/generation and environment isolation.
 
+Container process location identifies the foreground Rust launcher. Bindings also
+check the private endpoint's distinct native TUI process against the configured
+canonical OpenCode executable and cwd; these are separate process identities.
+
 The endpoint/password live in the instance's private 0600 file under its 0700
 registry directory. Public bindings/receipts contain identity facts and no
 password. Launcher, real TUI, native server and container handles are recorded

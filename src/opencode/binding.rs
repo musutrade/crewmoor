@@ -6,8 +6,8 @@ use crate::{
     Result,
     config::AgentKind,
     feedback::Context,
-    message::{Config, Member},
-    process::Identity,
+    message::{Config, Member, Peer},
+    process::{self, Identity},
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -36,12 +36,20 @@ impl From<&Endpoint> for Bound {
         }
     }
 }
-pub fn capture(config: &Config, context: &Context) -> Result<Option<Bound>> {
+pub fn capture(config: &Config, context: &Context, peer: &Peer) -> Result<Option<Bound>> {
     if context.registration.agent != AgentKind::OpenCode {
         return Ok(None);
     }
     let endpoint = endpoint::load(&config.feedback_registry, context)?;
     endpoint.verify(Duration::from_secs(10))?;
+    let executable = peer
+        .agent_executable
+        .as_deref()
+        .ok_or("missing native OpenCode executable")?;
+    let tui = process::agent_identity(endpoint.tui.pid, executable, &context.registration.cwd)?;
+    if tui != endpoint.tui {
+        return Err("OpenCode native TUI process differs from its endpoint".into());
+    }
     Ok(Some(Bound::from(&endpoint)))
 }
 pub fn check(config: &Config, member: &Member) -> Result<()> {

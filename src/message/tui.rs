@@ -16,6 +16,7 @@ pub fn capture(
     session: String,
     peer: &Peer,
     agent: &Value,
+    launcher: Option<&process::Identity>,
     transport: &impl Transport,
 ) -> Result<Member> {
     let handle = text(agent, "/pane_id")?;
@@ -23,11 +24,9 @@ pub fn capture(
         return Err("use the exact returned pane handle".into());
     }
     // A new binding always locates the Agent process; only saved bindings may lack it.
-    let executable = peer
-        .agent_executable
-        .as_deref()
-        .ok_or("TUI binding needs the Agent executable for process location")?;
-    let process = Some(observe(config, &context, &handle, executable, transport)?);
+    let process = Some(capture_process(
+        config, &context, &handle, peer, launcher, transport,
+    )?);
     let member = Member {
         context,
         handle,
@@ -40,6 +39,24 @@ pub fn capture(
     };
     session_matches(&member, agent)?;
     Ok(member)
+}
+fn capture_process(
+    config: &Config,
+    context: &Context,
+    handle: &str,
+    peer: &Peer,
+    launcher: Option<&process::Identity>,
+    transport: &impl Transport,
+) -> Result<process::Identity> {
+    let executable = launcher
+        .map(|p| p.executable.as_path())
+        .or(peer.agent_executable.as_deref())
+        .ok_or("TUI binding needs the Agent executable for process location")?;
+    let actual = observe(config, context, handle, executable, transport)?;
+    if launcher.is_some_and(|expected| expected != &actual) {
+        return Err("OpenCode pane is not its API-recorded launcher".into());
+    }
+    Ok(actual)
 }
 /// Agent kind must match; a container session, when present, must equal the registered one.
 pub fn session_matches(member: &Member, value: &Value) -> Result<()> {

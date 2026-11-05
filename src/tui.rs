@@ -104,6 +104,11 @@ fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     match runner.call(r, &args) {
         Ok(value) => {
             verify_target(r, &value["agent"])?;
+            if r.config.agent == crate::config::AgentKind::OpenCode {
+                r.opencode_native = Some(
+                    serde_json::json!({"source":"herdr/agent.start","scope":"reported root/subtree; may persist on home; not current-page proof","reported_session":value["agent"]["agent_session"],"bound_session_state":"unknown"}),
+                );
+            }
             r.accepted = Some(true);
             r.native_name = crate::native::optional_text(&value["agent"], "name")?.map(Into::into);
         }
@@ -158,9 +163,14 @@ fn observed_agent(r: &Record, info: &Value) -> Result<Option<process::Identity>>
     if matches.next().is_some() {
         return Err("multiple matching Agent processes; location unknown".into());
     }
+    let executable = if r.config.agent == crate::config::AgentKind::OpenCode {
+        crate::opencode::prepare::alias(r)
+    } else {
+        r.config.agent_executable.clone()
+    };
     Ok(Some(process::agent_identity(
         pid(value, "/pid")?,
-        &r.config.agent_executable,
+        &executable,
         &r.config.cwd,
     )?))
 }

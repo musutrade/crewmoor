@@ -43,7 +43,7 @@ impl Runner for Startup {
                 Ok(json!({"type":"pane_input_sent"}))
             }
             ("agent", "start") => Ok(
-                json!({"agent":{"pane_id":"w:p","terminal_id":"t","workspace_id":"w","name":"probe"}}),
+                json!({"agent":{"pane_id":"w:p","terminal_id":"t","workspace_id":"w","name":"probe","agent_session":{"kind":"id","value":"reported-subtree-B","source":"herdr:opencode"},"agent_status":"working"}}),
             ),
             _ => Err("unexpected native operation".into()),
         }
@@ -75,6 +75,11 @@ fn owned_posix_shell_export_precedes_exactly_one_official_start() {
     drop(shell.stdin.take());
     shell.wait().unwrap();
     result.unwrap();
+    let report = record.opencode_native.as_ref().unwrap();
+    assert_eq!(report["reported_session"]["value"], "reported-subtree-B");
+    assert_eq!(report["reported_session"]["source"], "herdr:opencode");
+    assert_eq!(report["bound_session_state"], "unknown");
+    assert_eq!(record.agent_status, "unknown");
     let calls = runner.calls.borrow();
     let configure = calls
         .iter()

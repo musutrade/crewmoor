@@ -136,7 +136,16 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
     let receiver = context(&registry, &cwd, "receiver", Some("ses_A"));
     let sender = context(&registry, &cwd, "sender", Some("ses_D"));
     let mut endpoint = private_endpoint(&registry, &receiver, &server, "ses_A");
-    private_endpoint(&registry, &sender, &server, "ses_D");
+    let mut sender_endpoint = private_endpoint(&registry, &sender, &server, "ses_D");
+    // The real foreground launcher and canonical native executable differ.
+    for (context, endpoint) in [(&receiver, &mut endpoint), (&sender, &mut sender_endpoint)] {
+        endpoint.tui = endpoint.server.clone();
+        fs::write(
+            crewmoor::opencode::endpoint::path(&registry, &context.instance).unwrap(),
+            serde_json::to_vec(endpoint).unwrap(),
+        )
+        .unwrap();
+    }
     let socket = root.path().join("container.sock");
     let _listener = UnixListener::bind(&socket).unwrap();
     let config = message::Config {
@@ -146,8 +155,8 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
         runtime_binary: "/unused/herdr".into(),
         socket,
         feedback_registry: registry.clone(),
-        dispatcher: peer(&receiver, "pA"),
-        worker: peer(&sender, "pD"),
+        dispatcher: native_peer(&receiver, "pA"),
+        worker: native_peer(&sender, "pD"),
     };
     let container = Container {
         calls: RefCell::new(Vec::new()),
@@ -183,6 +192,11 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
         feedback::show(&registry, &receiver.instance).unwrap()["latest_session_rejection"]
             .is_null()
     );
+}
+fn native_peer(context: &Context, pane: &str) -> Peer {
+    let mut peer = peer(context, pane);
+    peer.agent_executable = Some(env!("CARGO_BIN_EXE_opencode-fixture").into());
+    peer
 }
 
 fn config(root: &Path, context: &Context) -> Config {
@@ -237,7 +251,7 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     let context = context(&registry, root.path(), "probe", None);
     let mut config = config(root.path(), &context);
     config.initial_prompt = Some("启动 \"中文\" \\路径".into());
-    let record = Record::prepare(config, &root.path().join("launch")).unwrap();
+    let mut record = Record::prepare(config, &root.path().join("launch")).unwrap();
     prepare::prepare(&record).unwrap();
     // Library tests have a different current_exe; the CLI owns the real alias.
     fs::remove_file(prepare::alias(&record)).unwrap();
@@ -270,6 +284,18 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .as_ref()
         .ok()
         .and_then(|_| crewmoor::opencode::endpoint::load(&registry, &context).ok());
+    if let Some(endpoint) = &endpoint {
+        record.handle = Some("owned-pane".into());
+        crewmoor::tui::observe(
+            &mut record,
+            &Foreground {
+                pid: endpoint.launcher.pid,
+            },
+        )
+        .unwrap();
+        assert_eq!(record.agent_process.as_ref(), Some(&endpoint.launcher));
+        assert_ne!(endpoint.launcher.executable, endpoint.tui.executable);
+    }
     drop(child.stdin.take());
     let output = child.wait_with_output().unwrap();
     assert!(observed.unwrap().is_ok());
@@ -306,6 +332,20 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
             .as_deref(),
         Some("ses_A")
     );
+}
+
+struct Foreground {
+    pid: u32,
+}
+impl crewmoor::native::Runner for Foreground {
+    fn boot(&self, _: &Record) -> Result<process::Identity> {
+        Err("no boot in location test".into())
+    }
+    fn call(&self, _: &Record, _: &[String]) -> Result<Value> {
+        Ok(
+            json!({"process_info":{"pane_id":"owned-pane","foreground_processes":[{"name":"opencode","pid":self.pid}]}}),
+        )
+    }
 }
 
 struct CoreContainer {
