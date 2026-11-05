@@ -2,6 +2,12 @@
 
 Issue #2 selects Herdr TUI or core, cwd, team/role and Codex or Claude. It records request admission separately from actual process evidence, returns the native target, and ends only resources it created. All Agent semantic status is `unknown`: hooks belong to another Issue. Container ready/idle/working values, terminal output and process existence never become Agent status or business completion.
 
+OpenCode v2 extends these container paths with a foreground native stdio lease
+and [fixed-session API transport](opencode.md), tested against OpenCode 2.2.5,
+Herdr 0.9.5 and hc 0.1.17. Its recorded OSC/Herdr reports keep their native scope;
+they are not process-derived Agent state. The Issue #2 version table below is the
+historical baseline, not a claim that core remains installed at 0.1.15.
+
 ## Official interfaces first
 
 The [official TUI LLM index](https://herdr.dev/llms.txt) currently pins stable 0.9.5. Installed help/skill/schema and versioned [automation documentation](https://github.com/herdrdev/herdr/blob/v0.9.5/docs/next/website/src/content/docs/agent-automation.mdx) were checked before this simplification. Core is installed `hc 0.1.15`; its own `--skill` documents run/get/kill/rm. Online defaults may be newer than installed software.

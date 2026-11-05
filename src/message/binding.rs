@@ -165,11 +165,7 @@ fn same_team(dispatcher: &Context, worker: &Context) -> Result<()> {
     Ok(())
 }
 fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<Member> {
-    let context = model::load(&config.feedback_registry, &peer.instance)?;
-    // The Agent's own SessionStart (or explicit registration) is the identity; no wait loop.
-    let session = crate::feedback::registered_session(&config.feedback_registry, &context)?
-        .ok_or("native session not registered yet; bind after the Agent's SessionStart")?;
-    crate::feedback::require_unchanged(&config.feedback_registry, &context)?;
+    let (context, session) = capture_context(config, peer)?;
     let value = get(config, &peer.handle, transport)?;
     let opencode = crate::opencode::binding::capture(config, &context)?;
     if config.runtime == Runtime::Core {
@@ -186,6 +182,13 @@ fn capture(config: &Config, peer: &Peer, transport: &impl Transport) -> Result<M
     let mut member = super::tui::capture(config, context, session, peer, &value, transport)?;
     member.opencode = opencode;
     Ok(member)
+}
+fn capture_context(config: &Config, peer: &Peer) -> Result<(Context, String)> {
+    let context = model::load(&config.feedback_registry, &peer.instance)?;
+    let session = crate::feedback::registered_session(&config.feedback_registry, &context)?
+        .ok_or("native session not registered yet; bind after native association")?;
+    crate::feedback::require_unchanged(&config.feedback_registry, &context)?;
+    Ok((context, session))
 }
 fn default_runtime() -> Runtime {
     Runtime::Tui

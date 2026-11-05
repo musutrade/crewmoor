@@ -70,7 +70,7 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         "--",
     ]);
     if r.config.agent == crate::config::AgentKind::OpenCode {
-        args.extend(crate::opencode::prepare::arguments(&r.config));
+        args.extend(crate::opencode::prepare::tui_arguments(&r.config));
     } else {
         args.extend(r.config.agent_args.clone());
         args.extend(r.config.initial_prompt.clone());

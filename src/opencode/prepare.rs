@@ -94,6 +94,11 @@ pub fn arguments(config: &Config) -> Vec<String> {
     }
     args
 }
+pub fn tui_arguments(config: &Config) -> Vec<String> {
+    let mut args = vec!["--standalone".into()];
+    args.extend(config.agent_args.clone());
+    args
+}
 pub fn core_argv(record: &Record) -> Vec<String> {
     let mut argv = crate::app::child_prefix(true);
     argv.push(format!("{LAUNCH_ENV}={}", launch_file(record).display()));
@@ -116,6 +121,11 @@ pub fn workspace_env(record: &Record, args: &mut Vec<String>) {
         value,
         "--env".into(),
         format!("{LAUNCH_ENV}={}", launch_file(record).display()),
+        "--env".into(),
+        format!(
+            "OPENCODE_DB={}",
+            record.root.join("opencode.sqlite").display()
+        ),
     ]);
 }
 pub fn read() -> Result<Launch> {

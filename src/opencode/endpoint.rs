@@ -32,15 +32,19 @@ pub fn path(registry: &Path, instance: &str) -> Result<PathBuf> {
 }
 
 pub fn load(registry: &Path, context: &Context) -> Result<Endpoint> {
+    let bytes = private_file(registry, context)?;
+    let endpoint: Endpoint = serde_json::from_slice(&bytes)?;
+    endpoint.check_context(registry, context)?;
+    Ok(endpoint)
+}
+fn private_file(registry: &Path, context: &Context) -> Result<Vec<u8>> {
     let path = path(registry, &context.instance)?;
     let metadata = fs::symlink_metadata(&path)?;
     let owner = fs::metadata(model::instance_dir(registry, &context.instance)?)?;
     if !metadata.is_file() || metadata.mode() & 0o777 != 0o600 || metadata.uid() != owner.uid() {
         return Err("private OpenCode endpoint type/permissions/owner differs".into());
     }
-    let endpoint: Endpoint = serde_json::from_slice(&fs::read(path)?)?;
-    endpoint.check_context(registry, context)?;
-    Ok(endpoint)
+    Ok(fs::read(path)?)
 }
 
 impl Endpoint {

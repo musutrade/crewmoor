@@ -19,6 +19,38 @@ struct Fixture {
     input: Value,
     processes: Vec<Child>,
 }
+
+#[test]
+fn explicit_opencode_options_generate_without_root_model_flags_or_a_launch() {
+    let mut fixture = Fixture::new();
+    let role = &mut fixture.input["roles"][1];
+    role["agent"] = json!("opencode");
+    role["agent_executable"] = json!(env!("CARGO_BIN_EXE_opencode-fixture"));
+    role["agent_args"] = json!([]);
+    role["opencode"] = json!({"agent":"build","model":{"providerID":"fixture-provider","id":"fixture-model","variant":"xhigh"}});
+    let output = fixture.run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let team: Team = toml::from_str(&String::from_utf8(output.stdout).unwrap()).unwrap();
+    let role = team.role("worker").unwrap();
+    assert_eq!(role.agent, crewmoor::config::AgentKind::OpenCode);
+    assert!(role.agent_args.is_empty());
+    assert_eq!(
+        role.opencode
+            .as_ref()
+            .unwrap()
+            .model
+            .as_ref()
+            .unwrap()
+            .variant
+            .as_deref(),
+        Some("xhigh")
+    );
+    assert!(role.initial_prompt.as_ref().unwrap().contains("保留我"));
+}
 fn executable(root: &Path, name: &str, config: Value) -> PathBuf {
     let path = root.join(name);
     fs::copy(env!("CARGO_BIN_EXE_transport-fixture"), &path).unwrap();

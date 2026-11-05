@@ -104,6 +104,19 @@ and session rejection use the separate [Hook forwarding](hook-forward.md) path;
 unbound roles and the dispatcher's own events stay local. Neither path infers
 business completion from a native event.
 
+## OpenCode v2 native API facts
+
+OpenCode uses [the native session API and exact-session SSE](opencode.md), not
+Codex/Claude user hooks. The actual session.create response establishes its
+immutable main session; no SessionStart or Stop is synthesized. Raw native
+execution/retry/permission/form data and actual event names are retained in the
+same journal, with source native-api/native-sse and the existing versioned
+feedback_view. Other sessions are not silently associated. A volatile stream gap
+is unknown, without replay. Herdr's official root/subtree report and core's OSC
+terminal aggregate retain their own scope; neither changes the API binding when
+the user browses another page. Business reports and real authored receipt remain
+separate from native admission or a turn ending.
+
 ## Recorded real Claude path
 
 Tested source `15f73eae66ea71c5bba02cca178da5114ebbeeaf`, tree `279bdbb937da476719e5d2771347a4888b125216`, independently passed code/automatic audit (460 functions, max CRAP10, 25 quality +58 business tests). Its exact stable callback SHA256 is `bb277dde4366145175158b3439bfacb89de379289706df4464c3c31370b7e497`. It was atomically installed; native Hook definitions, Herdr/Orca entries and Codex trust configuration stayed unchanged.

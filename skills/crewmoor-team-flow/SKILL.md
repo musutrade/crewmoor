@@ -22,13 +22,14 @@ crewmoor team bind /returned/team_dir WORKER_ROLE
 随后直接在其返回的 pane / terminal 输入自然语言，不需要另建用户角色、自发自收
 消息或 binding。不保留外层调度 Agent，不收养既有会话。
 
-`team bind` 需要两端原生 SessionStart 已关联各自 session。它为每个 worker 写入
+`team bind` 需要两端原生关联已建立：Codex/Claude 用 SessionStart，OpenCode v2
+用本次私有原生 API session.create 返回的主 session。它为每个 worker 写入
 一次 `TEAM_DIR/roles/WORKER_ROLE/binding.json`，之后请求与回复都复用该文件；
 不要再用独立的 `message bind` 覆盖或重复创建。缺少 session/binding 时报告具体
 缺项一次，不轮询、不盲目重复启动、不自动 rebind。启动受理、进程位置和退出事实
 只用于资源定位，不等于 Agent ready 或业务完成。
 
-Codex 的 `initial_prompt` 使用原生启动 argv 传递一次启动说明，之后才进入团队消息
+Codex/OpenCode 的 `initial_prompt` 使用原生启动 argv 传递一次启动说明，之后才进入团队消息
 协议；core 模式同样如此，不依赖 `HERDR_ENV`。TUI / App/core 使用同一角色与消息
 约定，不在不同容器间另造 Agent 状态适配或恢复层。
 
@@ -115,6 +116,15 @@ Stop/SessionEnd 是通知，没有业务动作时不回复。确需派下一项�
 每条通知至多回复一次，不建立通用 ACK 循环。worker 仍须主动发送业务交接。
 
 ## 5. Session 变化
+
+OpenCode v2 始终经 CrewMoor 内部原生 API 投递到绑定主 session A；UI 浏览 B 仍发
+A，是明确采用的规则，不记 session-rejected/halt、不换 binding。Herdr 官方集成
+的 agent_session 是根/归属 subtree 报告，home 可能保留旧值，不能称严格当前页面
+或精确子 session 证明。core 不伪造 Herdr 标记；OSC 多 tab 汇总关联不明则 unknown。
+真实 endpoint/server/instance/session 归属缺失或不符、session 不存在仍拒发；提交
+不明不重发。原生 SSE 的 execution/retry/permission/form 名称及错误保持原样，
+断连缺口不重放，不伪造 Stop/SessionStart。详见 [OpenCode 契约](../../docs/opencode.md)。
+以下 Hook 会话变化约定继续用于 Codex/Claude。
 
 实例标记、Agent 类型和不可变原生 session 关联事件；cwd 只辅助首次未知 session
 的主 SessionStart，后续切换目录不等于换会话。无实例标记、不存在的实例或错误

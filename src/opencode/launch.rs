@@ -20,18 +20,10 @@ use std::{
 pub fn run(args: &[String]) -> Result<()> {
     let launch = prepare::read()?;
     let config = &launch.config;
-    if args != prepare::arguments(config) {
+    if args != prepare::arguments(config) && args != prepare::tui_arguments(config) {
         return Err("OpenCode launch arguments differ from owned config".into());
     }
-    let registry = config
-        .feedback_registry
-        .as_ref()
-        .ok_or("missing feedback_registry")?;
-    let instance = config
-        .feedback_instance
-        .as_deref()
-        .ok_or("missing feedback instance")?;
-    let context = model::load_for_agent(registry, instance, &crate::config::AgentKind::OpenCode)?;
+    let context = launch_context(config)?;
     let password = uuid::Uuid::new_v4().simple().to_string();
     let mut server = start_server(&launch, &password)?;
     let result = interact(&launch, &context, &password, &mut server);
@@ -43,6 +35,17 @@ pub fn run(args: &[String]) -> Result<()> {
         return Err("private OpenCode service exited unsuccessfully".into());
     }
     Ok(())
+}
+fn launch_context(config: &Config) -> Result<feedback::Context> {
+    let registry = config
+        .feedback_registry
+        .as_ref()
+        .ok_or("missing feedback_registry")?;
+    let instance = config
+        .feedback_instance
+        .as_deref()
+        .ok_or("missing feedback instance")?;
+    model::load_for_agent(registry, instance, &crate::config::AgentKind::OpenCode)
 }
 
 fn start_server(launch: &prepare::Launch, password: &str) -> Result<Child> {
@@ -60,6 +63,9 @@ fn start_server(launch: &prepare::Launch, password: &str) -> Result<Child> {
         )?);
     for key in crate::app::CHILD_MARKERS {
         command.env_remove(key);
+    }
+    if let Some(instance) = &launch.config.feedback_instance {
+        command.env(crate::feedback::INSTANCE_ENV, instance);
     }
     for key in [
         "HC_SOCKET",
@@ -108,6 +114,16 @@ fn connect(
     let api = Api::new(&url, password, Duration::from_secs(10))?;
     let info = api.get("/api/info")?;
     check_server(config, server, &info)?;
+    let session = create_session(config, context, &api)?;
+    super::events::start(config, context, &url, password)?;
+    Ok(Connected {
+        url,
+        password: password.into(),
+        info,
+        session,
+    })
+}
+fn create_session(config: &Config, context: &feedback::Context, api: &Api) -> Result<String> {
     let options = config.opencode.clone().unwrap_or_default();
     let made = api.post(
         "/api/session",
@@ -117,13 +133,7 @@ fn connect(
     let fact = api.session(&session)?;
     options.check_session(&fact)?;
     super::events::enroll(config, context, &made["data"])?;
-    super::events::start(config, context, &url, password)?;
-    Ok(Connected {
-        url,
-        password: password.into(),
-        info,
-        session,
-    })
+    Ok(session)
 }
 fn interact(
     launch: &prepare::Launch,
