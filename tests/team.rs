@@ -1,7 +1,11 @@
 #[path = "support/common.rs"]
 mod common;
+#[path = "support/opencode_watch.rs"]
+mod opencode_watch;
 #[path = "support/team_core_checks.rs"]
 mod team_core_checks;
+#[path = "support/team_opencode_checks.rs"]
+mod team_opencode_checks;
 use crewmoor::{
     config::{self, AgentKind, Host, Runtime},
     engine,
