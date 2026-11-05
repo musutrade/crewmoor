@@ -123,22 +123,63 @@ fn official_tui_arguments_do_not_repeat_host_alias_flags_or_poll_state() {
 }
 #[test]
 fn ambiguous_start_does_not_resend_and_process_location_is_independent() {
-    let (dir, cfg, fake) = common::setup(Runtime::Tui);
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        for agent in [AgentKind::Codex, AgentKind::Claude] {
+            uncertain_initial_prompt(runtime.clone(), agent);
+        }
+    }
+}
+fn uncertain_initial_prompt(runtime: Runtime, agent: AgentKind) {
+    let (dir, mut cfg, fake) = common::setup(runtime.clone());
+    cfg.agent = agent;
+    cfg.initial_prompt = Some("一次初始化：\"中文\"".into());
     *fake.ambiguous.borrow_mut() = true;
-    let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
+    let root = dir.path().join("i");
+    let outcome = engine::launch(cfg.clone(), &root, &fake);
+    let mut r = match runtime {
+        Runtime::Tui => outcome.unwrap(),
+        Runtime::Core => {
+            assert!(
+                outcome
+                    .unwrap_err()
+                    .to_string()
+                    .contains("input outcome unknown")
+            );
+            Record::load(&root).unwrap()
+        }
+    };
     assert!(r.request_issued);
     assert_eq!(r.accepted, None);
-    assert!(r.process_verified);
-    assert_eq!(r.request_error.as_deref(), Some("timeout"));
+    assert_eq!(r.process_verified, runtime == Runtime::Tui);
+    if runtime == Runtime::Tui {
+        assert_eq!(r.request_error.as_deref(), Some("timeout"));
+    } else {
+        assert_eq!(r.phase, "unknown-outcome");
+        assert!(r.handle.is_none());
+    }
+    let calls = fake.calls.borrow().len();
+    assert!(engine::launch(cfg, &root, &fake).is_err());
+    assert_eq!(fake.calls.borrow().len(), calls);
     assert_eq!(
         fake.calls
             .borrow()
             .iter()
-            .filter(|a| a.get(1).map(String::as_str) == Some("start"))
+            .flatten()
+            .filter(|a| a.as_str() == "一次初始化：\"中文\"")
             .count(),
         1
     );
-    engine::stop(&mut r, &fake).unwrap();
+    assert_eq!(
+        Record::load(&root)
+            .unwrap()
+            .config
+            .initial_prompt
+            .as_deref(),
+        Some("一次初始化：\"中文\"")
+    );
+    if runtime == Runtime::Tui {
+        engine::stop(&mut r, &fake).unwrap();
+    }
 }
 #[test]
 fn missing_agent_process_is_not_launch_success_but_owned_native_pane_can_end() {

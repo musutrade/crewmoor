@@ -246,14 +246,11 @@ fn model(value: Option<&String>) -> Result<()> {
     }
     Ok(())
 }
-/// Codex's native `codex [PROMPT]`: exactly one startup task; Claude takes none.
-pub fn initial_prompt(kind: &AgentKind, prompt: Option<&str>) -> Result<()> {
+/// CrewMoor input limits for one native startup prompt, shared by all supported Agents.
+pub fn initial_prompt(_kind: &AgentKind, prompt: Option<&str>) -> Result<()> {
     let Some(prompt) = prompt else {
         return Ok(());
     };
-    if !matches!(kind, AgentKind::Codex | AgentKind::OpenCode) {
-        return Err("initial prompt is only accepted for Codex or OpenCode".into());
-    }
     if prompt.trim().is_empty()
         || prompt.starts_with('-')
         || prompt.len() > 4096

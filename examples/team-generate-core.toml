@@ -12,6 +12,9 @@ role = "lead"
 cwd = "/absolute/project"
 agent = "claude"
 agent_args = []
+# Optional for any supported Agent: user-authorized, single-line, <=4096 UTF-8 bytes.
+# Persisted in config and startup argv; no secrets. Omit for no startup text.
+# initial_prompt = "Read the supplied initialization instructions."
 
 [[roles]]
 role = "worker"

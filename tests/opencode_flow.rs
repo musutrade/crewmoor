@@ -321,6 +321,27 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    let interactive: Vec<_> = native_rows
+        .iter()
+        .filter(|row| row["method"] == "TUI")
+        .collect();
+    assert_eq!(interactive.len(), 1);
+    assert_eq!(
+        interactive[0]["body"],
+        json!([
+            "--server",
+            endpoint.url,
+            "--session",
+            "ses_A",
+            "--prompt",
+            "启动 \"中文\" \\路径"
+        ])
+    );
+    assert_eq!(
+        rows.len(),
+        1,
+        "startup prompt must not be replayed through the API"
+    );
     assert!(
         native_rows
             .iter()

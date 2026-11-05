@@ -224,6 +224,8 @@ CrewMoor passes these IDs as native adoption labels. The connected App creates a
 
 ## Session integrity
 
+Roles may set optional `initial_prompt` with user-supplied or explicitly authorized initialization text. Codex/Claude receive one literal interactive positional prompt; OpenCode receives native `--prompt` on its API-created fixed main session. This occurs on the new role's native launch before binding; generate, bind and Hooks do not replay it. Omit the field for the existing behavior. CrewMoor currently requires nonblank text, at most 4096 UTF-8 bytes, no control characters (including newlines), and no leading `-`; these are CrewMoor restrictions. Configuration snapshots and startup argv retain the body: do not include passwords, API keys or tokens. Submission, actual receipt, guard invocation and configuration effect require separate evidence; see [initialization and failure handling](docs/team-launch.md#optional-initialization-with-initial_prompt).
+
 CrewMoor records each agent's native session at bind time. For Codex/Claude this comes from the Agent's Hook; a different Hook session records `session-rejected` and refuses normal sends while preserving the binding. Report the change once, without automatic rebind, restart or recovery. Rejected worker Hooks may forward one halt notice per event, with no transport deduplication; dispatcher events stay local. OpenCode instead pins its API-created main session and private endpoint: browsing UI B still sends to bound A, while a missing or changed real endpoint/session association is refused. View facts with `feedback show`; a turn ending is not business completion.
 
 ## No daemon
