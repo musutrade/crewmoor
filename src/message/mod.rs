@@ -41,6 +41,8 @@ pub struct Receipt<'a> {
     pub transport: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_turn: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_prompt: Option<crate::opencode::api::PromptReceipt>,
 }
 impl Message {
     fn validate(&self) -> Result<()> {
@@ -65,7 +67,7 @@ pub fn send<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route(binding, message, transport)?;
-    do_send(binding, recipient, message, None, transport)
+    do_send(binding, recipient, message, None, true, transport)
 }
 /// Send a halt notification to the dispatcher only.
 /// Skips the sender session check because the worker has a rejected session after `/clear`.
@@ -75,7 +77,7 @@ pub fn send_halt_to_dispatcher<'a>(
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = route_halt(binding, message, transport)?;
-    do_send(binding, recipient, message, None, transport)
+    do_send(binding, recipient, message, None, true, transport)
 }
 /// Add a readable copy only for the feedback producer's explicitly supplied fact.
 /// The legacy message content and all routing checks keep their existing semantics.
@@ -84,6 +86,7 @@ pub(crate) fn send_feedback<'a>(
     message: &'a Message,
     fact: &impl Serialize,
     is_halt: bool,
+    compact_stop: bool,
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let recipient = if is_halt {
@@ -95,7 +98,14 @@ pub(crate) fn send_feedback<'a>(
         version: 1,
         fact: serde_json::to_value(fact)?,
     };
-    do_send(binding, recipient, message, Some(view), transport)
+    do_send(
+        binding,
+        recipient,
+        message,
+        Some(view),
+        compact_stop,
+        transport,
+    )
 }
 fn route<'a>(
     binding: &'a Binding,
@@ -144,6 +154,7 @@ fn do_send<'a>(
     recipient: &'a Member,
     message: &'a Message,
     feedback_view: Option<FeedbackView>,
+    compact: bool,
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
     let envelope = Envelope {
@@ -151,11 +162,14 @@ fn do_send<'a>(
         feedback_view,
         message,
     };
-    let text = if envelope.feedback_view.is_some() {
+    let text = if envelope.feedback_view.is_some() && !compact {
         serde_json::to_string_pretty(&envelope)?
     } else {
         serde_json::to_string(&envelope)?
     };
+    if recipient.context.registration.agent == crate::config::AgentKind::OpenCode {
+        return send_opencode(binding, recipient, envelope, &text, transport);
+    }
     let args = match binding.config.runtime {
         crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
         crate::config::Runtime::Core => strings(&["send", &recipient.handle, &text]),
@@ -166,6 +180,38 @@ fn do_send<'a>(
         envelope,
         transport: "accepted",
         native_turn,
+        native_prompt: None,
+    })
+}
+fn send_opencode<'a>(
+    binding: &'a Binding,
+    recipient: &'a Member,
+    envelope: Envelope<'a>,
+    text: &str,
+    transport: &impl Transport,
+) -> Result<Receipt<'a>> {
+    let submitted = transport.session_prompt(&binding.config, recipient, text);
+    if submitted
+        .as_ref()
+        .is_err_and(|error| error.is::<NotStarted>())
+    {
+        return Err(NotStarted.into());
+    }
+    let verified = submitted
+        .and_then(|receipt| {
+            binding.guard()?;
+            binding.check(&binding.dispatcher, transport)?;
+            binding.check(&binding.worker, transport)?;
+            Ok(receipt)
+        })
+        .map_err(|error| {
+            format!("{SUBMISSION_UNCONFIRMED}: {error}; do not automatically resend")
+        })?;
+    Ok(Receipt {
+        envelope,
+        transport: "accepted",
+        native_turn: None,
+        native_prompt: Some(verified),
     })
 }
 fn submission(

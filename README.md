@@ -102,7 +102,9 @@ Read `roles[]` in the start result: select the role named by the configuration's
 requirements and decisions there in ordinary language; the human needs no
 separate role or self-binding. The launcher supplies `team_dir`, CLI path and
 worker binding paths to that dispatcher. Bind each worker after both native
-SessionStart events have established their sessions. If a session or binding
+associations exist: SessionStart for Codex/Claude, API-created main session for
+[OpenCode v2](docs/opencode.md). OpenCode messages target that fixed session even
+while its UI browses another one. If a session or binding
 is missing, report it once; do not poll, re-launch or adopt another session.
 `accepted` is launch admission, not Agent readiness or task completion.
 See the [complete handover chain](docs/team-launch.md).
@@ -222,7 +224,7 @@ CrewMoor passes these IDs as native adoption labels. The connected App creates a
 
 ## Session integrity
 
-CrewMoor records each agent's session ID at bind time (from the agent's own Hook, not inferred from the process). A different native session writes a visible `session-rejected` fact; subsequent normal sends involving that dispatcher or worker are refused, preserving the original binding and association. Stop dispatch to that role and report the change to the user. Do not automatically rebind, restart or recover it. Each rejected worker Hook event may forward one halt notice to an unchanged dispatcher. Multiple rejected events can therefore produce multiple notices; there is no transport deduplication. The dispatcher reports a halt to the user once. The dispatcher's own events stay local: the user is already in its pane, and there is no upstream Agent. View either role's facts with `feedback show`; a turn ending is not business completion.
+CrewMoor records each agent's native session at bind time. For Codex/Claude this comes from the Agent's Hook; a different Hook session records `session-rejected` and refuses normal sends while preserving the binding. Report the change once, without automatic rebind, restart or recovery. Rejected worker Hooks may forward one halt notice per event, with no transport deduplication; dispatcher events stay local. OpenCode instead pins its API-created main session and private endpoint: browsing UI B still sends to bound A, while a missing or changed real endpoint/session association is refused. View facts with `feedback show`; a turn ending is not business completion.
 
 ## No daemon
 

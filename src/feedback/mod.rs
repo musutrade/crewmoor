@@ -3,7 +3,7 @@ mod cli;
 mod event;
 mod forward;
 pub mod install;
-mod journal;
+pub(crate) mod journal;
 pub(crate) mod model;
 pub use cli::cli;
 pub use event::{ingest, report};
@@ -20,6 +20,30 @@ use std::path::Path;
 
 /// Journal source of a note that forwarding a recorded Hook event was not confirmed.
 pub const UNCONFIRMED: &str = "native-hook-unconfirmed";
+
+pub(crate) fn record_native(
+    registry: &Path,
+    context: &Context,
+    event: &Event,
+    transport: &impl Transport,
+) -> Result<()> {
+    match journal::record(registry, context, event, false)? {
+        Appended::Recorded(record) => {
+            if let Err(error) = try_forward(registry, &context.instance, &record, false, transport)
+            {
+                note_unconfirmed(
+                    registry,
+                    &context.instance,
+                    &record,
+                    false,
+                    &error.to_string(),
+                )?;
+            }
+            Ok(())
+        }
+        _ => Err("native OpenCode session event refused; binding retained".into()),
+    }
+}
 
 /// What one Hook callback did. The callback still answers the Agent with `{}`.
 pub struct HookOutcome {

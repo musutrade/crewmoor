@@ -89,7 +89,9 @@ For halt notifications `system_halt_notification` is `true` and `record.source` 
 `"session-rejected"`.
 
 The delivered envelope also includes a [version 1 `feedback_view`](feedback-view.md)
-with this same complete fact as an object. Read that pretty-printed object
+with this same complete fact as an object. Explicit native Stop notices use
+compact single-line JSON like ordinary messages; SessionEnd and halt notices
+retain their expanded formatting. Read the object
 directly; the legacy String content remains below it for existing consumers.
 This explicit view also covers halt notifications, preserves all message
 correlation fields, and never interprets ordinary JSON-looking message text.

@@ -32,6 +32,7 @@ fn four_combinations_use_native_handles_and_keep_hook_status_unknown() {
             cfg.agent_args = match agent {
                 AgentKind::Codex => strings(&["--no-alt-screen"]),
                 AgentKind::Claude => strings(&["--model", "claude-test-model"]),
+                AgentKind::OpenCode => Vec::new(),
             };
             *fake.minimal_agent.borrow_mut() = agent == AgentKind::Claude;
             let mut r = engine::launch(cfg, &dir.path().join("i"), &fake).unwrap();
@@ -294,6 +295,26 @@ fn native_absence_requires_not_found_and_pid_reuse_is_not_a_live_recorded_proces
     let mut identity = process::identity(std::process::id()).unwrap();
     identity.start_ticks = "old".into();
     assert!(process::exited(&identity).unwrap());
+}
+
+#[test]
+fn native_tui_pane_run_accepts_its_actual_empty_success_acknowledgement() {
+    let dir = common::directory();
+    let cfg = common::config(dir.path(), Runtime::Core);
+    let mut record = Record::prepare(cfg, &dir.path().join("i")).unwrap();
+    let args = strings(&["pane", "run", "owned-pane", "blank-ack"]);
+    assert!(Native.call(&record, &args).is_err());
+    record.config.runtime = Runtime::Tui;
+    assert_eq!(Native.call(&record, &args).unwrap(), Value::Null);
+    assert!(Native.call(&record, &strings(&["blank-ack"])).is_err());
+    assert!(
+        Native
+            .call(
+                &record,
+                &strings(&["pane", "run", "owned-pane", "fixture-failure"])
+            )
+            .is_err()
+    );
 }
 
 #[test]

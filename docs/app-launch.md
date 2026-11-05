@@ -1,6 +1,13 @@
 # App project placement
 
-This core mode launches Codex or Claude on an existing, confirmed App connection. Choose a project cwd and that connection's target profile; no manual Space creation or space/tab ID lookup is needed. CrewMoor records its own project placement IDs and sends official keep/adoption labels with `terminal.run`. The App creates unknown IDs or reuses their existing layout. Explicit existing-space binding remains supported. There is no GUI automation, connection creation, hooks or Agent status adapter.
+This core mode launches Codex, Claude or explicit OpenCode v2 on an existing,
+confirmed App connection. OpenCode reuses this placement and environment path
+with its [private native endpoint and fixed-session API](opencode.md). Choose a
+project cwd and that connection's target profile; no manual Space creation or
+space/tab ID lookup is needed. CrewMoor records its own project placement IDs and
+sends official keep/adoption labels with terminal.run. The App creates unknown IDs
+or reuses their existing layout. Explicit existing-space binding remains supported.
+There is no GUI automation, connection creation or inferred Agent status adapter.
 
 ## Versioned contract
 

@@ -118,7 +118,7 @@ fn run_params(r: &Record) -> Result<Value> {
         env[crate::feedback::INSTANCE_ENV] = json!(instance);
     }
     Ok(
-        json!({"argv":child_argv(&r.config),"cwd":r.config.cwd,"name":r.config.role,
+        json!({"argv":crate::core::launch_argv(r),"cwd":r.config.cwd,"name":r.config.role,
         "keep":true,"no_parent":true,"no_notify":true,"wait":false,"env":env,
         "labels":labels}),
     )

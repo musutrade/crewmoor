@@ -107,9 +107,10 @@ The shortest existing chain is:
    is not hooks state, readiness or business completion; an unknown start outcome
    must not be blindly repeated.
 2. Supply the team directory, CLI path and exact binding paths to the dispatcher.
-   A Codex `initial_prompt` may carry startup instructions through native argv,
+   A Codex or OpenCode `initial_prompt` may carry startup instructions through native argv,
    before later team messages. Keep workers waiting for assignments.
-3. After both genuine SessionStart hooks establish the pair's sessions, run
+3. After both native associations exist (SessionStart for Codex/Claude, actual
+   session.create for OpenCode), run
    `team bind TEAM_DIR WORKER_ROLE` once per worker. Report a missing session or
    binding once, without adding a polling loop or ready gate.
 4. The user continues directly in the dispatcher pane. The dispatcher authors
@@ -213,12 +214,13 @@ recorded; use `team stop` on the same directory.
 ### Codex initial prompt
 
 Codex creates its session only when the first prompt arrives, so an idle Codex has
-no SessionStart to bind to. For Codex only, `initial_prompt` passes exactly one
+no SessionStart to bind to. For Codex, `initial_prompt` passes exactly one
 startup task through native `codex [PROMPT]`. It must be 1..4096 bytes, have no
 control characters and not start with `-`. Other positional arguments are still
-rejected. Claude takes no initial prompt.
+rejected. Claude takes no initial prompt. OpenCode uses its native --prompt on
+the actual interactive child, after its API main session has been established.
 
-## Bind: one pair per worker, after the Agent's SessionStart
+## Bind: one pair per worker, after the native session association
 
 `team bind TEAM_DIR WORKER` binds one worker with the dispatcher and writes
 `roles/<worker>/binding.json` once. If either role has no session registered by
@@ -246,6 +248,13 @@ exactly the ones recorded by this team directory's launch records.
   container without env support causes trouble, go back to Agent-native means
   (Claude `--settings`, Codex `-c`) rather than per-container adapters. Neither is
   implemented here.
+
+OpenCode v2 uses [its fixed main-session API](opencode.md): an API-created session
+and private endpoint are pinned to the role; browsing another UI page leaves that
+binding unchanged. Its Herdr root/subtree report is not a strict page getter.
+Model/profile/variant are native session options, and startup text uses --prompt,
+not an unsupported root --model. The following session-change Hook rules retain
+their existing meaning for Codex/Claude.
 
 ## Session change halts the team
 

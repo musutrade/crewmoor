@@ -30,6 +30,9 @@ pub fn user_path(agent: &AgentKind) -> Result<PathBuf> {
     let (variable, fallback, file) = match agent {
         AgentKind::Codex => ("CODEX_HOME", ".codex", "hooks.json"),
         AgentKind::Claude => ("CLAUDE_CONFIG_DIR", ".claude", "settings.json"),
+        AgentKind::OpenCode => {
+            return Err("OpenCode uses its native session API, not user hooks".into());
+        }
     };
     let directory = std::env::var_os(variable)
         .map(PathBuf::from)

@@ -13,12 +13,14 @@ pub enum Runtime {
 pub enum AgentKind {
     Codex,
     Claude,
+    OpenCode,
 }
 impl AgentKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::OpenCode => "opencode",
         }
     }
 }
@@ -43,6 +45,10 @@ pub struct Config {
     pub host: Option<Host>,
     pub feedback_instance: Option<String>,
     pub initial_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<crate::opencode::Options>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_registry: Option<PathBuf>,
 }
 /// An existing TUI server that CrewMoor connects to but never owns or stops.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -90,8 +96,21 @@ impl Config {
     fn validate_options(&self) -> Result<()> {
         self.validate_host()?;
         self.validate_marker()?;
+        self.validate_opencode()?;
         validate_args(&self.agent, &self.agent_args)?;
         initial_prompt(&self.agent, self.initial_prompt.as_deref())
+    }
+    fn validate_opencode(&self) -> Result<()> {
+        if let Some(options) = &self.opencode {
+            if self.agent != AgentKind::OpenCode {
+                return Err("opencode options require agent=opencode".into());
+            }
+            options.validate()?;
+        }
+        if let Some(registry) = &self.feedback_registry {
+            absolute(registry)?;
+        }
+        Ok(())
     }
     fn validate_host(&self) -> Result<()> {
         let Some(host) = &self.host else {
@@ -107,7 +126,8 @@ impl Config {
         let Some(instance) = &self.feedback_instance else {
             return Ok(());
         };
-        if self.runtime == Runtime::Core && self.app.is_none() {
+        if self.runtime == Runtime::Core && self.app.is_none() && self.agent != AgentKind::OpenCode
+        {
             return Err("core feedback marker needs an existing App/core target".into());
         }
         crate::feedback::model::instance_dir(std::path::Path::new("/"), instance).map(|_| ())
@@ -125,6 +145,10 @@ impl Config {
     }
     pub fn argv(&self) -> Vec<String> {
         let mut args = vec![self.agent_executable.display().to_string()];
+        if self.agent == AgentKind::OpenCode {
+            args.extend(crate::opencode::prepare::arguments(self));
+            return args;
+        }
         if self.runtime == Runtime::Core
             && self.agent == AgentKind::Codex
             && !self.agent_args.iter().any(|a| a == "--no-daemon")
@@ -176,6 +200,10 @@ fn agent_arg<'a>(
     match kind {
         AgentKind::Codex => codex_arg(arg, values),
         AgentKind::Claude => claude_arg(arg, values),
+        AgentKind::OpenCode => match arg {
+            "--auto" => Ok(()),
+            _ => unsupported(),
+        },
     }
 }
 fn codex_arg<'a>(arg: &str, values: &mut impl Iterator<Item = &'a String>) -> Result<()> {
@@ -223,8 +251,8 @@ pub fn initial_prompt(kind: &AgentKind, prompt: Option<&str>) -> Result<()> {
     let Some(prompt) = prompt else {
         return Ok(());
     };
-    if *kind != AgentKind::Codex {
-        return Err("initial prompt is only accepted for Codex".into());
+    if !matches!(kind, AgentKind::Codex | AgentKind::OpenCode) {
+        return Err("initial prompt is only accepted for Codex or OpenCode".into());
     }
     if prompt.trim().is_empty()
         || prompt.starts_with('-')

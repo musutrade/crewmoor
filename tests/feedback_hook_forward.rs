@@ -153,13 +153,16 @@ impl Fixture {
     }
 
     fn last_envelope(&self) -> Value {
+        serde_json::from_str(&self.last_text()).unwrap()
+    }
+
+    fn last_text(&self) -> String {
         let submitted: Value = serde_json::from_slice(
             &fs::read(self.binding.config.socket.with_extension("submitted")).unwrap(),
         )
         .unwrap();
         let text = submitted["args"][4].as_str().unwrap();
-        assert!(text.contains("\"feedback_view\": {\n"));
-        serde_json::from_str(text).unwrap()
+        text.to_owned()
     }
 
     fn last_message_content(&self) -> Value {
@@ -259,6 +262,25 @@ fn event_filter_stop_and_sessionend_forwarded_others_are_not() {
         assert!(fixture.worker_hook(event));
     }
     assert_eq!(fixture.submissions(), 2, "Stop and SessionEnd must forward");
+}
+
+#[test]
+fn only_explicit_native_stop_uses_compact_wire_with_the_complete_same_fact() {
+    let fixture = Fixture::new();
+    assert!(fixture.worker_hook("Stop"));
+    let text = fixture.last_text();
+    assert!(!text.contains('\n'));
+    assert!(!text.contains("\"feedback_view\": {"));
+    let fact = fixture.last_message_content();
+    assert_eq!(fact["record"]["source"], "native-hook");
+    assert_eq!(fact["record"]["event"], "Stop");
+    assert_eq!(fact["record"], fixture.events()[0]);
+    let wire = fixture.last_envelope();
+    assert_eq!(wire["message"]["from"], "worker");
+    assert_eq!(wire["message"]["to"], "dispatcher");
+    assert_eq!(wire["message"]["reply_to"], Value::Null);
+    assert!(fixture.worker_hook("SessionEnd"));
+    assert!(fixture.last_text().contains("\"feedback_view\": {\n"));
 }
 
 #[test]

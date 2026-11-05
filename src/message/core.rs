@@ -30,11 +30,16 @@ pub fn instance(config: &Config, transport: &impl Transport) -> Result<()> {
     }
     Ok(())
 }
-pub fn capture(context: Context, peer: &Peer, value: &Value) -> Result<Member> {
+pub fn capture(
+    context: Context,
+    peer: &Peer,
+    value: &Value,
+    launcher: Option<&process::Identity>,
+) -> Result<Member> {
     if text(value, "/address")? != peer.handle {
         return Err("use the exact local core address".into());
     }
-    let identity = capture_process(&context, peer, value)?;
+    let identity = capture_process(&context, peer, value, launcher)?;
     let member = Member {
         context,
         handle: peer.handle.clone(),
@@ -43,15 +48,24 @@ pub fn capture(context: Context, peer: &Peer, value: &Value) -> Result<Member> {
         core: Some(identity),
         native_session: None,
         process: None,
+        opencode: None,
     };
     verify(&member, value)?;
     Ok(member)
 }
-fn capture_process(context: &Context, peer: &Peer, value: &Value) -> Result<Identity> {
+fn capture_process(
+    context: &Context,
+    peer: &Peer,
+    value: &Value,
+    launcher: Option<&process::Identity>,
+) -> Result<Identity> {
     let executable = peer
         .agent_executable
         .as_deref()
         .ok_or("missing core Agent executable")?;
+    let actual_executable = launcher
+        .map(|p| p.executable.as_path())
+        .unwrap_or(executable);
     let identity = Identity {
         created_ms: value["created_ms"]
             .as_u64()
@@ -59,11 +73,17 @@ fn capture_process(context: &Context, peer: &Peer, value: &Value) -> Result<Iden
         argv: serde_json::from_value(value["argv"].clone())?,
         process: process::agent_identity(
             pid(value, "/pid")?,
-            executable,
+            actual_executable,
             &context.registration.cwd,
         )?,
     };
-    check_argv(&identity, executable)?;
+    if let Some(launcher) = launcher {
+        if &identity.process != launcher {
+            return Err("OpenCode terminal is not its API-recorded launch".into());
+        }
+    } else {
+        check_argv(&identity, executable)?;
+    }
     Ok(identity)
 }
 fn check_argv(identity: &Identity, executable: &std::path::Path) -> Result<()> {

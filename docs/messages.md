@@ -2,9 +2,13 @@
 
 Issue #9 adds a message entry for one fixed dispatcher/worker pair; Issue #11 adds
 the existing herdr-core socket path. Both roles use the same local runtime socket.
-Only Codex and Claude identities are accepted,
+Codex, Claude and explicit OpenCode v2 identities are accepted,
 using the existing AgentKind and Issue #4 feedback contexts. This entry does not
 launch, register with Herdr, rename, move or close an Agent, pane or server.
+OpenCode uses a [fixed native-session API transport](opencode.md), in both
+runtimes: binding A while browsing B still delivers to A. It does not fall back
+to the UI page or replace the binding. The following historical container prompt
+and Hook descriptions apply to the Codex/Claude path unless stated otherwise.
 
 For TUI, the shortest official chain is `herdr agent get PANE` to locate the existing
 Agent, then `herdr agent prompt PANE TEXT`. The recipient authors a reply and
@@ -72,6 +76,11 @@ role are refused and the binding is kept unchanged. Herdr's
 registered session; when absent, the bound process identity is required. Saved
 bindings without `native_session`/`process` remain readable. Core has no
 container session field and keeps its existing terminal/process checks.
+For OpenCode, the native API-created main session and private endpoint/process
+identity are additionally pinned. Herdr's reported root/subtree is retained as a
+source fact, not a current-page condition. A send returns the native prompt
+`id/sessionID/delivery` separately from a core terminal turn; native admission
+still requires an authored CrewMoor response to establish actual receipt.
 
 ## Send and actively reply
 
@@ -104,7 +113,8 @@ Ordinary messages keep this exact compact envelope and String content, including
 JSON-looking text. Only explicit Hook/report-to forwarding adds a versioned
 [`feedback_view`](feedback-view.md) alongside `message`, with the complete fact
 as a readable object and the legacy content preserved. That feedback envelope
-is pretty-printed; consumers rejecting unknown envelope fields need the
+is expanded except for explicit native Stop Hook notices, which use the ordinary
+compact single-line format while retaining the full view/content. Consumers rejecting unknown envelope fields need the
 documented additive-field migration. No content-based type detection occurs.
 
 Before prompting, the entry checks the same socket instance and both fixed
@@ -199,7 +209,7 @@ granted by bind, and the message entry never stops them.
 
 Core has **no native Agent session field**. `Terminal.identity` describes the
 terminal program/version, not an Agent session. The feedback context's explicit
-native session association is operator-supplied; core only verifies terminal
+native session association for Codex/Claude is operator-supplied; core only verifies terminal
 and kernel process facts. It cannot independently prove whether the Agent
 switched conversations inside that process. A new Claude test can use its
 native `--session-id` and actual Issue #4 SessionStart to establish that

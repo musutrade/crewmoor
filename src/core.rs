@@ -88,6 +88,9 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
     Ok(args)
 }
 pub fn launch_argv(r: &Record) -> Vec<String> {
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        return crate::opencode::prepare::core_argv(r);
+    }
     match r.config.app {
         Some(_) => crate::app::child_argv(&r.config),
         None => r.config.argv(),
@@ -137,6 +140,11 @@ fn verify_identity(r: &Record, value: &Value) -> Result<()> {
     Ok(())
 }
 pub fn observe(r: &mut Record, value: Value) -> Result<()> {
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        r.opencode_native = Some(
+            serde_json::json!({"source":"native-osc7501/core-terminal.get","scope":"terminal aggregate and native records; no selected-session proof","reported":value["reported"],"status":value["status"],"records":value["records"],"bound_session_state":"unknown"}),
+        );
+    }
     r.native_name = crate::native::optional_text(&value, "name")?.map(Into::into);
     let current = observed_process(r, &value)?;
     r.process_verified = process::remember(&mut r.agent_process, current)?;
@@ -146,9 +154,14 @@ fn observed_process(r: &Record, value: &Value) -> Result<Option<process::Identit
     if value["pid"].is_null() || value["state"] != "live" {
         return Ok(None);
     }
+    let executable = if r.config.agent == crate::config::AgentKind::OpenCode {
+        crate::opencode::prepare::alias(r)
+    } else {
+        r.config.agent_executable.clone()
+    };
     Ok(Some(process::agent_identity(
         pid(value, "/pid")?,
-        &r.config.agent_executable,
+        &executable,
         &r.config.cwd,
     )?))
 }

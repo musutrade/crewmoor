@@ -154,7 +154,12 @@ pub fn show(registry: &Path, instance: &str) -> Result<Value> {
     let root = model::instance_dir(registry, instance)?;
     let _lock = crate::record::Lock::take(&root)?;
     let events = read_events(&root)?;
-    let last_hook = events.iter().rev().find(|e| e.source == "native-hook");
+    let last_hook = events.iter().rev().find(|e| {
+        matches!(
+            e.source.as_str(),
+            "native-hook" | "native-api" | "native-sse"
+        )
+    });
     let last_report = events.iter().rev().find(|e| e.source.ends_with("-report"));
     let rejected = events.iter().rev().find(|e| e.source == REJECTED);
     let hook_rejected = events.iter().rev().find(|e| e.source == HOOK_REJECTED);

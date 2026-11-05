@@ -53,6 +53,7 @@ struct RoleInput {
     agent_args: Vec<String>,
     initial_prompt: Option<String>,
     tab_id: Option<String>,
+    opencode: Option<crate::opencode::Options>,
 }
 
 struct Discovered {
@@ -227,6 +228,7 @@ fn role(input: RoleInput) -> Result<Role> {
         agent_args: input.agent_args,
         initial_prompt: input.initial_prompt,
         tab_id: input.tab_id,
+        opencode: input.opencode,
     })
 }
 fn version(binary: &Path) -> Result<String> {

@@ -13,7 +13,25 @@ pub fn create(r: &mut Record, runner: &impl Runner) -> Result<()> {
     }
     r.container_id = Some(container(r, &server)?);
     create_workspace(r, runner)?;
+    configure_opencode_entry(r, runner)?;
     request_agent(r, runner)
+}
+fn configure_opencode_entry(r: &mut Record, runner: &impl Runner) -> Result<()> {
+    if r.config.agent != crate::config::AgentKind::OpenCode {
+        return Ok(());
+    }
+    let pane = r.handle.as_deref().ok_or("missing returned pane")?;
+    let value = runner.call(r, &strings(&["pane", "process-info", "--pane", pane]))?;
+    let info = &value["process_info"];
+    if info["pane_id"].as_str() != Some(pane) {
+        return Err("startup shell pane changed".into());
+    }
+    let shell = shell_process(info).ok_or("missing owned startup shell")?;
+    let command = crate::opencode::prepare::tui_path(r, &shell.executable)?;
+    r.terminal_process = Some(shell);
+    r.save()?;
+    runner.call(r, &strings(&["pane", "run", pane, &command]))?;
+    Ok(())
 }
 fn expected_version(r: &Record) -> Result<&str> {
     if let Some(host) = &r.config.host {
@@ -42,6 +60,9 @@ pub fn workspace_args(r: &Record) -> Vec<String> {
         args.push("--env".into());
         args.push(format!("{}={instance}", crate::feedback::INSTANCE_ENV));
     }
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        crate::opencode::prepare::workspace_env(r, &mut args);
+    }
     args
 }
 fn create_workspace(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -66,8 +87,12 @@ pub fn launch_args(r: &Record) -> Result<Vec<String>> {
         "5000",
         "--",
     ]);
-    args.extend(r.config.agent_args.clone());
-    args.extend(r.config.initial_prompt.clone());
+    if r.config.agent == crate::config::AgentKind::OpenCode {
+        args.extend(crate::opencode::prepare::tui_arguments(&r.config));
+    } else {
+        args.extend(r.config.agent_args.clone());
+        args.extend(r.config.initial_prompt.clone());
+    }
     Ok(args)
 }
 fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
@@ -79,6 +104,11 @@ fn request_agent(r: &mut Record, runner: &impl Runner) -> Result<()> {
     match runner.call(r, &args) {
         Ok(value) => {
             verify_target(r, &value["agent"])?;
+            if r.config.agent == crate::config::AgentKind::OpenCode {
+                r.opencode_native = Some(
+                    serde_json::json!({"source":"herdr/agent.start","scope":"reported root/subtree; may persist on home; not current-page proof","reported_session":value["agent"]["agent_session"],"bound_session_state":"unknown"}),
+                );
+            }
             r.accepted = Some(true);
             r.native_name = crate::native::optional_text(&value["agent"], "name")?.map(Into::into);
         }
@@ -133,9 +163,14 @@ fn observed_agent(r: &Record, info: &Value) -> Result<Option<process::Identity>>
     if matches.next().is_some() {
         return Err("multiple matching Agent processes; location unknown".into());
     }
+    let executable = if r.config.agent == crate::config::AgentKind::OpenCode {
+        crate::opencode::prepare::alias(r)
+    } else {
+        r.config.agent_executable.clone()
+    };
     Ok(Some(process::agent_identity(
         pid(value, "/pid")?,
-        &r.config.agent_executable,
+        &executable,
         &r.config.cwd,
     )?))
 }

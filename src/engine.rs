@@ -18,6 +18,7 @@ pub fn launch(mut config: Config, root: &Path, runner: &impl Runner) -> Result<R
     Ok(record)
 }
 fn start(record: &mut Record, runner: &impl Runner) -> Result<()> {
+    crate::opencode::prepare::prepare(record)?;
     connect_instance(record, runner)?;
     create(record, runner)?;
     inspect(record, runner)
@@ -131,6 +132,7 @@ pub fn confirm_target_exit(record: &Record) -> Result<()> {
     {
         process::wait_exited(identity)?;
     }
+    crate::opencode::confirm_exit(record)?;
     Ok(())
 }
 fn socket_absent(record: &Record) -> Result<()> {

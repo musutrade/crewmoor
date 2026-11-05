@@ -11,6 +11,10 @@ toml = "1"
 uuid = { version = "1", features = ["v4"] }
 
 tempfile = "3"
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json"] }
+
+[dev-dependencies]
+libc = "=0.2.191"
 
 [[bin]]
 name = "transport-fixture"
@@ -19,3 +23,7 @@ path = "tests/support/transport.rs"
 [[bin]]
 name = "gh-fixture"
 path = "tests/support/gh.rs"
+
+[[bin]]
+name = "opencode-fixture"
+path = "tests/support/opencode.rs"

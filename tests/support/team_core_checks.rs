@@ -19,6 +19,15 @@ const FIXTURE: &str = env!("CARGO_BIN_EXE_transport-fixture");
 struct Host<'a>(&'a common::Fake);
 impl Runner for Host<'_> {
     fn call(&self, r: &Record, args: &[String]) -> crewmoor::Result<Value> {
+        if r.config.agent == AgentKind::OpenCode && args.first().is_some_and(|arg| arg == "run") {
+            let (method, params) = crewmoor::app::request(r, args)?;
+            assert_eq!(method, "terminal.run");
+            assert_eq!(params["argv"], json!(crewmoor::core::launch_argv(r)));
+            let alias = crewmoor::opencode::prepare::alias(r);
+            // Synthetic host uses the transport process, not a native OpenCode TUI.
+            fs::remove_file(&alias)?;
+            std::os::unix::fs::symlink(FIXTURE, alias)?;
+        }
         self.0.call(r, args)
     }
     fn boot(&self, _r: &Record) -> crewmoor::Result<process::Identity> {
@@ -121,17 +130,15 @@ agent_version = "fixture 1"
         self.state().join("teams/core")
     }
     fn start(&self) -> crewmoor::Result<Value> {
+        self.start_team(self.team())
+    }
+    fn start_team(&self, team: team::Team) -> crewmoor::Result<Value> {
         let mut next = 0;
-        team::start(
-            self.team(),
-            &self.state(),
-            &mut layout(self),
-            &mut |cfg, root| {
-                let fake = &self.fakes[next];
-                next += 1;
-                engine::launch(cfg, root, &Host(fake))
-            },
-        )
+        team::start(team, &self.state(), &mut layout(self), &mut |cfg, root| {
+            let fake = &self.fakes[next];
+            next += 1;
+            engine::launch(cfg, root, &Host(fake))
+        })
     }
     /// Roles start dispatcher first: lead uses fake 0, worker fake 1.
     fn fake(&self, role: &str) -> &common::Fake {
@@ -260,6 +267,42 @@ fn core_team_start_launches_each_role_in_the_existing_app_core_with_markers() {
     assert!(worker.config.argv().contains(&"--no-daemon".to_owned()));
     let again = setup.start().unwrap_err().to_string();
     assert!(again.contains("team directory exists"));
+}
+
+#[test]
+fn opencode_core_team_app_target_retains_the_private_launch_argv_and_identity() {
+    let setup = Setup::new();
+    let mut team = setup.team();
+    for role in &mut team.roles {
+        role.agent = AgentKind::OpenCode;
+        role.agent_version = "opencode v2.2.5".into();
+        role.agent_args.clear();
+        role.initial_prompt = Some("single native bootstrap".into());
+    }
+    setup.start_team(team).unwrap();
+    for role in ["lead", "worker"] {
+        let record = setup.record(role);
+        let args = crewmoor::core::launch_args(&record).unwrap();
+        let (_, params) = crewmoor::app::request(&record, &args).unwrap();
+        let argv: Vec<String> = serde_json::from_value(params["argv"].clone()).unwrap();
+        let alias = crewmoor::opencode::prepare::alias(&record);
+        assert!(argv.contains(&alias.display().to_string()));
+        let launch_env = format!(
+            "{}={}",
+            crewmoor::opencode::prepare::LAUNCH_ENV,
+            crewmoor::opencode::prepare::launch_file(&record).display()
+        );
+        assert!(argv.contains(&launch_env));
+        assert_eq!(argv.iter().filter(|arg| *arg == "--prompt").count(), 1);
+        assert_eq!(
+            record.agent_process.as_ref().unwrap().executable,
+            alias.canonicalize().unwrap()
+        );
+        assert!(record.process_verified);
+        assert!(!record.server_owned);
+        assert!(record.config.app_target.is_none());
+        assert!(record.config.app.is_some());
+    }
 }
 #[test]
 fn core_team_bind_uses_the_app_target_identity_and_messages_through_core() {
