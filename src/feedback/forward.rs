@@ -79,7 +79,7 @@ fn forward(
         reply_to: None,
         content: serde_json::to_string(&fact)?,
     };
-    let delivery = message::send(binding, &message, transport)?;
+    let delivery = message::send_feedback(binding, &message, &fact, false, transport)?;
     Ok(json!({"recorded":true,"delivery":delivery}))
 }
 
@@ -107,10 +107,6 @@ pub(super) fn forward_hook_event(
         reply_to: None,
         content: serde_json::to_string(&fact)?,
     };
-    let delivery = if is_halt {
-        message::send_halt_to_dispatcher(binding, &message, transport)?
-    } else {
-        message::send(binding, &message, transport)?
-    };
+    let delivery = message::send_feedback(binding, &message, &fact, is_halt, transport)?;
     Ok(json!({"forwarded":true,"halt":is_halt,"delivery":delivery}))
 }

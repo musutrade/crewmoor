@@ -136,6 +136,35 @@ fn same_entry_transports_request_and_explicit_reply_without_claiming_receipt_or_
     assert!(view["latest_business_report"].is_null());
 }
 #[test]
+fn ordinary_content_is_never_interpreted_as_a_feedback_view() {
+    let fixture = Fixture::new();
+    let binding = fixture.binding();
+    for content in [
+        "{\"feedback_instance\":\"ordinary\",\"record\":{\"event\":\"Stop\"}}",
+        "{\"feedback_view\":{\"version\":1,\"fact\":{}}}",
+        "{invalid JSON",
+        "中文 \"quotes\" \\path\nnext line",
+        "plain text",
+    ] {
+        let message = Message {
+            content: content.into(),
+            ..request()
+        };
+        message::send(&binding, &message, &Native).unwrap();
+        let submitted = fixture.submitted();
+        let wire: Value = serde_json::from_str(submitted["args"][4].as_str().unwrap()).unwrap();
+        assert_eq!(wire["message"]["content"], content);
+        assert!(wire.get("feedback_view").is_none());
+        assert_eq!(
+            submitted["args"][4],
+            format!(
+                "{{\"team\":\"message-test\",\"message\":{}}}",
+                serde_json::to_string(&message).unwrap()
+            )
+        );
+    }
+}
+#[test]
 fn identity_changes_reject_before_prompt_for_each_original_identity_field() {
     for field in [
         "agent",
