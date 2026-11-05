@@ -82,7 +82,9 @@ Codex/OpenCode 的 `initial_prompt` 使用原生启动 argv 传递一次启动�
 显式 Hook/report-to 反馈的信封可带 `feedback_view.version = 1`，其中 `fact`
 直接提供完整反馈对象；消息 ID、角色和 `reply_to` 仍读原 `message`。原 String
 `message.content` 保留兼容，旧信封或未知视图版本沿用原消息路径；普通文本不按
-JSON 外观自动解包。Stop 的语义和下述交接要求不因此改变。
+JSON 外观自动解包。原生 Stop Hook 通知使用与普通消息相同的紧凑单行 JSON，
+完整 fact/view/content 仍保留；report-to、SessionEnd 与 halt 保持原展示。
+Stop 的语义和下述交接要求不因此改变。
 
 dispatcher 是唯一派工者。worker 等待有效任务后执行，只按已授权范围推进；长任务
 主动报告发现、限制和下一步，不把等待变成反复读取对方文件或状态。

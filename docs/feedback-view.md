@@ -1,7 +1,11 @@
 # Readable forwarded feedback
 
-Hook forwarding and `feedback report-to` deliver a pretty-printed JSON envelope
-with an explicit `feedback_view`. Read `feedback_view.fact` directly for the
+Hook forwarding and `feedback report-to` deliver a JSON envelope with an explicit
+`feedback_view`. Native Stop Hook notifications use compact single-line JSON,
+matching ordinary message formatting while retaining the complete view and String
+content. Authored report-to, SessionEnd and halt forwarding keep their expanded
+format. Only the explicit native Stop producer selects the compact form; ordinary
+content that mentions Stop is never inspected. Read `feedback_view.fact` for the
 complete feedback, and `message` for its id, roles and reply correlation:
 
 ```json
@@ -35,7 +39,8 @@ complete feedback, and `message` for its id, roles and reply correlation:
 }
 ```
 
-This is a shape example, not a real receipt. The readable fact and the legacy
+This is an expanded shape example for documentation, not literal Stop wire or a
+real receipt. Actual Stop wire has no formatting newlines. The fact and the legacy
 content are serialized from the same exact record returned by this append, not
 from the latest journal entry. The view preserves the full existing fact:
 instance, task, Agent, evidence and all recorded event fields. It does not expose

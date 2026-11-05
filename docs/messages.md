@@ -113,7 +113,8 @@ Ordinary messages keep this exact compact envelope and String content, including
 JSON-looking text. Only explicit Hook/report-to forwarding adds a versioned
 [`feedback_view`](feedback-view.md) alongside `message`, with the complete fact
 as a readable object and the legacy content preserved. That feedback envelope
-is pretty-printed; consumers rejecting unknown envelope fields need the
+is expanded except for explicit native Stop Hook notices, which use the ordinary
+compact single-line format while retaining the full view/content. Consumers rejecting unknown envelope fields need the
 documented additive-field migration. No content-based type detection occurs.
 
 Before prompting, the entry checks the same socket instance and both fixed

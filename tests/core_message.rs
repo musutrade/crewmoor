@@ -95,7 +95,11 @@ fn assert_readable_core_feedback(send: &serde_json::Value, event: &str) {
     assert_eq!(send["wait"], false);
     assert!(send.get("if").is_none());
     let text = send["text"].as_str().unwrap();
-    assert!(text.contains("\"feedback_view\": {\n"));
+    if event == "Stop" {
+        assert!(!text.contains('\n'));
+    } else {
+        assert!(text.contains("\"feedback_view\": {\n"));
+    }
     let wire: serde_json::Value = serde_json::from_str(text).unwrap();
     let legacy: serde_json::Value =
         serde_json::from_str(wire["message"]["content"].as_str().unwrap()).unwrap();

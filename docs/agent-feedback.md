@@ -104,6 +104,11 @@ and session rejection use the separate [Hook forwarding](hook-forward.md) path;
 unbound roles and the dispatcher's own events stay local. Neither path infers
 business completion from a native event.
 
+Explicit native Stop notifications use compact single-line JSON, preserving the
+full fact, machine feedback_view and legacy String content. Report-to and other
+Hook/halt formatting remain unchanged; ordinary JSON-looking content is never
+used to select this presentation.
+
 ## OpenCode v2 native API facts
 
 OpenCode uses [the native session API and exact-session SSE](opencode.md), not
