@@ -151,8 +151,7 @@ fn trace(method: &str, path: &str, body: &Value) -> Result<()> {
     let Some(pathname) = std::env::var_os("CM_OPENCODE_TEST_TRACE") else {
         return Ok(());
     };
-    let row =
-        json!({"method":method,"path":path,"body":body,"native_path":std::env::var("PATH").ok()});
+    let row = json!({"method":method,"path":path,"body":body,"native_path":std::env::var("PATH").ok(),"native_db":std::env::var("OPENCODE_DB").ok()});
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)

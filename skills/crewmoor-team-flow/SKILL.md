@@ -126,6 +126,9 @@ A，是明确采用的规则，不记 session-rejected/halt、不换 binding。H
 真实 endpoint/server/instance/session 归属缺失或不符、session 不存在仍拒发；提交
 不明不重发。原生 SSE 的 execution/retry/permission/form 名称及错误保持原样，
 断连缺口不重放，不伪造 Stop/SessionStart。详见 [OpenCode 契约](../../docs/opencode.md)。
+OpenCode 使用调用者原生 OPENCODE_DB（含 unset）保留既有认证；私有 API/lease
+不等于独占 DB。只操作本次 session.create 返回的新 session/owned cwd，不枚举或
+读取用户既有 session/history/memory，不导入/复制凭据，不删除原生 DB 或改 provider。
 以下 Hook 会话变化约定继续用于 Codex/Claude。
 
 实例标记、Agent 类型和不可变原生 session 关联事件；cwd 只辅助首次未知 session

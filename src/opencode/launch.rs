@@ -57,7 +57,6 @@ fn start_server(launch: &prepare::Launch, password: &str) -> Result<Child> {
         .args(["serve", "--stdio", "--port", "0", "--hostname", "127.0.0.1"])
         .current_dir(&launch.config.cwd)
         .env("OPENCODE_PASSWORD", password)
-        .env("OPENCODE_DB", launch.root.join("opencode.sqlite"))
         .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

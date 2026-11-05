@@ -23,7 +23,13 @@ pub struct Launch {
 impl Launch {
     fn capture(record: &Record) -> Result<Self> {
         let mut environment = BTreeMap::new();
-        for key in ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"] {
+        for key in [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_STATE_HOME",
+            "OPENCODE_DB",
+        ] {
             let value = std::env::var_os(key)
                 .map(|v| v.into_string().map_err(|_| "non-UTF8 child environment"))
                 .transpose()?;

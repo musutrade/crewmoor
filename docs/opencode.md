@@ -59,9 +59,12 @@ A foreground Rust launch holds the official stdin ownership lease of
 readiness URL once, authenticates with a temporary child-only password, checks
 server.info PID/version, creates and GETs the actual main session, and starts
 `opencode --server URL --session ID` with the same private authentication.
-The original config/HOME/tool/proxy paths are restored in these children;
-the task has its own SQLite DB. Provider authentication must be validated for
-that actual setup; an idle zero-model probe alone does not establish it.
+The original config/HOME/tool/proxy paths and OPENCODE_DB (including unset) are
+restored in these children. OpenCode v2 stores credentials and sessions in the
+same native database; forcing an empty DB hides the user's configured providers.
+The actual server therefore uses the caller's native DB, which may be shared.
+Provider authentication still needs real validation; an idle zero-model probe
+alone does not establish it. CrewMoor does not copy or import credentials.
 
 `--standalone` hides its random credential inside the TUI, so it cannot supply
 this external API transport. It is not combined with `--server`. CrewMoor does
@@ -75,8 +78,8 @@ installed executable ahead of the workspace environment. This startup setting
 requires a known POSIX shell (bash, dash/sh, zsh or ksh); other shells are refused.
 Only that new workspace's PATH changes; native children retain the initialized
 shell's tool PATH with just this launch's private entry removed.
-The outer official start receives --standalone and the owned DB environment. The
-Rust entry consumes that selector; its actual interactive child receives --server
+The outer official start receives --standalone and an owned fallback DB. The
+Rust entry restores the caller's DB and consumes that selector; its actual interactive child receives --server
 and the configured --prompt, with no --standalone. Thus an unselected private
 entry cannot start the user's shared service or run its startup prompt.
 App/core uses the same launch through its existing terminal.run/hc run path,
@@ -92,6 +95,13 @@ password. Launcher, real TUI, native server and container handles are recorded
 separately. A TUI exit closes the native lease; a container-ending launcher also
 closes it through OS descriptor ownership. Stop verifies the captured native
 process exits. A terminal exit alone is not proof that backend work ended.
+
+Ownership covers the private endpoint/lease, returned containers and exact new
+session IDs, not exclusive ownership of the native DB. Tests may interrupt/delete
+only sessions actually created and returned for that test and owned location,
+before closing their private service. Do not enumerate/read existing user
+sessions, histories or memory, remove the native DB or edit credential/provider
+settings. Preserve uncertain cleanup results without automatically repeating them.
 
 ## Native facts and receipt semantics
 
