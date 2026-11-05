@@ -24,11 +24,13 @@ Herdr TUI 的 LLM 索引当前位于站点根路径，不要猜成 `/tui/llms.tx
 
 ## 3. Agent 自身已有能力直接复用
 
-当前仅适配 Codex 和 Claude；其他 Agent 暂不接入，不预建通用插件框架。Agent 原生启动参数、会话能力、任务执行及反馈能力能够满足需求时直接使用，不在容器适配层重新实现。
+Agent 接入范围为 Codex、Claude 和 OpenCode v2；OpenCode v2 的接入方案与实施状态见 [Issue #55](https://github.com/musutrade/crewmoor/issues/55)，范围获准不代表实现已完成。其他 Agent 暂不接入，不预建通用插件框架。Agent 原生启动参数、会话能力、任务执行及反馈能力能够满足需求时直接使用，不在容器适配层重新实现。
 
-Agent 的所有状态以 Agent hooks 提供的状态为准；直接复用 Codex、Claude 已有的 hooks 能力，不从终端输出、进程存活或容器状态推断 Agent 状态，也不为不同容器另建状态适配。hooks 未提供状态时只报告未知，不补猜状态。容器句柄、进程启动与退出事实仅用于资源定位和安全结束，不代替 hooks 状态。
+Agent 的所有状态仅以可证明来自 Agent 原生报告的事实为准；直接复用 Codex、Claude 已有的 hooks 能力，并将 OpenCode v2 原生事件与 OSC 7501 纳入可信状态来源。不从屏幕文字、终端画面、进程存活或容器状态推断 Agent 状态，也不为不同容器另建状态适配。容器原样传递的 Agent 原生报告可以复用，但容器自身的状态不替代 Agent 报告。原生报告未提供状态，或来源、语义无法确认时，只报告未知，不补猜状态。容器句柄、进程启动与退出事实仅用于资源定位和安全结束，不代替 Agent 原生状态报告。
 
-只记录实际版本的 hooks 能提供且语义明确的状态，不为凑齐状态增加容器推断或 ready 门槛。Agent 的业务进展和完成结果仍由 Agent/skill 主动反馈；会话启动、轮次结束或进程退出不等于业务完成。
+只记录实际版本的原生报告能提供且语义明确的状态，不为凑齐状态增加容器推断或 ready 门槛。Agent 的业务进展和完成结果仍由 Agent/skill 主动反馈；会话启动、轮次结束或进程退出不等于业务完成。
+
+OpenCode v2 接入优先使用 Rust 调用原生接口。若 Rust 原生接口确实无法满足团队 session/反馈要求，先记录具体能力缺口与最小方案，再提交用户讨论；不默认授权新增 CrewMoor 自有 JS/TS 插件。
 
 hooks 状态接入见 [Issue #4](https://github.com/musutrade/crewmoor/issues/4)；Issue #2 只负责启动、定位和自有资源安全结束，不增加 ready 门槛、状态反馈协议或 hooks 实现。
 
