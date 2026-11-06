@@ -114,6 +114,7 @@ cwd = "{base}"
 agent = "claude"
 agent_executable = "{FIXTURE}"
 agent_version = "fixture 1"
+initial_prompt = "Claude 初始化：\"原样\""
 "#,
             base = self.base().display(),
         );
@@ -257,6 +258,16 @@ fn core_team_start_launches_each_role_in_the_existing_app_core_with_markers() {
         let (method, params) = crewmoor::app::request(&record, run).unwrap();
         assert_eq!(method, "terminal.run");
         assert_eq!(params["env"], json!({INSTANCE_ENV: setup.instance(role)}));
+        let prompt = record.config.initial_prompt.as_ref().unwrap();
+        assert_eq!(
+            params["argv"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|arg| arg.as_str() == Some(prompt))
+                .count(),
+            1
+        );
         assert!(!calls.iter().any(|c| c[..] == ["server", "start"]));
     }
     let worker = setup.record("worker");
@@ -267,6 +278,16 @@ fn core_team_start_launches_each_role_in_the_existing_app_core_with_markers() {
     assert!(worker.config.argv().contains(&"--no-daemon".to_owned()));
     let again = setup.start().unwrap_err().to_string();
     assert!(again.contains("team directory exists"));
+    for fake in &setup.fakes {
+        assert_eq!(
+            fake.calls
+                .borrow()
+                .iter()
+                .filter(|call| call[0] == "run")
+                .count(),
+            1
+        );
+    }
 }
 
 #[test]
@@ -318,6 +339,17 @@ fn core_team_bind_uses_the_app_target_identity_and_messages_through_core() {
     assert_eq!(bound["dispatcher_session"], "lead-session");
     assert_eq!(bound["worker_session"], "worker-session");
     assert!(team::bind(&dir, "worker", &core).is_err());
+    assert!(core.sends.borrow().is_empty());
+    for fake in &setup.fakes {
+        assert_eq!(
+            fake.calls
+                .borrow()
+                .iter()
+                .filter(|call| call[0] == "run")
+                .count(),
+            1
+        );
+    }
     let binding: Binding =
         serde_json::from_slice(&fs::read(dir.join("roles/worker/binding.json")).unwrap()).unwrap();
     assert_eq!(binding.config.core_id.as_deref(), Some("own-core"));

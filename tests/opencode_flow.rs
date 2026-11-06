@@ -1,4 +1,6 @@
 //! Synthetic protocol/process regressions; not real OpenCode model acceptance.
+#[path = "support/opencode_watch.rs"]
+mod opencode_watch;
 use crewmoor::{
     Result,
     config::{AgentKind, Config, Runtime},
@@ -8,20 +10,15 @@ use crewmoor::{
     process,
     record::Record,
 };
+use opencode_watch::watch;
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
-    ffi::CString,
-    fs::{self, File},
-    io::{BufRead, BufReader, Read},
-    os::{
-        fd::{AsRawFd, FromRawFd},
-        unix::{ffi::OsStrExt, fs::symlink, net::UnixListener},
-    },
+    fs,
+    io::{BufRead, BufReader},
+    os::unix::{fs::symlink, net::UnixListener},
     path::Path,
     process::{Child, Command, Stdio},
-    sync::mpsc,
-    thread,
     time::Duration,
 };
 
@@ -202,45 +199,6 @@ fn native_peer(context: &Context, pane: &str) -> Peer {
 fn config(root: &Path, context: &Context) -> Config {
     serde_json::from_value(json!({"team":"opencode-unit","role":"probe","runtime":"core","cwd":root,"store":root.join("store"),"runtime_binary":"/unused/hc","runtime_version":"hc 0.1.17","agent":"opencode","agent_executable":env!("CARGO_BIN_EXE_opencode-fixture"),"agent_version":"opencode v2.2.5","feedback_registry":root.join("registry"),"feedback_instance":context.instance,"opencode":{"agent":"build","model":{"id":"test-model","providerID":"test-provider","variant":"test-variant"}}})).unwrap()
 }
-fn watch(directory: &Path) -> mpsc::Receiver<std::io::Result<()>> {
-    let descriptor = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
-    assert!(descriptor >= 0);
-    let file = unsafe { File::from_raw_fd(descriptor) };
-    let directory = CString::new(directory.as_os_str().as_bytes()).unwrap();
-    let watch = unsafe {
-        libc::inotify_add_watch(file.as_raw_fd(), directory.as_ptr(), libc::IN_CLOSE_WRITE)
-    };
-    assert!(watch >= 0);
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(closed_endpoint(file));
-    });
-    rx
-}
-fn closed_endpoint(mut file: File) -> std::io::Result<()> {
-    let mut buffer = [0u8; 4096];
-    loop {
-        let size = file.read(&mut buffer)?;
-        if contains_endpoint(&buffer[..size]) {
-            return Ok(());
-        }
-    }
-}
-fn contains_endpoint(bytes: &[u8]) -> bool {
-    let mut offset = 0;
-    while offset + std::mem::size_of::<libc::inotify_event>() <= bytes.len() {
-        let event = unsafe {
-            std::ptr::read_unaligned(bytes.as_ptr().add(offset).cast::<libc::inotify_event>())
-        };
-        offset += std::mem::size_of::<libc::inotify_event>();
-        let name = &bytes[offset..offset + event.len as usize];
-        if name.split(|b| *b == 0).next() == Some(b"opencode-endpoint.json".as_slice()) {
-            return true;
-        }
-        offset += event.len as usize;
-    }
-    false
-}
 #[test]
 fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     let root = tempfile::Builder::new()
@@ -321,6 +279,27 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
+    let interactive: Vec<_> = native_rows
+        .iter()
+        .filter(|row| row["method"] == "TUI")
+        .collect();
+    assert_eq!(interactive.len(), 1);
+    assert_eq!(
+        interactive[0]["body"],
+        json!([
+            "--server",
+            endpoint.url,
+            "--session",
+            "ses_A",
+            "--prompt",
+            "启动 \"中文\" \\路径"
+        ])
+    );
+    assert_eq!(
+        rows.len(),
+        1,
+        "startup prompt must not be replayed through the API"
+    );
     assert!(
         native_rows
             .iter()

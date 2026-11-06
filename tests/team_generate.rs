@@ -51,6 +51,41 @@ fn explicit_opencode_options_generate_without_root_model_flags_or_a_launch() {
     );
     assert!(role.initial_prompt.as_ref().unwrap().contains("保留我"));
 }
+
+#[test]
+fn generation_preserves_optional_initialization_for_each_agent_and_runtime() {
+    for agent in ["codex", "claude", "opencode"] {
+        for core in [false, true] {
+            for prompt in [None, Some("初始化：\"中文\" '引号' \\路径 $(literal)")] {
+                let mut fixture = Fixture::new();
+                let executable = match agent {
+                    "opencode" => PathBuf::from(env!("CARGO_BIN_EXE_opencode-fixture")),
+                    name => fixture.root().join("bin").join(name),
+                };
+                let role = &mut fixture.input["roles"][1];
+                role["agent"] = json!(agent);
+                role["agent_executable"] = json!(executable);
+                role["agent_args"] = json!([]);
+                role.as_object_mut().unwrap().remove("initial_prompt");
+                if let Some(prompt) = prompt {
+                    role["initial_prompt"] = json!(prompt);
+                }
+                let server = core.then(|| fixture.core("0.1.17", "actual-core", layout()));
+                let team = parse(&fixture.run(&[]));
+                assert_choices(&team, &fixture.input);
+                assert_eq!(
+                    team.role("worker").unwrap().initial_prompt.as_deref(),
+                    prompt
+                );
+                assert!(!fixture.root().join("registry").exists());
+                assert!(!fixture.root().join("teams").exists());
+                if let Some(server) = server {
+                    assert_eq!(server.join().unwrap().len(), 2);
+                }
+            }
+        }
+    }
+}
 fn executable(root: &Path, name: &str, config: Value) -> PathBuf {
     let path = root.join(name);
     fs::copy(env!("CARGO_BIN_EXE_transport-fixture"), &path).unwrap();
@@ -392,7 +427,7 @@ fn exact_launch_constraints_are_checked_without_changing_caller_cwd_or_args() {
             }
             "bad-args" => f.input["roles"][0]["agent_args"] = json!(["--invented"]),
             "bad-prompt" => {
-                f.input["roles"][0]["initial_prompt"] = json!("Claude positional prompt forbidden")
+                f.input["roles"][0]["initial_prompt"] = json!("invalid\nstartup prompt")
             }
             "bad-tui-arg-control" => {
                 f.input["roles"][0]["agent_args"] = json!(["--model", "bad\nmodel"])

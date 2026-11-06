@@ -10,7 +10,7 @@ historical baseline, not a claim that core remains installed at 0.1.15.
 
 ## Official interfaces first
 
-The [official TUI LLM index](https://herdr.dev/llms.txt) currently pins stable 0.9.5. Installed help/skill/schema and versioned [automation documentation](https://github.com/herdrdev/herdr/blob/v0.9.5/docs/next/website/src/content/docs/agent-automation.mdx) were checked before this simplification. Core is installed `hc 0.1.15`; its own `--skill` documents run/get/kill/rm. Online defaults may be newer than installed software.
+The [official TUI LLM index](https://herdr.dev/llms.txt) currently pins stable 0.9.5. Installed help/skill/schema and versioned [automation documentation](https://github.com/herdrdev/herdr/blob/v0.9.5/docs/next/website/src/content/docs/agent-automation.mdx) were checked before this simplification. The historical Issue #2 inspection used `hc 0.1.15`; #59 checked installed `hc 0.1.17`, including its own `--skill` and schema. The table below retains the historical paths/versions. Online defaults may be newer than installed software.
 
 | Runtime | Minimal native chain |
 |---|---|
@@ -22,7 +22,7 @@ TUI calls `agent start ROLE --kind codex|claude --pane RETURNED_PANE --timeout 5
 
 The official start request runs the kind's executable name plus passed arguments ([server implementation](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/agents.rs#L185)); it has no executable-path override. Configuration pins an executable/version for preflight and checks the resulting kernel executable/cwd once. An unexpected executable is not adopted.
 
-On this machine the existing Codex alias already supplies `--no-daemon`. The TUI example passes only `--no-alt-screen`; it does not repeat the alias flag. A plain installation without that alias can explicitly configure `--no-daemon`. Core invokes the configured canonical executable directly and adds `--no-daemon` once. Claude never receives Codex flags. Only model selection, these supported Codex flags and Issue #15's single Codex `initial_prompt` are allowed; no other task/prompt, shell startup mutation or authentication command is generated. TUI rejects control bytes as its official API does. The container performs argument quoting; CrewMoor no longer builds shell command strings.
+On this machine the existing Codex alias already supplies `--no-daemon`. The TUI example passes only `--no-alt-screen`; it does not repeat the alias flag. A plain installation without that alias can explicitly configure `--no-daemon`. Core invokes the configured canonical executable directly and adds `--no-daemon` once. Claude never receives Codex flags. Ordinary `agent_args` retain their Agent-specific whitelist. Optional `initial_prompt` uses Codex/Claude's interactive positional prompt or OpenCode's fixed-session interactive `--prompt`, once on native startup before binding. Its CrewMoor input limits and persistence/secret warning are documented in [team initialization](team-launch.md#optional-initialization-with-initial_prompt). No authorization text or authentication command is generated. TUI rejects control bytes as its official API does. The container performs argument quoting; CrewMoor no longer builds shell command strings.
 
 ## Build and use
 
@@ -35,7 +35,7 @@ CARGO_TARGET_DIR="$PWD/target" cargo +stable run --locked --manifest-path tools/
 
 Every invocation uses its own absolute target directory, inherited by all Cargo/LLVM children. Root `Cargo.toml` is a business crate, not N/A. Fmt, zero-suppression policy, Clippy `-D warnings`, actual tests/LLVM coverage and per-function CRAP ≤10 all remain required. No shared target is cleaned.
 
-Choose an example from `examples/` and pin the installed versions. Current inspected versions are TUI 0.9.5, core 0.1.15, Codex 0.166.0 and Claude 2.1.316. Both kinds accept `--model`; only Codex accepts `-m`, `--no-alt-screen` and `--no-daemon`.
+Choose an example from `examples/` and pin the installed versions. The 2026-11-05 #59 inspection found TUI 0.9.5, hc 0.1.17, Codex 0.166.0, Claude 2.1.318 and OpenCode 2.2.5. Codex/Claude accept `--model`; only Codex accepts `-m`, `--no-alt-screen` and `--no-daemon`. OpenCode uses [native session model options](opencode.md#configuration), not a root `--model` flag. These installed CLI facts do not establish an arbitrary running server's version; check the selected endpoint separately.
 
 ```text
 crewmoor launch /absolute/config.toml /tmp/fresh-state
@@ -54,8 +54,11 @@ server instead of a private one: no boot, `server_owned=false`,
 `binding_scope=workspace`, and the owner binding is `<store>/<team>.<role>.json`
 so several roles of one team share the server. With `feedback_instance`,
 `workspace create` adds `--env CREWMOOR_FEEDBACK_INSTANCE=...`; on an App/core
-target the same key goes into `terminal.run` `env`. Codex may take one
-`initial_prompt`. Stop closes only the own pane and empty own workspace and never
+target the same key goes into `terminal.run` `env`. Codex/Claude may take one
+positional `initial_prompt`; OpenCode uses `--prompt` on the actual interactive
+child attached to its API-created main session. See [initialization timing and
+limits](team-launch.md#optional-initialization-with-initial_prompt).
+Stop closes only the own pane and empty own workspace and never
 calls `session stop`. See [team launch](team-launch.md).
 
 ## End only this target

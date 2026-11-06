@@ -107,7 +107,7 @@ The shortest existing chain is:
    is not hooks state, readiness or business completion; an unknown start outcome
    must not be blindly repeated.
 2. Supply the team directory, CLI path and exact binding paths to the dispatcher.
-   A Codex or OpenCode `initial_prompt` may carry startup instructions through native argv,
+   A Codex, Claude or OpenCode `initial_prompt` may carry startup instructions through native argv,
    before later team messages. Keep workers waiting for assignments.
 3. After both native associations exist (SessionStart for Codex/Claude, actual
    session.create for OpenCode), run
@@ -176,7 +176,7 @@ role = "lead"
 cwd = "/absolute/project"
 agent = "claude"
 agent_executable = "/home/gem/.local/bin/claude"
-agent_version = "2.1.316 (Claude Code)"
+agent_version = "2.1.318 (Claude Code)"
 
 [[roles]]
 role = "worker"
@@ -211,14 +211,71 @@ unchanged.
 A failed role stops `team start` with that role named. Already-started roles stay
 recorded; use `team stop` on the same directory.
 
-### Codex initial prompt
+### Optional initialization with `initial_prompt`
 
-Codex creates its session only when the first prompt arrives, so an idle Codex has
-no SessionStart to bind to. For Codex, `initial_prompt` passes exactly one
-startup task through native `codex [PROMPT]`. It must be 1..4096 bytes, have no
-control characters and not start with `-`. Other positional arguments are still
-rejected. Claude takes no initial prompt. OpenCode uses its native --prompt on
-the actual interactive child, after its API main session has been established.
+Each role may provide one `initial_prompt`, for Codex, Claude or OpenCode. Omit it
+to keep the existing launch without startup text. `team generate` preserves the
+caller-supplied text; it never invents authorization, business tasks or tool
+commands. The same existing field carries initialization instructions: there is
+no second initialization field or delivery path.
+
+CrewMoor currently requires nonblank text of at most 4096 **UTF-8 bytes**, no
+control characters (including newline/tab), and no leading `-`. These are
+CrewMoor input restrictions, not Agent-native limits. Chinese, quotes, backslashes
+and spaces are preserved literally as one argument; rejected input is never
+truncated or rewritten. Ordinary `agent_args` keep their separate whitelist and
+cannot supply another prompt or a print-mode command.
+
+Only use text supplied by the user or an explicitly authorized configuration.
+The role snapshot in `team.json`, launch `record.json` and native startup argv
+retain it. Keep passwords, API keys, tokens and other secrets out of the body;
+an authorization-scope description is not a secret credential. CrewMoor does not
+install/configure a guard or expand permissions on the user's behalf.
+
+The single submission opportunity is the native launch of this newly created
+role, **before `team bind`**. Codex establishes its native session when the first
+prompt arrives; it cannot require a pre-existing binding for this text. Claude
+uses the native interactive `claude "query"` entry, without `-p`/`--print`.
+OpenCode creates and fixes main session A first, then passes `--prompt` to the
+actual interactive child attached to A. Its outer TUI launch selector carries
+no copy of the prompt. Browsing session B afterward never changes the binding.
+
+| Agent / runtime | Shortest startup path and returned identity |
+|---|---|
+| Codex / TUI | `workspace create` → returned pane/terminal/workspace → `agent start ROLE --kind codex --pane PANE --timeout 5000 -- [ARGS] PROMPT` → native SessionStart association |
+| Claude / TUI | `workspace create` → returned pane/terminal/workspace → `agent start ROLE --kind claude --pane PANE --timeout 5000 -- [ARGS] PROMPT` → native SessionStart association |
+| OpenCode / TUI | owned workspace/private PATH → `agent start ROLE --kind opencode --pane PANE --timeout 5000 -- --standalone [ARGS]` → existing Rust launcher → private stdio API lease → `session.create` returns A → interactive `opencode --server URL --session A --prompt PROMPT` |
+| Codex / core | existing App/core target → `terminal.run` with env and literal argv → `codex --no-daemon [ARGS] PROMPT` → returned address/generation and native SessionStart association |
+| Claude / core | existing App/core target → `terminal.run` with env and literal argv → `claude [ARGS] PROMPT` → returned address/generation and native SessionStart association |
+| OpenCode / core | `terminal.run` returns address/generation for existing Rust launcher → private stdio API lease → `session.create` returns A → interactive `opencode --server URL --session A --prompt PROMPT` |
+
+These describe the implemented native paths, not real Agent/guard acceptance.
+Check actual installed versions and retain per-run evidence in the task's batch.
+For each of the six combinations record the CrewMoor SHA, Agent/container/guard
+versions, exact resource/session identity, startup admission, native submission
+event, authored receipt of the same body, guard invocation, expected allow/reject
+result and configuration effect separately. Codex/Claude's expected
+`UserPromptSubmit` must be observed, not inferred from argv support or a reply.
+OpenCode uses its own native submission/check path; do not synthesize that Hook
+name. Mark absent evidence as unknown or unverified, and a proven missing native
+integration as unsupported. A prompt cannot guarantee lasting tool enforcement.
+
+After launch, `team start` never supplements the prompt with another send.
+Generation, binding, native SessionStart/Stop and later business messages do not
+replay it. Repeating `team start` with the same team directory is refused; an
+explicitly created new team is a new initialization. Repeated binding refuses
+overwrite and does not resubmit text. This is one launch path, not an exactly-once
+transport guarantee.
+
+On failure, retain the named role, stage, launch record and native error. A
+pre-submit failure is distinct from a native rejection or a post-submit unknown
+outcome; admission, process location and round completion do not establish Agent
+receipt, guard execution or configuration effect. If processing is uncertain,
+report unknown and inspect only the owned native facts/recipient evidence. Do
+not relaunch, resend the body or rebind automatically. If a required guard is
+bypassed by native startup, record the specific gap and seek agreement on a
+minimal supplement before changing the delivery path. Later business traffic
+continues through the fixed `crewmoor message send` binding.
 
 ## Bind: one pair per worker, after the native session association
 

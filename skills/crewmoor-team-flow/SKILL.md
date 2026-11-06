@@ -29,9 +29,19 @@ crewmoor team bind /returned/team_dir WORKER_ROLE
 缺项一次，不轮询、不盲目重复启动、不自动 rebind。启动受理、进程位置和退出事实
 只用于资源定位，不等于 Agent ready 或业务完成。
 
-Codex/OpenCode 的 `initial_prompt` 使用原生启动 argv 传递一次启动说明，之后才进入团队消息
+Codex/Claude 的 `initial_prompt` 使用原生交互 positional prompt，OpenCode 在原生 API
+建立固定主 session 后使用交互子进程的 `--prompt`；都在 `team bind` 前经同一启动路径
+传递一次说明，之后才进入团队消息
 协议；core 模式同样如此，不依赖 `HERDR_ENV`。TUI / App/core 使用同一角色与消息
 约定，不在不同容器间另造 Agent 状态适配或恢复层。
+
+正文只由用户或明确授权的配置提供，不生成工具专用命令或扩大授权。CrewMoor 当前
+限制为非空/不全空白、最多 4096 UTF-8 字节、不含控制字符（含换行）、不以 `-`
+开头；不是 Agent 原生限制，不截断改写。正文随 `team.json`、launch record 和 argv
+保留，禁止放密码、key、token 等秘密。未配置时不添加正文。
+generate、bind、Hook、start 返回及普通消息不补发；重复 start/bind 拒绝覆盖，部分
+失败或结果不明不 relaunch、重发或 rebind，不承诺 exactly-once。分别核实原生提交、
+Agent 实际收到、guard 调用及配置生效；不能确认的事实报 unknown，不能以受理或回复代替。
 
 ## 2. 业务消息是平铺 JSON
 

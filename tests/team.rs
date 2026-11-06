@@ -1,7 +1,11 @@
 #[path = "support/common.rs"]
 mod common;
+#[path = "support/opencode_watch.rs"]
+mod opencode_watch;
 #[path = "support/team_core_checks.rs"]
 mod team_core_checks;
+#[path = "support/team_opencode_checks.rs"]
+mod team_opencode_checks;
 use crewmoor::{
     config::{self, AgentKind, Host, Runtime},
     engine,
@@ -71,6 +75,7 @@ cwd = "{base}"
 agent = "claude"
 agent_executable = "{FIXTURE}"
 agent_version = "fixture 1"
+initial_prompt = "Claude 初始化：\"原样\""
 "#,
             base = self.base().display(),
             socket = self.socket.display(),
@@ -186,10 +191,24 @@ fn team_start_injects_markers_creates_directory_once_and_reports_absolute_path()
             .unwrap()
             .last()
             .unwrap(),
-        "--"
+        "Claude 初始化：\"原样\""
     );
     let again = setup.start().unwrap_err().to_string();
     assert!(again.contains("team directory exists"));
+    for fake in &setup.fakes {
+        assert_eq!(
+            fake.calls
+                .borrow()
+                .iter()
+                .filter(|call| call[0] == "agent")
+                .count(),
+            1
+        );
+    }
+    assert_eq!(
+        snapshot["roles"][1]["initial_prompt"],
+        "Claude 初始化：\"原样\""
+    );
 }
 
 #[test]
@@ -208,6 +227,16 @@ fn team_bind_needs_registered_sessions_then_binds_launched_resources_and_message
     let bound = team::bind(&dir, "worker", &Native).unwrap();
     assert_eq!(bound["worker_session"], "worker-session");
     assert!(team::bind(&dir, "worker", &Native).is_err());
+    for fake in &setup.fakes {
+        assert_eq!(
+            fake.calls
+                .borrow()
+                .iter()
+                .filter(|call| call[0] == "agent")
+                .count(),
+            1
+        );
+    }
     let binding: Binding =
         serde_json::from_slice(&fs::read(dir.join("roles/worker/binding.json")).unwrap()).unwrap();
     assert!(binding.worker.process.is_some());
@@ -311,6 +340,22 @@ fn failed_role_start_and_stop_keep_the_team_directory_as_evidence() {
     assert!(error.contains("role worker start failed"));
     let dir = setup.team_dir();
     assert!(dir.join("roles/worker/context.json").exists());
+    let calls_before: Vec<_> = setup.fakes.iter().map(|f| f.calls.borrow().len()).collect();
+    assert!(
+        setup
+            .start()
+            .unwrap_err()
+            .to_string()
+            .contains("team directory exists")
+    );
+    assert_eq!(
+        calls_before,
+        setup
+            .fakes
+            .iter()
+            .map(|f| f.calls.borrow().len())
+            .collect::<Vec<_>>()
+    );
     *setup.fakes[0].fail.borrow_mut() = true;
     let error = setup.stop().unwrap_err().to_string();
     assert!(error.contains("team stop incomplete"));
@@ -430,24 +475,44 @@ fn host_mode_never_stops_the_server_while_private_tui_is_unchanged() {
 }
 
 #[test]
-fn codex_accepts_one_initial_prompt_and_other_arguments_stay_forbidden() {
+fn all_agents_accept_the_same_initial_prompt_limits_and_keep_argument_whitelists() {
     let (_dir, mut cfg, _fake) = common::setup(Runtime::Tui);
-    cfg.initial_prompt = Some("one task".into());
-    cfg.validate().unwrap();
-    assert_eq!(cfg.argv().last().unwrap(), "one task");
-    for bad in ["", "  ", "--yolo", "line\nbreak"] {
-        cfg.initial_prompt = Some(bad.into());
-        assert!(cfg.validate().is_err(), "{bad:?}");
+    for agent in [AgentKind::Codex, AgentKind::Claude, AgentKind::OpenCode] {
+        cfg.agent = agent;
+        for prompt in [
+            "初始化：\"中文\" '引号' \\路径 $(literal) `literal`".into(),
+            "x".repeat(4096),
+            format!("{}x", "中".repeat(1365)),
+        ] {
+            cfg.initial_prompt = Some(prompt.clone());
+            cfg.validate().unwrap();
+            assert_eq!(cfg.argv().last(), Some(&prompt));
+        }
+        for bad in [
+            "".into(),
+            "  ".into(),
+            "\u{3000}".into(),
+            "--yolo".into(),
+            "line\nbreak".into(),
+            "a\rb".into(),
+            "a\tb".into(),
+            "a\0b".into(),
+            "a\u{7f}b".into(),
+            "a\u{85}b".into(),
+            "x".repeat(4097),
+            format!("{}xy", "中".repeat(1365)),
+            "中".repeat(1366),
+        ] {
+            cfg.initial_prompt = Some(bad.clone());
+            assert!(cfg.validate().is_err(), "{:?}: {bad:?}", cfg.agent);
+        }
+        cfg.initial_prompt = None;
+        cfg.validate().unwrap();
+        assert!(!cfg.argv().contains(&"--prompt".into()));
+        assert!(config::validate_args(&cfg.agent, &strings(&["first task"])).is_err());
+        assert!(config::validate_args(&cfg.agent, &strings(&["--prompt", "task"])).is_err());
+        assert!(config::validate_args(&cfg.agent, &strings(&["-p", "task"])).is_err());
     }
-    cfg.initial_prompt = Some("x".repeat(4097));
-    assert!(cfg.validate().is_err());
-    cfg.initial_prompt = None;
-    cfg.agent_args = strings(&["first task"]);
-    assert!(cfg.validate().is_err());
-    cfg.agent = AgentKind::Claude;
-    cfg.agent_args = Vec::new();
-    cfg.initial_prompt = Some("one task".into());
-    assert!(cfg.validate().is_err());
     assert!(config::validate_args(&AgentKind::Claude, &strings(&["--model", "m"])).is_ok());
     assert!(config::validate_args(&AgentKind::Claude, &strings(&["--no-daemon"])).is_err());
     assert!(
@@ -475,6 +540,70 @@ fn codex_accepts_one_initial_prompt_and_other_arguments_stay_forbidden() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn native_startup_argv_preserves_optional_text_for_all_agents_and_runtimes() {
+    for runtime in [Runtime::Tui, Runtime::Core] {
+        for agent in [AgentKind::Codex, AgentKind::Claude, AgentKind::OpenCode] {
+            for prompt in [None, Some("初始化：\"中文\" '引号' \\路径 $(literal)")] {
+                check_startup_argv(runtime.clone(), agent.clone(), prompt);
+            }
+        }
+    }
+}
+fn check_startup_argv(runtime: Runtime, agent: AgentKind, prompt: Option<&str>) {
+    let (dir, mut cfg, _fake) = common::setup(runtime.clone());
+    cfg.agent = agent.clone();
+    cfg.initial_prompt = prompt.map(String::from);
+    let mut record = Record::prepare(cfg, &dir.path().join("i")).unwrap();
+    record.handle = Some("returned-pane".into());
+    let args = match runtime {
+        Runtime::Tui => crewmoor::tui::launch_args(&record).unwrap(),
+        Runtime::Core => crewmoor::core::launch_args(&record).unwrap(),
+    };
+    let boundary = args.iter().position(|arg| arg == "--").unwrap();
+    let launched = &args[boundary + 1..];
+    let expected = expected_startup_argv(&record, prompt);
+    if runtime == Runtime::Core && agent == AgentKind::OpenCode {
+        assert!(launched.ends_with(&expected));
+    } else {
+        assert_eq!(launched, expected);
+    }
+    let inner = record.config.argv();
+    let prompt_flags = usize::from(agent == AgentKind::OpenCode && prompt.is_some());
+    assert_eq!(
+        inner.iter().filter(|arg| *arg == "--prompt").count(),
+        prompt_flags
+    );
+    if let Some(prompt) = prompt {
+        assert_eq!(inner.iter().filter(|arg| arg.as_str() == prompt).count(), 1);
+    }
+}
+fn expected_startup_argv(record: &Record, prompt: Option<&str>) -> Vec<String> {
+    let mut expected = Vec::new();
+    match (&record.config.runtime, &record.config.agent) {
+        (Runtime::Tui, AgentKind::OpenCode) => expected.push("--standalone".into()),
+        (Runtime::Core, AgentKind::OpenCode) => {
+            expected.push(
+                crewmoor::opencode::prepare::alias(record)
+                    .display()
+                    .to_string(),
+            );
+            if let Some(prompt) = prompt {
+                expected.extend(["--prompt".into(), prompt.into()]);
+            }
+        }
+        (Runtime::Core, agent) => {
+            expected.push(FIXTURE.into());
+            if *agent == AgentKind::Codex {
+                expected.push("--no-daemon".into());
+            }
+            expected.extend(prompt.map(String::from));
+        }
+        _ => expected.extend(prompt.map(String::from)),
+    }
+    expected
 }
 
 #[test]

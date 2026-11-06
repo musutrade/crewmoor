@@ -18,7 +18,10 @@ role = "lead"
 cwd = "/absolute/project"
 agent = "claude"
 agent_executable = "/home/gem/.local/bin/claude"
-agent_version = "2.1.316 (Claude Code)"
+agent_version = "2.1.318 (Claude Code)"
+# Optional: one user-authorized startup prompt before bind, for any supported Agent.
+# Single-line, <=4096 UTF-8 bytes; persisted in config/argv, so no secrets.
+# initial_prompt = "Read the supplied initialization instructions."
 # Optional: this role's own existing or new tab in app_target's EXISTING space_id.
 # Omit to use the target tab_id, which may also be new. App adopts unknown tab IDs.
 # A mistyped valid ID creates an extra tab; no tab precreation is required.
