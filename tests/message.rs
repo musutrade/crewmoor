@@ -1,5 +1,7 @@
 #[path = "support/agents.rs"]
 mod agents;
+#[path = "support/message_constraint.rs"]
+mod message_constraint;
 use crewmoor::{
     config::AgentKind,
     config::Runtime,
@@ -29,6 +31,7 @@ impl Fixture {
             runtime_binary: env!("CARGO_BIN_EXE_transport-fixture").into(),
             socket,
             feedback_registry: dir.path().into(),
+            worker_constraint: None,
             dispatcher: Peer {
                 agent_executable: Some(agents::EXECUTABLE.into()),
                 instance: dispatcher,

@@ -35,3 +35,5 @@ agent_executable = "/home/gem/.local/bin/codex"
 agent_version = "codex-cli 0.166.0"
 agent_args = ["--no-alt-screen"]
 initial_prompt = "You are the worker. Wait for a team message before acting."
+# Optional independent reminder after each accepted bound downlink (not startup).
+# message_constraint = "Use the verification scope agreed for the current task."

@@ -44,6 +44,9 @@ pub struct Role {
     #[serde(default)]
     pub agent_args: Vec<String>,
     pub initial_prompt: Option<String>,
+    /// Independent reminder after each accepted bound dispatcher message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_constraint: Option<String>,
     /// App tab for this role only (core teams); overrides the app_target `tab_id`.
     pub tab_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,7 +58,7 @@ impl Team {
         model::identifier(&self.task)?;
         crate::config::absolute(&self.feedback_registry)?;
         self.validate_target()?;
-        self.validate_names()?;
+        self.validate_roles()?;
         self.validate_tabs()?;
         let mut names: Vec<_> = self.roles.iter().map(|r| r.role.as_str()).collect();
         names.sort_unstable();
@@ -74,10 +77,11 @@ impl Team {
             (Runtime::Core, _, _) => Err("runtime=core team needs app_target and no host".into()),
         }
     }
-    /// Role names become path components: same rule as team names, checked before any write.
-    fn validate_names(&self) -> Result<()> {
+    /// Role names become path components; validate names and reminders before any write.
+    fn validate_roles(&self) -> Result<()> {
         for role in &self.roles {
             crate::config::name(&role.role)?;
+            message::validate_constraint(role.message_constraint.as_deref())?;
         }
         crate::config::name(&self.dispatcher)
     }
@@ -323,6 +327,7 @@ fn message_config(team: &Team, dir: &Path, worker: &str) -> Result<message::Conf
         runtime_binary: team.runtime_binary.clone(),
         socket,
         feedback_registry: team.feedback_registry.clone(),
+        worker_constraint: team.role(worker)?.message_constraint.clone(),
         dispatcher: peer(dir, &team.dispatcher)?,
         worker: peer(dir, worker)?,
     })

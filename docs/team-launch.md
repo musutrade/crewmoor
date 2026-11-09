@@ -186,6 +186,9 @@ agent_executable = "/home/gem/.local/bin/codex"
 agent_version = "codex-cli 0.166.0"
 agent_args = ["--no-alt-screen"]
 initial_prompt = "You are the worker. Wait for a team message before acting."
+# Optional independent reminder after each accepted bound downlink; <=16384 UTF-8 bytes.
+# Newlines are allowed; omit or use blank text to disable. Persisted, so no secrets.
+# message_constraint = "Use the verification scope agreed for the current task."
 ```
 
 `feedback_registry` must be the registry that the user-level Hook callback was
@@ -210,6 +213,26 @@ unchanged.
 
 A failed role stops `team start` with that role named. Already-started roles stay
 recorded; use `team stop` on the same directory.
+
+### Optional bound message reminders with `message_constraint`
+
+Each role can configure `message_constraint`, independently of its startup
+`initial_prompt`. Generation preserves the original text, start saves it in
+`team.json`, and bind snapshots it into the worker pair's
+`config.worker_constraint`. Sending never reloads the source config or `team.json`.
+Old/omitted, empty or all-whitespace values add no message. A nonblank reminder
+uses the message channel's 16384 UTF-8 byte limit and may include newlines;
+it is validated before startup writes and before any business submission.
+It is not passed to the native startup command.
+
+After each accepted normal dispatcher-to-worker message A, the common send entry
+attempts exactly one independent B with the configured original text, a new id,
+the same bound destination and `reply_to: A.id`. A is unchanged. Worker reports,
+Hook feedback and halt notifications do not trigger it. See
+[message reminders](messages.md#optional-automatic-role-reminder) for receipts,
+partial success/unknown results and concurrency/interruption limits. Acceptance
+is not proof of receipt or enforcement. Configuration and receipts retain the
+text; do not include secrets.
 
 ### Optional initialization with `initial_prompt`
 

@@ -41,6 +41,7 @@ impl Fixture {
             runtime_binary: env!("CARGO_BIN_EXE_transport-fixture").into(),
             socket,
             feedback_registry: dir.path().into(),
+            worker_constraint: None,
             dispatcher: Peer {
                 instance: dispatcher,
                 handle: "w1:p1".into(),

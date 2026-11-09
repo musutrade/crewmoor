@@ -137,6 +137,93 @@ introduced. Neither terminal output nor Herdr detection state is interpreted
 as hooks state. Business progress and hooks retain their existing feedback
 entry and semantics.
 
+## Optional automatic role reminder
+
+Configure `message_constraint` on a team role independently of `initial_prompt`:
+
+```toml
+[[roles]]
+role = "builder"
+# Other required role fields as usual.
+message_constraint = """Use the task's agreed verification scope.
+Report the checks you actually ran."""
+```
+
+The text is supplied by the user or authorized configuration; there is no default
+rule. `team generate` preserves it verbatim. `team start` saves it in `team.json`
+without including it in startup argv. `team bind` copies that worker's text into
+`binding.config.worker_constraint`. A direct `message bind` configuration can
+set the same optional `worker_constraint` field. Sends use this fixed snapshot;
+later edits to the original template, team config or `team.json` do not update an
+existing binding. No hot reload or automatic rebind is provided. Older templates,
+teams and bindings omit the field and retain single-message behavior.
+
+For every normal bound dispatcher-to-worker call, including the first and calls
+with `reply_to`, the public Rust `message::send` entry submits the business
+message A unchanged. Only after A's explicit native acceptance does it immediately
+attempt one independent reminder B, using the same binding, target and registered
+session checks. Direction comes from the binding identities, regardless of role
+names. B uses the same `from` and `to` as A, a new `constraint-<UUID>` id,
+`reply_to: A.id`, and exactly the configured String content in the ordinary
+`{team,message}` envelope. It has no system source, priority or extra permission.
+B bypasses only the automatic-followup orchestration, so it cannot generate C.
+Worker reports/replies, explicit Hook feedback and halt notifications do not
+trigger B. Startup `initial_prompt` remains a separate, once-only native launch
+argument and never triggers B.
+
+Missing, empty and all-whitespace values disable B. Nonblank text is never trimmed
+or rewritten: Chinese, quotes, backslashes, newlines and JSON-looking strings keep
+the ordinary message encoding. A and B each have their own 16384 UTF-8 byte limit;
+their combined length is irrelevant. Known configuration/length errors are
+checked before A is submitted. The text is stored with team/binding configuration
+and message receipts, so do not put secrets in it.
+
+The original accepted receipt stays at the top level. When B is enabled it adds
+`constraint` with B's exact `message`, its own `transport` and any native receipt
+fields or `error`. Its `reply_to` identifies A:
+
+```json
+{
+  "envelope": {"team":"sample","message":{"id":"task-1","from":"lead","to":"builder","reply_to":null,"content":"A"}},
+  "transport": "accepted",
+  "constraint": {
+    "message": {"id":"constraint-<UUID>","from":"lead","to":"builder","reply_to":"task-1","content":"Configured original text"},
+    "transport": "accepted"
+  }
+}
+```
+
+An A failure or unconfirmed submission returns the existing send error and never
+attempts B. After A is accepted, B can be `accepted`, `failed` (rejected before
+submission), or `unknown` (native submission was attempted but could not be
+confirmed). Existing conservative native error semantics remain: a native
+rejection after the prompt call is reported unconfirmed. A changed socket,
+process, location or native session is checked again for B; it is never redirected.
+The public Rust entry returns A's receipt with B's outcome even on partial
+success. The CLI prints that complete receipt to stdout and exits nonzero if B
+failed or is unknown; stderr explicitly retains A's accepted result. Retain both
+stdout and stderr when recording a CLI send. Neither message is automatically
+retried, and callers must inspect B's outcome instead of treating an error as
+permission to resend A.
+
+Acceptance does not prove the Agent received, read or acted on either message.
+A may begin executing before B arrives; B is a later reminder and the Agent
+decides its relevance. Each invocation orders A acceptance before its B attempt,
+but concurrent calls may interleave between them. There is no pair atomicity or
+queue/lock. Interruption after A acceptance can leave only A; interruption after
+B submission but before the receipt can leave B unknown. There is no crash
+recovery, replay or cross-process exactly-once guarantee.
+
+`tests/message.rs` covers the common orchestration with controlled synthetic
+transport failures, identity changes, interleaving and interruption.
+`tests/team.rs` and `tests/team_generate.rs` cover configuration snapshots and
+startup isolation. `tests/core_message.rs` exercises the public entry and CLI
+against a synthetic native socket; `tests/opencode_flow.rs` covers the private
+OpenCode API path for TUI and core. These are simulation/protocol tests. Actual
+automatic A/B submissions and Agent receipt for each Agent/runtime combination
+require separate authorized acceptance; the ordinary old-binding exchange is
+not evidence for this feature.
+
 ## Evidence
 
 `tests/message.rs` uses a Rust CLI transport fixture with fields checked against
