@@ -1,6 +1,8 @@
 //! Synthetic protocol/process regressions; not real OpenCode model acceptance.
 #[path = "support/opencode_watch.rs"]
 mod opencode_watch;
+#[path = "support/rule_selection.rs"]
+mod rule_selection;
 use crewmoor::{
     Result,
     config::{AgentKind, Config, Runtime},
@@ -219,7 +221,7 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     let context = context(&registry, root.path(), "probe", None);
     let mut config = config(root.path(), &context);
     config.initial_prompt = Some("启动 \"中文\" \\路径".into());
-    let policy: crewmoor::tool_policy::Policy = serde_json::from_value(json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"feedback":"submission owns full tests"})).unwrap();
+    let policy = rule_selection::policy(root.path());
     config.tool_guard =
         Some(crewmoor::tool_policy::prepare(&config, &policy, root.path(), &context).unwrap());
     let mut record = Record::prepare(config, &root.path().join("launch")).unwrap();

@@ -111,12 +111,10 @@ fn directory(expr: Option<&ast::Expr>) -> Directory {
 }
 impl Scanner<'_> {
     pub(super) fn python_entry(&mut self, args: &[String], stdin: Option<&str>) -> Result<()> {
-        // Only documented interpreter flags without source operands are skipped.
-        let args = args.strip_prefix(&["--".into()]).unwrap_or(args);
-        let index = args
-            .iter()
-            .position(|arg| !matches!(arg.as_str(), "-u" | "-B" | "-I" | "-E" | "-s" | "-S"))
-            .unwrap_or(args.len());
+        let Some(index) = super::normalize::python_index(args)? else {
+            self.scan.unresolved = true;
+            return Ok(());
+        };
         let args = &args[index..];
         if let Some(source) = args
             .first()

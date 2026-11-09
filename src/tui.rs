@@ -60,6 +60,13 @@ pub fn workspace_args(r: &Record) -> Vec<String> {
         args.push("--env".into());
         args.push(format!("{}={instance}", crate::feedback::INSTANCE_ENV));
     }
+    if let Some(guard) = &r.config.tool_guard
+        && r.config.agent != crate::config::AgentKind::OpenCode
+    {
+        for (key, value) in guard.environment() {
+            args.extend(["--env".into(), format!("{key}={value}")]);
+        }
+    }
     if r.config.agent == crate::config::AgentKind::OpenCode {
         crate::opencode::prepare::workspace_env(r, &mut args);
     }

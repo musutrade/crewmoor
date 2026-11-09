@@ -1,83 +1,135 @@
-use super::{Policy, Scan, launch::Snapshot};
+use super::launch::Snapshot;
 use crate::{
     Result,
     config::AgentKind,
     feedback::{self, model},
 };
-use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Read,
-    path::{Path, PathBuf},
-    sync::mpsc,
+    io::{Read, Seek, Write},
+    path::Path,
+    process::{Command, Stdio},
     time::Duration,
 };
-
-#[derive(Debug, Serialize)]
-pub struct Decision {
-    pub decision: &'static str,
-    pub reason: Option<String>,
-    pub unresolved: bool,
-}
 pub fn cli(args: &[String]) -> Result<()> {
+    if args == ["verify"] {
+        return verify();
+    }
     let [mode, path] = args else {
-        return Err("usage: crewmoor tool-policy hook|bridge SNAPSHOT".into());
+        return Err("usage: crewmoor tool-policy verify; legacy hook|bridge SNAPSHOT".into());
     };
     if !matches!(mode.as_str(), "hook" | "bridge") {
-        return Err("choose tool-policy hook or bridge".into());
+        return Err("unknown tool-policy mode".into());
     }
-    let decision = evaluate(Path::new(path), mode == "bridge");
-    let output = if mode == "bridge" {
-        serde_json::to_value(decision)?
-    } else {
-        native_output(&decision)
+    let result = legacy(Path::new(path), mode == "bridge");
+    let output = match result {
+        Ok(output) => output,
+        Err(error) => denial(mode == "bridge", &error.to_string()),
     };
     println!("{output}");
     Ok(())
 }
-fn evaluate(path: &Path, bridge: bool) -> Decision {
-    let mut role = "unknown".to_string();
-    let result = load_and_check(path, bridge, &mut role);
-    match result {
-        Ok((policy, scan)) => match scan.entry {
-            Some(entry) => deny(&role, &entry, &policy.feedback),
-            None => Decision {
-                decision: "no_match",
-                reason: None,
-                unresolved: scan.unresolved,
-            },
-        },
-        Err(error) => deny(&role, "checker failure", &error.to_string()),
+fn input() -> Result<Value> {
+    let mut text = String::new();
+    std::io::stdin().take(1_048_577).read_to_string(&mut text)?;
+    if text.len() > 1_048_576 {
+        return Err("tool input exceeds 1 MiB".into());
     }
+    Ok(serde_json::from_str(&text)?)
 }
-fn load_and_check(path: &Path, bridge: bool, role: &mut String) -> Result<(Policy, Scan)> {
+fn verify() -> Result<()> {
+    let path =
+        std::env::var_os("TOOL_RULE_HOOK_CONTEXT").ok_or("trusted role context path missing")?;
     let snapshot: Snapshot = serde_json::from_slice(&fs::read(path)?)?;
-    *role = snapshot.context.registration.role.clone();
-    snapshot.policy.validate()?;
-    let input = read_input()?;
-    identity(&snapshot, &input, bridge)?;
-    let (command, cwd) = command(&snapshot, &input, bridge)?;
-    let scan = match command {
-        Some(command) => bounded(snapshot.policy.clone(), cwd, command)?,
-        None => Scan {
-            entry: None,
-            unresolved: true,
-        },
-    };
-    Ok((snapshot.policy, scan))
+    let value = input()?;
+    let bridge = value["bridge"].as_bool().ok_or("verifier mode missing")?;
+    role_identity(&snapshot)?;
+    session_identity(&snapshot, &value["input"], bridge, false)?;
+    println!(
+        "{}",
+        json!({"context":format!("role={} instance={}",snapshot.context.registration.role,snapshot.context.instance)})
+    );
+    Ok(())
 }
-fn read_input() -> Result<Value> {
-    let mut input = String::new();
-    std::io::stdin()
-        .take(1_048_577)
-        .read_to_string(&mut input)?;
-    super::bounded_source(&input)?;
-    Ok(serde_json::from_str(&input)?)
+fn legacy(path: &Path, bridge: bool) -> Result<Value> {
+    let mut value: Value = serde_json::from_slice(&fs::read(path)?)?;
+    let snapshot: Snapshot = serde_json::from_value(value.clone())?;
+    let input = input()?;
+    identity(&snapshot, &input, bridge)?;
+    let checker = legacy_checker()?;
+    let policy = value["policy"]
+        .as_object_mut()
+        .ok_or("legacy policy missing")?;
+    policy.remove("checker");
+    policy.insert("base_dir".into(), json!(snapshot.context.registration.cwd));
+    let mut command = Command::new(checker);
+    command.arg(if bridge {
+        "compat-bridge"
+    } else {
+        "compat-hook"
+    });
+    forward(
+        command,
+        &json!({"policy":policy,"input":input,"context":format!("role={} instance={}",snapshot.context.registration.role,snapshot.context.instance)}),
+    )
+}
+fn legacy_checker() -> Result<std::ffi::OsString> {
+    let checker = std::env::var_os("TOOL_RULE_HOOK_EXECUTABLE").ok_or("legacy tool-policy requires explicit TOOL_RULE_HOOK_EXECUTABLE absolute path; install the independent package and migrate new role configuration")?;
+    crate::config::absolute(Path::new(&checker))?;
+    Ok(checker)
+}
+pub(super) fn forward(command: Command, value: &Value) -> Result<Value> {
+    let (mut child, mut stdout) = legacy_io(command, value)?;
+    wait(&mut child)?;
+    stdout.rewind()?;
+    let mut output = String::new();
+    stdout.take(1_048_577).read_to_string(&mut output)?;
+    if output.len() > 1_048_576 {
+        return Err("legacy checker output too large".into());
+    }
+    Ok(serde_json::from_str(&output)?)
+}
+fn legacy_io(mut command: Command, value: &Value) -> Result<(std::process::Child, std::fs::File)> {
+    let stdout = tempfile::tempfile()?;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(stdout.try_clone()?)
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut stdin = child.stdin.take().ok_or("checker stdin missing")?;
+    let bytes = value.to_string();
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(bytes.as_bytes());
+    });
+    Ok((child, stdout))
+}
+fn wait(child: &mut std::process::Child) -> Result<()> {
+    let start = std::time::Instant::now();
+    while child.try_wait()?.is_none() {
+        if start.elapsed() >= Duration::from_secs(6) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("legacy independent checker timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if !child.wait()?.success() {
+        return Err("legacy independent checker failed".into());
+    }
+    Ok(())
+}
+fn denial(bridge: bool, reason: &str) -> Value {
+    let reason = format!("Tool rule hook adapter: denied; {reason}");
+    if bridge {
+        json!({"decision":"deny","reason":reason,"unresolved":true})
+    } else {
+        json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":reason}})
+    }
 }
 fn identity(snapshot: &Snapshot, input: &Value, bridge: bool) -> Result<()> {
     role_identity(snapshot)?;
-    session_identity(snapshot, input, bridge)
+    session_identity(snapshot, input, bridge, true)
 }
 fn role_identity(snapshot: &Snapshot) -> Result<()> {
     let expected = &snapshot.context;
@@ -92,7 +144,12 @@ fn role_identity(snapshot: &Snapshot) -> Result<()> {
     feedback::require_unchanged(&snapshot.registry, expected)?;
     Ok(())
 }
-fn session_identity(snapshot: &Snapshot, input: &Value, bridge: bool) -> Result<()> {
+fn session_identity(
+    snapshot: &Snapshot,
+    input: &Value,
+    bridge: bool,
+    require_event_instance: bool,
+) -> Result<()> {
     let expected = &snapshot.context;
     let session = feedback::registered_session(&snapshot.registry, expected)?
         .ok_or("native SessionStart/session association missing")?;
@@ -100,84 +157,14 @@ fn session_identity(snapshot: &Snapshot, input: &Value, bridge: bool) -> Result<
     if input[field].as_str() != Some(&session) {
         return Err("native tool session mismatch".into());
     }
-    if bridge && input["instance"].as_str() != Some(expected.instance.as_str()) {
+    if bridge
+        && require_event_instance
+        && input["instance"].as_str() != Some(expected.instance.as_str())
+    {
         return Err("bridge instance mismatch".into());
     }
     if bridge != (expected.registration.agent == AgentKind::OpenCode) {
         return Err("tool hook agent kind mismatch".into());
     }
     Ok(())
-}
-fn command(snapshot: &Snapshot, input: &Value, bridge: bool) -> Result<(Option<String>, PathBuf)> {
-    let Some(args) = tool_arguments(input, bridge)? else {
-        return Ok((None, snapshot.context.registration.cwd.clone()));
-    };
-    let command = args["command"]
-        .as_str()
-        .ok_or("native shell command missing")?
-        .to_owned();
-    let cwd = working_directory(snapshot, input, bridge)?;
-    Ok((Some(command), cwd))
-}
-fn tool_arguments(input: &Value, bridge: bool) -> Result<Option<&Value>> {
-    if !bridge && input["hook_event_name"] != "PreToolUse" {
-        return Err("expected native PreToolUse input".into());
-    }
-    let field = if bridge { "tool" } else { "tool_name" };
-    let tool = input[field].as_str().ok_or("native tool name missing")?;
-    let expected = if bridge { "shell" } else { "Bash" };
-    if tool != expected {
-        return Ok(None);
-    }
-    Ok(Some(if bridge {
-        &input["input"]
-    } else {
-        &input["tool_input"]
-    }))
-}
-fn working_directory(snapshot: &Snapshot, input: &Value, bridge: bool) -> Result<PathBuf> {
-    let cwd = if bridge {
-        match input["input"].get("workdir") {
-            Some(value) => PathBuf::from(
-                value
-                    .as_str()
-                    .ok_or("native shell workdir must be a string")?,
-            ),
-            None => snapshot.context.registration.cwd.clone(),
-        }
-    } else {
-        PathBuf::from(input["cwd"].as_str().ok_or("native tool cwd missing")?)
-    };
-    let cwd = snapshot.context.registration.cwd.join(cwd);
-    crate::config::absolute(&cwd)?;
-    Ok(cwd)
-}
-fn bounded(policy: Policy, cwd: PathBuf, command: String) -> Result<Scan> {
-    let budget = Duration::from_millis(policy.timeout_ms);
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result = super::scan(&policy, &cwd, &command).map_err(|error| error.to_string());
-        let _ = sender.send(result);
-    });
-    receiver
-        .recv_timeout(budget)
-        .map_err(|_| "role checker timed out or failed")?
-        .map_err(Into::into)
-}
-fn deny(role: &str, entry: &str, detail: &str) -> Decision {
-    Decision {
-        decision: "deny",
-        unresolved: false,
-        reason: Some(format!(
-            "STOP: 本次命令被执行前角色检查拒绝，未执行。\nINTENT: 全量测试/覆盖率或检查失败。\nReason: {detail}\nDetail: 当前角色 {role}；命中入口 {entry}。\nState: denied before execution。\nNext: 全量检查交提交角色；禁止换脚本或语言绕过。仅运行必要且符合明确配置的定向测试。"
-        )),
-    }
-}
-fn native_output(decision: &Decision) -> Value {
-    if decision.decision == "deny" {
-        json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":decision.reason}})
-    } else {
-        // No permission grant and no extra warning/context for ordinary no-match calls.
-        json!({})
-    }
 }

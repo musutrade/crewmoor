@@ -1,0 +1,21 @@
+{
+  "base_dir": "/absolute/project",
+  "entries": [
+    {"argv": ["cargo", "test"], "label": "Cargo test suite"},
+    {"argv": ["cargo", "llvm-cov"], "label": "coverage"},
+    {"argv": ["python3", "tools/check.py"], "label": "project checker"},
+    {"argv": ["npm", "run", "check"], "label": "project task"}
+  ],
+  "allow": [
+    ["cargo", "test", "--test", "message", "one_case"],
+    ["python3", "tools/check.py", "fast"],
+    ["npm", "run", "check", "--", "one-file.ts"]
+  ],
+  "skip_source": [["python3", "tools/check.py", "fast"]],
+  "feedback": {
+    "reason": "Avoid repeated broad checks during development.",
+    "responsibility": "The integration owner runs the complete checks.",
+    "next": "Use a configured focused command."
+  },
+  "timeout_ms": 3000
+}

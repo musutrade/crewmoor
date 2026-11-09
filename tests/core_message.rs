@@ -1,4 +1,6 @@
 mod core_message_support;
+#[path = "support/rule_selection.rs"]
+mod rule_selection;
 use core_message_support::Fixture;
 use crewmoor::{
     message::{self, Binding, Message, Native, Transport},
@@ -406,4 +408,142 @@ fn public_cli_core_binding_and_send_share_the_existing_message_entry() {
     let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(receipt["transport"], "accepted");
     assert_eq!(fixture.sends().len(), 1);
+}
+
+/// Synthetic App-core metadata around real owned Rust fixture processes.
+fn guarded_launch_argv(fixture: &Fixture, peer: &crewmoor::message::Peer) -> Vec<String> {
+    let context: crewmoor::feedback::Context = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .dir
+                .path()
+                .join("instances")
+                .join(&peer.instance)
+                .join("context.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let root = fixture
+        .dir
+        .path()
+        .join(format!("guard-{}", context.registration.role));
+    fs::create_dir(&root).unwrap();
+    let mut config: crewmoor::config::Config = serde_json::from_value(json!({
+        "team":context.registration.team,"role":context.registration.role,"runtime":"core",
+        "cwd":fixture.dir.path(),"store":fixture.dir.path(),"runtime_binary":"/bin/false",
+        "runtime_version":"synthetic","agent":context.registration.agent,
+        "agent_executable":peer.agent_executable,"agent_version":"synthetic",
+        "feedback_registry":fixture.dir.path(),"feedback_instance":peer.instance
+    }))
+    .unwrap();
+    config.tool_guard = Some(
+        crewmoor::tool_policy::prepare(
+            &config,
+            &rule_selection::policy(fixture.dir.path()),
+            &root,
+            &context,
+        )
+        .unwrap(),
+    );
+    crewmoor::app::child_argv(&config)
+}
+#[test]
+fn guarded_codex_and_claude_bind_through_public_core_entry_and_pin_all_rule_assignments() {
+    let fixture = Fixture::new();
+    for peer in [&fixture.config.dispatcher, &fixture.config.worker] {
+        let argv = guarded_launch_argv(&fixture, peer);
+        fixture.state.lock().unwrap()[&peer.handle]["argv"] = json!(argv);
+    }
+    let binding = fixture.bind();
+    message::send(&binding, &request(), &Native).unwrap();
+    assert_eq!(fixture.sends().len(), 1);
+    let index = crewmoor::app::child_prefix(true).len();
+    fixture.state.lock().unwrap()["t1"]["argv"][index] =
+        json!("TOOL_RULE_HOOK_RULES=/different/rules.json");
+    assert!(message::send(&binding, &request(), &Native).is_err());
+    assert_eq!(fixture.sends().len(), 1);
+}
+fn rejects_core_guard_argv(fixture: &Fixture, argv: Vec<String>, change: &str) {
+    fixture.state.lock().unwrap()["t1"]["argv"] = json!(argv);
+    let config = serde_json::from_value(serde_json::to_value(&fixture.config).unwrap()).unwrap();
+    assert!(Binding::bind(config, &Native).is_err(), "{change}");
+}
+#[test]
+fn core_guard_prefix_rejects_unrelated_partial_duplicate_or_reordered_assignments() {
+    let fixture = Fixture::new();
+    let original = guarded_launch_argv(&fixture, &fixture.config.worker);
+    let index = crewmoor::app::child_prefix(true).len();
+    for change in [
+        "unknown",
+        "missing",
+        "duplicate",
+        "reordered",
+        "extra",
+        "no-fixed-prefix",
+    ] {
+        let mut argv = original.clone();
+        match change {
+            "unknown" => argv[index] = "LD_PRELOAD=/unrelated.so".into(),
+            "missing" => {
+                argv.remove(index + 1);
+            }
+            "duplicate" => argv[index + 1] = argv[index].clone(),
+            "reordered" => argv.swap(index, index + 1),
+            "extra" => argv.insert(index + 3, "CODEX_THREAD_ID=wrong".into()),
+            _ => {
+                argv.drain(..index);
+            }
+        }
+        rejects_core_guard_argv(&fixture, argv, change);
+    }
+    assert!(fixture.sends().is_empty());
+}
+#[test]
+fn core_guard_prefix_rejects_malformed_values_and_still_checks_the_agent_executable() {
+    let fixture = Fixture::new();
+    let original = guarded_launch_argv(&fixture, &fixture.config.worker);
+    let index = crewmoor::app::child_prefix(true).len();
+    for change in [
+        "relative-rules",
+        "relative-context",
+        "bad-verifier",
+        "other-verifier-mode",
+        "relative-verifier",
+        "wrong-verifier-args",
+        "wrong-executable",
+    ] {
+        let mut argv = original.clone();
+        match change {
+            "relative-rules" => argv[index] = "TOOL_RULE_HOOK_RULES=relative.json".into(),
+            "relative-context" => argv[index + 1] = "TOOL_RULE_HOOK_CONTEXT=relative.json".into(),
+            "bad-verifier" => argv[index + 2] = "TOOL_RULE_HOOK_VERIFY=invalid JSON".into(),
+            "other-verifier-mode" => {
+                argv[index + 2] = format!(
+                    "TOOL_RULE_HOOK_VERIFY={}",
+                    json!([env!("CARGO_BIN_EXE_crewmoor"), "tool-policy", "hook"])
+                )
+            }
+            "relative-verifier" => {
+                argv[index + 2] = format!(
+                    "TOOL_RULE_HOOK_VERIFY={}",
+                    json!(["crewmoor", "tool-policy", "verify"])
+                )
+            }
+            "wrong-verifier-args" => {
+                argv[index + 2] = format!(
+                    "TOOL_RULE_HOOK_VERIFY={}",
+                    json!([
+                        env!("CARGO_BIN_EXE_crewmoor"),
+                        "tool-policy",
+                        "verify",
+                        "extra"
+                    ])
+                )
+            }
+            _ => argv[index + 3] = "/bin/false".into(),
+        }
+        rejects_core_guard_argv(&fixture, argv, change);
+    }
+    assert!(fixture.sends().is_empty());
 }

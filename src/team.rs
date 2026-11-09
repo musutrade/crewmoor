@@ -85,7 +85,7 @@ impl Team {
             crate::config::name(&role.role)?;
             message::validate_constraint(role.message_constraint.as_deref())?;
             if let Some(policy) = &role.tool_policy {
-                policy.validate()?;
+                policy.validate_role(&role.agent, &role.agent_args, &role.cwd)?;
             }
         }
         crate::config::name(&self.dispatcher)

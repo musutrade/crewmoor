@@ -103,6 +103,9 @@ impl Config {
             guard.validate(self)?;
         }
         validate_args(&self.agent, &self.agent_args)?;
+        if self.tool_guard.is_some() && self.agent == AgentKind::Codex {
+            crate::tool_policy::codex::validate(&self.agent_args)?;
+        }
         initial_prompt(&self.agent, self.initial_prompt.as_deref())
     }
     fn validate_opencode(&self) -> Result<()> {
@@ -154,13 +157,14 @@ impl Config {
             args.extend(crate::opencode::prepare::arguments(self));
             return args;
         }
+        let native_args = self.native_args();
         if self.runtime == Runtime::Core
             && self.agent == AgentKind::Codex
-            && !self.agent_args.iter().any(|a| a == "--no-daemon")
+            && !native_args.iter().any(|a| a == "--no-daemon")
         {
             args.push("--no-daemon".into());
         }
-        args.extend(self.native_args());
+        args.extend(native_args);
         args.extend(self.initial_prompt.clone());
         args
     }
@@ -222,6 +226,7 @@ fn codex_arg<'a>(arg: &str, values: &mut impl Iterator<Item = &'a String>) -> Re
     match arg {
         "--no-alt-screen" | "--no-daemon" => Ok(()),
         "--model" | "-m" => model(values.next()),
+        "-c" | "--config" => settings(values.next()),
         _ => unsupported(),
     }
 }
