@@ -37,6 +37,7 @@ impl Fixture {
             runtime_binary: "/bin/false".into(),
             socket: dir.path().join("core.sock"),
             feedback_registry: dir.path().into(),
+            worker_constraint: None,
             dispatcher,
             worker,
         };
@@ -161,6 +162,14 @@ fn respond(request: &Value, state: &mut Value) -> Option<Value> {
     Some(json!({"jsonrpc":"2.0","id":1,"result":result}))
 }
 fn send_result(state: &mut Value) -> Option<Value> {
+    if state["mode"] == "block-second" {
+        let count = state["send_count"].as_u64().unwrap_or(0) + 1;
+        state["send_count"] = json!(count);
+        if count == 2 {
+            return Some(json!({"jsonrpc":"2.0","id":1,"error":{"code":-32000,
+                "message":"constraint native rejection","data":{"kind":"blocked"}}}));
+        }
+    }
     match state["mode"].as_str().unwrap_or("") {
         "lost" => None,
         "blocked" => Some(json!({"jsonrpc":"2.0","id":1,"error":{"code":-32000,

@@ -25,6 +25,9 @@ pub struct Config {
     pub runtime_binary: PathBuf,
     pub socket: PathBuf,
     pub feedback_registry: PathBuf,
+    /// Worker role configuration captured by team bind; no live configuration lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_constraint: Option<String>,
     pub dispatcher: Peer,
     pub worker: Peer,
 }
@@ -57,6 +60,7 @@ pub struct Binding {
 }
 impl Config {
     fn validate(&self) -> Result<()> {
+        super::validate_constraint(self.worker_constraint.as_deref())?;
         for path in [&self.runtime_binary, &self.socket, &self.feedback_registry] {
             crate::config::absolute(path)?;
         }

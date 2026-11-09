@@ -146,14 +146,15 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
     let socket = root.path().join("container.sock");
     let _listener = UnixListener::bind(&socket).unwrap();
     let config = message::Config {
+        worker_constraint: Some("OpenCode TUI 独立约束\n原文".into()),
         runtime: Runtime::Tui,
         core_id: None,
         core_version: None,
         runtime_binary: "/unused/herdr".into(),
         socket,
         feedback_registry: registry.clone(),
-        dispatcher: native_peer(&receiver, "pA"),
-        worker: native_peer(&sender, "pD"),
+        dispatcher: native_peer(&sender, "pD"),
+        worker: native_peer(&receiver, "pA"),
     };
     let container = Container {
         calls: RefCell::new(Vec::new()),
@@ -169,14 +170,23 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
     let receipt = message::send(&binding, &message, &container).unwrap();
     assert_eq!(receipt.native_prompt.unwrap().session_id, "ses_A");
     let rows = posts(root.path());
-    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["path"], "/api/session/ses_A/prompt");
+    assert_eq!(rows[1]["path"], "/api/session/ses_A/prompt");
+    let constraint: Value =
+        serde_json::from_str(rows[1]["body"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        constraint["message"]["content"],
+        "OpenCode TUI 独立约束\n原文"
+    );
+    assert_eq!(constraint["message"]["reply_to"], message.id);
+    assert_ne!(constraint["message"]["id"], message.id);
     let expected =
         serde_json::to_string(&json!({"team":"opencode-unit","message":message})).unwrap();
     let delivered: Value = serde_json::from_str(rows[0]["body"]["text"].as_str().unwrap()).unwrap();
     assert_eq!(delivered, serde_json::from_str::<Value>(&expected).unwrap());
     assert!(delivered.get("feedback_view").is_none());
-    assert_eq!(binding.dispatcher.native_session.as_deref(), Some("ses_A"));
+    assert_eq!(binding.worker.native_session.as_deref(), Some("ses_A"));
     endpoint.url = "http://127.0.0.1:9".into();
     fs::write(
         crewmoor::opencode::endpoint::path(&registry, &receiver.instance).unwrap(),
@@ -184,7 +194,7 @@ fn full_binding_keeps_a_when_herdr_reports_b_and_never_delivers_via_ui() {
     )
     .unwrap();
     assert!(message::send(&binding, &message, &container).is_err());
-    assert_eq!(posts(root.path()).len(), 1);
+    assert_eq!(posts(root.path()).len(), 2);
     assert!(
         feedback::show(&registry, &receiver.instance).unwrap()["latest_session_rejection"]
             .is_null()
@@ -357,14 +367,15 @@ fn core_uses_the_same_fixed_api_and_rejects_a_replaced_terminal_generation() {
     let socket = root.path().join("core.sock");
     let _listener = UnixListener::bind(&socket).unwrap();
     let config = message::Config {
+        worker_constraint: Some("OpenCode core 独立约束".into()),
         runtime: Runtime::Core,
         core_id: Some("owned-core".into()),
         core_version: Some("0.1.17".into()),
         runtime_binary: "/unused/hc".into(),
         socket,
         feedback_registry: registry,
-        dispatcher: peer(&receiver, "tA"),
-        worker: peer(&sender, "tD"),
+        dispatcher: peer(&sender, "tD"),
+        worker: peer(&receiver, "tA"),
     };
     let container = CoreContainer {
         generation: Cell::new(1),
@@ -382,6 +393,6 @@ fn core_uses_the_same_fixed_api_and_rejects_a_replaced_terminal_generation() {
     assert_eq!(receipt.native_prompt.unwrap().session_id, "ses_A");
     container.generation.set(2);
     assert!(message::send(&binding, &message, &container).is_err());
-    assert_eq!(posts(root.path()).len(), 1);
-    assert_eq!(binding.dispatcher.native_session.as_deref(), Some("ses_A"));
+    assert_eq!(posts(root.path()).len(), 2);
+    assert_eq!(binding.worker.native_session.as_deref(), Some("ses_A"));
 }

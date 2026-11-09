@@ -50,9 +50,85 @@ fn native_socket_protocol_delivers_both_directions_without_cli_autostart_or_stat
     assert_eq!(view["agent_state"], "unknown");
     assert!(view["latest_native_event"].is_null());
 }
+
+#[test]
+fn core_cli_and_public_entry_submit_two_independent_turns_for_downlinks() {
+    let mut fixture = Fixture::new();
+    fixture.config.worker_constraint = Some("  core 约束\n\\path  ".into());
+    let binding = fixture.bind();
+    let original = request();
+    let receipt = message::send(&binding, &original, &Native).unwrap();
+    let value = serde_json::to_value(receipt).unwrap();
+    assert_eq!(value["native_turn"], 0);
+    assert_eq!(value["constraint"]["native_turn"], 0);
+    assert_eq!(value["constraint"]["transport"], "accepted");
+    let binding_path = fixture.dir.path().join("binding.json");
+    let message_path = fixture.dir.path().join("message.json");
+    fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
+    fs::write(&message_path, serde_json::to_vec(&original).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "message",
+            "send",
+            binding_path.to_str().unwrap(),
+            message_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["constraint"]["transport"], "accepted");
+    let sends = fixture.sends();
+    assert_eq!(sends.len(), 4);
+    assert!(sends.iter().all(|send| send["terminal"] == "t1"));
+    let envelopes: Vec<serde_json::Value> = sends
+        .iter()
+        .map(|send| serde_json::from_str(send["text"].as_str().unwrap()).unwrap())
+        .collect();
+    assert_eq!(
+        envelopes[0]["message"],
+        serde_json::to_value(original).unwrap()
+    );
+    assert_eq!(envelopes[1]["message"]["content"], "  core 约束\n\\path  ");
+    assert_ne!(envelopes[0]["message"]["id"], envelopes[1]["message"]["id"]);
+}
+
+#[test]
+fn cli_partial_success_preserves_receipt_and_exits_nonzero_without_retry() {
+    let mut fixture = Fixture::new();
+    fixture.config.worker_constraint = Some("reminder".into());
+    let binding = fixture.bind();
+    fixture.state.lock().unwrap()["mode"] = json!("block-second");
+    let binding_path = fixture.dir.path().join("binding.json");
+    let message_path = fixture.dir.path().join("message.json");
+    fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
+    fs::write(&message_path, serde_json::to_vec(&request()).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "message",
+            "send",
+            binding_path.to_str().unwrap(),
+            message_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["transport"], "accepted");
+    assert_eq!(value["constraint"]["transport"], "unknown");
+    assert!(
+        value["constraint"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("constraint native rejection")
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("business message accepted"));
+    assert_eq!(fixture.sends().len(), 2);
+}
 #[test]
 fn core_forwards_readable_hook_and_authored_report_with_unchanged_send_parameters() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    fixture.config.worker_constraint = Some("must not follow feedback".into());
     let binding = fixture.bind();
     let binding_path = fixture.dir.path().join("binding.json");
     fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
@@ -88,6 +164,47 @@ fn core_forwards_readable_hook_and_authored_report_with_unchanged_send_parameter
     assert_readable_core_feedback(&sends[1], "Stop");
     let wire: serde_json::Value = serde_json::from_str(sends[0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(wire, report["delivery"]["envelope"]);
+}
+
+#[test]
+fn core_custom_receiver_roles_each_use_their_own_snapshot_for_codex_and_claude() {
+    for (role, kind, content) in [
+        (
+            "builder",
+            crewmoor::config::AgentKind::Codex,
+            "Codex reminder",
+        ),
+        (
+            "checker",
+            crewmoor::config::AgentKind::Claude,
+            "Claude reminder",
+        ),
+    ] {
+        let mut fixture = Fixture::new();
+        let registration = crewmoor::feedback::Registration {
+            team: "core-message-test".into(),
+            role: role.into(),
+            task: "issue-64".into(),
+            cwd: fixture.dir.path().into(),
+            agent: kind,
+            agent_version: "synthetic".into(),
+            evidence: crewmoor::feedback::Evidence::Synthetic,
+            native_session_id: Some(format!("native-{role}")),
+        };
+        fixture.config.worker.instance =
+            crewmoor::feedback::register(fixture.dir.path(), registration)
+                .unwrap()
+                .instance;
+        fixture.config.worker_constraint = Some(content.into());
+        let binding = fixture.bind();
+        let original = Message {
+            to: role.into(),
+            ..request()
+        };
+        let receipt = message::send(&binding, &original, &Native).unwrap();
+        assert_eq!(receipt.constraint.unwrap().message.content, content);
+        assert_eq!(fixture.sends().len(), 2);
+    }
 }
 fn assert_readable_core_feedback(send: &serde_json::Value, event: &str) {
     assert_eq!(send["terminal"], "t0");

@@ -20,7 +20,16 @@ fn bind(config: &str, binding: &str) -> Result<()> {
 fn send(binding: &str, message: &str) -> Result<()> {
     let binding: Binding = serde_json::from_slice(&fs::read(binding)?)?;
     let message: Message = serde_json::from_slice(&fs::read(message)?)?;
-    print(&super::send(&binding, &message, &Native)?)
+    let receipt = super::send(&binding, &message, &Native)?;
+    print(&receipt)?;
+    if receipt
+        .constraint
+        .as_ref()
+        .is_some_and(|b| !b.outcome.accepted())
+    {
+        return Err("business message accepted; constraint failed or unknown (see receipt); do not automatically resend either message".into());
+    }
+    Ok(())
 }
 fn print(value: &impl serde::Serialize) -> Result<()> {
     let encoded = serde_json::to_string_pretty(value)?;

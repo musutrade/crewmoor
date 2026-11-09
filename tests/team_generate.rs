@@ -86,6 +86,25 @@ fn generation_preserves_optional_initialization_for_each_agent_and_runtime() {
         }
     }
 }
+
+#[test]
+fn generation_preserves_role_reminders_independently_and_rejects_oversize() {
+    let mut fixture = Fixture::new();
+    fixture.input["roles"][0]["message_constraint"] = json!("  first \"约束\"\n\\path  ");
+    fixture.input["roles"][1]["message_constraint"] = json!("second reminder");
+    let team = parse(&fixture.run(&[]));
+    assert_choices(&team, &fixture.input);
+    assert_ne!(
+        team.roles[0].message_constraint,
+        team.roles[1].message_constraint
+    );
+    for text in ["", " \t\n", &"x".repeat(16_384)] {
+        fixture.input["roles"][1]["message_constraint"] = json!(text);
+        assert_choices(&parse(&fixture.run(&[])), &fixture.input);
+    }
+    fixture.input["roles"][1]["message_constraint"] = json!("x".repeat(16_385));
+    failed(&fixture.run(&[]));
+}
 fn executable(root: &Path, name: &str, config: Value) -> PathBuf {
     let path = root.join(name);
     fs::copy(env!("CARGO_BIN_EXE_transport-fixture"), &path).unwrap();
@@ -291,6 +310,7 @@ fn assert_choices(team: &Team, input: &Value) {
             "agent",
             "agent_args",
             "initial_prompt",
+            "message_constraint",
             "tab_id",
         ] {
             assert_eq!(actual[key], expected[key], "role {key}");
