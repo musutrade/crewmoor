@@ -151,7 +151,8 @@ fn trace(method: &str, path: &str, body: &Value) -> Result<()> {
     let Some(pathname) = std::env::var_os("CM_OPENCODE_TEST_TRACE") else {
         return Ok(());
     };
-    let row = json!({"method":method,"path":path,"body":body,"native_path":std::env::var("PATH").ok(),"native_db":std::env::var("OPENCODE_DB").ok()});
+    let overlay = guard_overlay()?;
+    let row = json!({"method":method,"path":path,"body":body,"native_path":std::env::var("PATH").ok(),"native_db":std::env::var("OPENCODE_DB").ok(),"guard_overlay":overlay});
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -159,6 +160,14 @@ fn trace(method: &str, path: &str, body: &Value) -> Result<()> {
         .open(pathname)?;
     file.write_all(format!("{row}\n").as_bytes())?;
     Ok(())
+}
+fn guard_overlay() -> Result<Value> {
+    if std::env::var("CM_OPENCODE_TEST_GUARD_TRACE").as_deref() != Ok("1") {
+        return Ok(Value::Null);
+    }
+    // Enabled only by the controlled fixture test; never dump general native config.
+    let content: Value = serde_json::from_str(&std::env::var("OPENCODE_CONFIG_CONTENT")?)?;
+    Ok(json!({"example":content["example"],"plugins":content["plugins"]}))
 }
 fn sse(mut stream: TcpStream, end: End) {
     thread::spawn(move || {

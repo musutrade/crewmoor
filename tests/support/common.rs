@@ -35,6 +35,7 @@ pub fn config(base: &Path, runtime: Runtime) -> Config {
         initial_prompt: None,
         opencode: None,
         feedback_registry: None,
+        tool_guard: None,
     }
 }
 #[derive(Default)]
