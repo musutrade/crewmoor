@@ -4,6 +4,7 @@ mod hook;
 mod launch;
 use crate::Result;
 pub use hook::cli;
+pub(crate) use launch::agent_arguments;
 pub use launch::{Guard, prepare};
 use serde::{Deserialize, Serialize};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf};

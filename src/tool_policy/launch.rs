@@ -11,6 +11,44 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const RULES_ENV: &str = "TOOL_RULE_HOOK_RULES";
+const CONTEXT_ENV: &str = "TOOL_RULE_HOOK_CONTEXT";
+const VERIFY_ENV: &str = "TOOL_RULE_HOOK_VERIFY";
+
+/// Only the exact ordered injection emitted by Guard::environment is recognized.
+/// This is called after the fixed /usr/bin/env removal prefix has matched.
+pub(crate) fn agent_arguments(argv: &[String]) -> Result<&[String]> {
+    if !argv
+        .first()
+        .is_some_and(|value| value.starts_with(&format!("{RULES_ENV}=")))
+    {
+        return Ok(argv);
+    }
+    path_assignment(argv, 0, RULES_ENV)?;
+    path_assignment(argv, 1, CONTEXT_ENV)?;
+    let verifier = assignment(argv, 2, VERIFY_ENV)?;
+    verify_arguments(verifier)?;
+    Ok(&argv[3..])
+}
+fn assignment<'a>(argv: &'a [String], index: usize, name: &str) -> Result<&'a str> {
+    argv.get(index)
+        .and_then(|value| value.strip_prefix(&format!("{name}=")))
+        .ok_or_else(|| "incomplete or reordered role tool-rule environment prefix".into())
+}
+fn path_assignment(argv: &[String], index: usize, name: &str) -> Result<()> {
+    crate::config::absolute(Path::new(assignment(argv, index, name)?))
+}
+fn verify_arguments(value: &str) -> Result<()> {
+    let argv: Vec<String> = serde_json::from_str(value)?;
+    let [program, command, mode] = argv.as_slice() else {
+        return Err("role tool-rule verifier argv differs".into());
+    };
+    if command != "tool-policy" || mode != "verify" {
+        return Err("role tool-rule verifier argv differs".into());
+    }
+    crate::config::absolute(Path::new(program))
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Guard {
@@ -157,13 +195,10 @@ impl Guard {
             return Vec::new();
         };
         vec![
-            ("TOOL_RULE_HOOK_RULES".into(), rules.display().to_string()),
+            (RULES_ENV.into(), rules.display().to_string()),
+            (CONTEXT_ENV.into(), self.snapshot.display().to_string()),
             (
-                "TOOL_RULE_HOOK_CONTEXT".into(),
-                self.snapshot.display().to_string(),
-            ),
-            (
-                "TOOL_RULE_HOOK_VERIFY".into(),
+                VERIFY_ENV.into(),
                 json!([verifier, "tool-policy", "verify"]).to_string(),
             ),
         ]

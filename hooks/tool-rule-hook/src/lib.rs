@@ -244,7 +244,11 @@ impl Scanner<'_> {
             return Ok(());
         };
         match program {
-            "npm" | "cd" => {
+            "npm" => {
+                self.scan.unresolved = true;
+                Ok(())
+            }
+            "cd" => {
                 self.cwd_known = false;
                 self.scan.unresolved = true;
                 Ok(())

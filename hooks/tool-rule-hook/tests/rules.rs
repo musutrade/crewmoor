@@ -206,3 +206,34 @@ fn python_option_separator_preserves_a_script_named_like_an_interpreter_option()
     );
     assert!(inspect(&p, root.path(), "npm --prefix '' test").is_err());
 }
+
+#[test]
+fn npm_does_not_change_the_parent_cwd_for_later_relative_python_calls() {
+    let root = tempfile::tempdir().unwrap();
+    let mut p = policy(root.path());
+    fs::write(root.path().join("ordinary.py"), "print('ordinary data')").unwrap();
+    fs::create_dir(root.path().join("sub")).unwrap();
+    fs::write(
+        root.path().join("checks.py"),
+        "import os; os.system('cargo test')",
+    )
+    .unwrap();
+    p.entries
+        .retain(|entry| entry.argv.first().is_none_or(|program| program != "npm"));
+    for prefix in [
+        "npm --version",
+        "npm run build",
+        "npm --prefix sub run build",
+    ] {
+        let command = format!("{prefix}; python3 ordinary.py");
+        let result = inspect(&p, root.path(), &command).unwrap();
+        assert!(result.entry.is_none(), "{command}");
+        assert!(result.unresolved);
+        let command = format!("{prefix} && python3 checks.py");
+        assert_eq!(
+            inspect(&p, root.path(), &command).unwrap().entry.as_deref(),
+            Some("Cargo full")
+        );
+    }
+    assert!(inspect(&p, root.path(), "cd sub; python3 ordinary.py").is_err());
+}
