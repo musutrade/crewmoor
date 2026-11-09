@@ -14,7 +14,7 @@ pub enum Evidence {
     Native,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
     pub team: String,
@@ -26,7 +26,7 @@ pub struct Registration {
     pub evidence: Evidence,
     pub native_session_id: Option<String>,
 }
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Context {
     pub instance: String,
     pub registration: Registration,

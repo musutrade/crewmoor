@@ -49,6 +49,8 @@ pub struct Config {
     pub opencode: Option<crate::opencode::Options>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback_registry: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_guard: Option<crate::tool_policy::Guard>,
 }
 /// An existing TUI server that CrewMoor connects to but never owns or stops.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -97,6 +99,9 @@ impl Config {
         self.validate_host()?;
         self.validate_marker()?;
         self.validate_opencode()?;
+        if let Some(guard) = &self.tool_guard {
+            guard.validate(self)?;
+        }
         validate_args(&self.agent, &self.agent_args)?;
         initial_prompt(&self.agent, self.initial_prompt.as_deref())
     }
@@ -155,8 +160,15 @@ impl Config {
         {
             args.push("--no-daemon".into());
         }
-        args.extend(self.agent_args.clone());
+        args.extend(self.native_args());
         args.extend(self.initial_prompt.clone());
+        args
+    }
+    pub fn native_args(&self) -> Vec<String> {
+        let mut args = self.agent_args.clone();
+        if let Some(guard) = &self.tool_guard {
+            guard.apply(&self.agent, &mut args);
+        }
         args
     }
     fn validate_tui(&self) -> Result<()> {

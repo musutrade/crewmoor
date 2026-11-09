@@ -214,6 +214,14 @@ unchanged.
 A failed role stops `team start` with that role named. Already-started roles stay
 recorded; use `team stop` on the same directory.
 
+### Optional role tool policies
+
+For independent execution-before-command role rules, see
+[`tool_policy`](tool-policy.md) and its generation template. It is opt-in per
+new role and uses native pre-tool entry points; message reminders do not provide
+that mechanical control. Hook configuration is not proof of native loading,
+actual refusal or Agent receipt.
+
 ### Optional bound message reminders with `message_constraint`
 
 Each role can configure `message_constraint`, independently of its startup

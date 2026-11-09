@@ -313,6 +313,38 @@ fn role_constraint_is_snapshotted_without_entering_startup_and_bound_once() {
 }
 
 #[test]
+fn role_tool_policy_is_bound_to_the_start_context_and_never_injected_into_other_roles() {
+    let setup = Setup::new();
+    let mut team = setup.team();
+    team.roles[0].tool_policy = Some(serde_json::from_value(json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"allow":[["cargo","test","--test","message"]],"feedback":"Submit role owns full tests."})).unwrap());
+    let mut next = 0;
+    team::start(
+        team,
+        setup.dir.path(),
+        &mut no_layout,
+        &mut |config, root| {
+            assert_eq!(config.tool_guard.is_some(), config.role == "worker");
+            let fake = &setup.fakes[next];
+            next += 1;
+            engine::launch(config, root, fake)
+        },
+    )
+    .unwrap();
+    let worker = setup.record("worker");
+    let guard = worker.config.tool_guard.as_ref().unwrap();
+    let snapshot: Value = serde_json::from_slice(&fs::read(&guard.snapshot).unwrap()).unwrap();
+    assert_eq!(snapshot["context"]["instance"], setup.instance("worker"));
+    assert_eq!(snapshot["context"]["registration"]["role"], "worker");
+    assert!(setup.record("lead").config.tool_guard.is_none());
+    let calls = setup.fakes[1].calls.borrow();
+    let argv = calls
+        .iter()
+        .find(|args| args.get(1).is_some_and(|arg| arg == "start"))
+        .unwrap();
+    assert!(argv.iter().any(|arg| arg.starts_with("hooks.PreToolUse=")));
+}
+
+#[test]
 fn clear_after_binding_is_rejected_recorded_and_never_adopted() {
     let setup = Setup::new();
     setup.start().unwrap();

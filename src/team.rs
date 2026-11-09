@@ -47,6 +47,8 @@ pub struct Role {
     /// Independent reminder after each accepted bound dispatcher message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_constraint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_policy: Option<crate::tool_policy::Policy>,
     /// App tab for this role only (core teams); overrides the app_target `tab_id`.
     pub tab_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,6 +84,9 @@ impl Team {
         for role in &self.roles {
             crate::config::name(&role.role)?;
             message::validate_constraint(role.message_constraint.as_deref())?;
+            if let Some(policy) = &role.tool_policy {
+                policy.validate()?;
+            }
         }
         crate::config::name(&self.dispatcher)
     }
@@ -179,6 +184,7 @@ impl Team {
             initial_prompt: role.initial_prompt.clone(),
             opencode: role.opencode.clone(),
             feedback_registry: Some(self.feedback_registry.clone()),
+            tool_guard: None,
         })
     }
     fn registration(&self, role: &Role) -> Registration {
@@ -264,7 +270,12 @@ fn start_role(
         &root.join("context.json"),
         &serde_json::to_vec_pretty(&context)?,
     )?;
-    let config = team.launch_config(role, dir, Some(&context.instance))?;
+    let mut config = team.launch_config(role, dir, Some(&context.instance))?;
+    if let Some(policy) = &role.tool_policy {
+        config.tool_guard = Some(crate::tool_policy::prepare(
+            &config, policy, &root, &context,
+        )?);
+    }
     let record = launch(config, &launch_root(dir, &role.role))?;
     Ok(
         json!({"role":role.role,"feedback_instance":context.instance,

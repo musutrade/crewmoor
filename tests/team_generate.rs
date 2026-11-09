@@ -105,6 +105,20 @@ fn generation_preserves_role_reminders_independently_and_rejects_oversize() {
     fixture.input["roles"][1]["message_constraint"] = json!("x".repeat(16_385));
     failed(&fixture.run(&[]));
 }
+
+#[test]
+fn generation_preserves_role_policy_without_writing_native_hook_files() {
+    let mut fixture = Fixture::new();
+    fixture.input["roles"][1]["tool_policy"] = json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"allow":[["cargo","test","--test","message"]],"feedback":"Full tests belong to submission role."});
+    let team = parse(&fixture.run(&[]));
+    let policy = team.roles[1].tool_policy.as_ref().unwrap();
+    assert_eq!(policy.entries[0].argv, vec!["cargo", "test"]);
+    assert!(team.roles[0].tool_policy.is_none());
+    assert!(!fixture.root().join("registry").exists());
+    assert!(!fixture.root().join("teams").exists());
+    fixture.input["roles"][1]["tool_policy"]["allow"] = json!([["cargo", "test", "--nocapture"]]);
+    failed(&fixture.run(&[]));
+}
 fn executable(root: &Path, name: &str, config: Value) -> PathBuf {
     let path = root.join(name);
     fs::copy(env!("CARGO_BIN_EXE_transport-fixture"), &path).unwrap();

@@ -185,6 +185,7 @@ pub fn cli(args: &[String]) -> Result<()> {
         "issue" => crate::issue::cli(rest),
         "message" => crate::message::cli(rest),
         "team" => crate::team::cli(rest),
+        "tool-policy" => crate::tool_policy::cli(rest),
         _ => lifecycle_cli(args),
     }
 }

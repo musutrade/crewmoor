@@ -219,6 +219,9 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
     let context = context(&registry, root.path(), "probe", None);
     let mut config = config(root.path(), &context);
     config.initial_prompt = Some("启动 \"中文\" \\路径".into());
+    let policy: crewmoor::tool_policy::Policy = serde_json::from_value(json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"feedback":"submission owns full tests"})).unwrap();
+    config.tool_guard =
+        Some(crewmoor::tool_policy::prepare(&config, &policy, root.path(), &context).unwrap());
     let mut record = Record::prepare(config, &root.path().join("launch")).unwrap();
     prepare::prepare(&record).unwrap();
     // Library tests have a different current_exe; the CLI owns the real alias.
@@ -230,6 +233,11 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .args(prepare::tui_arguments(&record.config))
         .env(prepare::LAUNCH_ENV, prepare::launch_file(&record))
         .env("CM_OPENCODE_TEST_TRACE", root.path().join("trace.jsonl"))
+        .env("CM_OPENCODE_TEST_GUARD_TRACE", "1")
+        .env(
+            "OPENCODE_CONFIG_CONTENT",
+            "{\"example\":\"preserved\",\"plugins\":[\"synthetic-existing\"]}",
+        )
         .env(
             "PATH",
             std::env::join_paths([
@@ -294,6 +302,25 @@ fn foreground_launch_keeps_private_lease_until_owned_tui_exits() {
         .filter(|row| row["method"] == "TUI")
         .collect();
     assert_eq!(interactive.len(), 1);
+    assert_eq!(interactive[0]["guard_overlay"]["example"], "preserved");
+    assert_eq!(
+        interactive[0]["guard_overlay"]["plugins"][0],
+        "synthetic-existing"
+    );
+    assert_eq!(
+        interactive[0]["guard_overlay"]["plugins"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let launch: Value =
+        serde_json::from_slice(&fs::read(prepare::launch_file(&record)).unwrap()).unwrap();
+    assert!(
+        launch["environment"]
+            .get("OPENCODE_CONFIG_CONTENT")
+            .is_none()
+    );
     assert_eq!(
         interactive[0]["body"],
         json!([

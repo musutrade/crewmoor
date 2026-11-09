@@ -1,0 +1,49 @@
+# Generation template: replace project, registry and durable checker paths.
+# No Hook is installed by generation; native trust/load and actual refusal need verification.
+team = "sample-policy-team"
+task = "sample-task"
+runtime = "tui"
+feedback_registry = "/absolute/feedback-registry"
+evidence = "native"
+dispatcher = "coordinator"
+
+[host]
+socket = "/home/gem/.config/herdr/herdr.sock"
+
+[[roles]]
+role = "coordinator"
+cwd = "/absolute/project"
+agent = "claude"
+agent_args = []
+
+[[roles]]
+role = "builder"
+cwd = "/absolute/project"
+agent = "codex"
+agent_args = ["--no-alt-screen"]
+initial_prompt = "Wait for the coordinator assignment; use the agreed targeted checks."
+
+[roles.tool_policy]
+checker = "/absolute/durable/crewmoor"
+feedback = "Full tests and coverage belong to the submission role."
+timeout_ms = 3000
+allow = [["cargo", "test", "--test", "message", "only_this_test"]]
+
+[[roles.tool_policy.entries]]
+argv = ["cargo", "test"]
+label = "full Cargo tests"
+
+[[roles.tool_policy.entries]]
+argv = ["cargo", "llvm-cov"]
+label = "coverage"
+
+[[roles.tool_policy.entries]]
+argv = ["make", "full-check"]
+label = "project full check"
+
+[[roles]]
+role = "submission"
+cwd = "/absolute/project"
+agent = "claude"
+agent_args = []
+# No tool_policy: run complete local tests, coverage and CRAP gates here.

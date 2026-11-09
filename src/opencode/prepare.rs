@@ -53,6 +53,20 @@ impl Launch {
         if let Some(path) = native_path(&self.root)? {
             command.env("PATH", path);
         }
+        if let Some(guard) = &self.config.tool_guard {
+            // Merge native configuration in memory; do not persist a copy of credentials.
+            let existing = std::env::var_os("OPENCODE_CONFIG_CONTENT")
+                .map(|value| {
+                    value
+                        .into_string()
+                        .map_err(|_| "non-UTF8 OpenCode config content")
+                })
+                .transpose()?;
+            command.env(
+                "OPENCODE_CONFIG_CONTENT",
+                guard.opencode_content(existing.as_deref())?,
+            );
+        }
         Ok(command)
     }
 }

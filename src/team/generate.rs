@@ -53,6 +53,7 @@ struct RoleInput {
     agent_args: Vec<String>,
     initial_prompt: Option<String>,
     message_constraint: Option<String>,
+    tool_policy: Option<crate::tool_policy::Policy>,
     tab_id: Option<String>,
     opencode: Option<crate::opencode::Options>,
 }
@@ -229,6 +230,7 @@ fn role(input: RoleInput) -> Result<Role> {
         agent_args: input.agent_args,
         initial_prompt: input.initial_prompt,
         message_constraint: input.message_constraint,
+        tool_policy: input.tool_policy,
         tab_id: input.tab_id,
         opencode: input.opencode,
     })
