@@ -17,7 +17,7 @@ pub fn export(root: &Path) -> Result<()> {
     let executable = executable
         .to_str()
         .ok_or("checker installation path is not UTF-8")?;
-    let command = format!("'{}' hook", executable.replace('\'', "'\\''"));
+    let command = format!("'{}' optional-hook", executable.replace('\'', "'\\''"));
     let quoted = serde_json::to_string(&command)?;
     fs::create_dir(root)?;
     for (relative, source) in [

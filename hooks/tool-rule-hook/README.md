@@ -24,7 +24,7 @@ For an unpacked `.crate`, use its `Cargo.toml` and its directory for `--path`.
 `cargo install` installs the binary. Both exporters embed all required assets in
 that binary and create a **new** directory, refusing existing destinations. The
 Codex/Claude exporter writes their native plugin manifests and hook documents.
-Their command is the exporting binary's absolute path followed by `hook`; no
+Their command is the exporting binary's absolute path followed by `optional-hook`; no
 project, role or rule path is embedded in it. The OpenCode exporter writes one
 native server plugin directory. All roles reuse those fixed directories and the
 same binary. Assets and examples are also included in the source archive,
@@ -102,7 +102,7 @@ with `unresolved:true`.
 ## Codex and Claude: trusted process selection
 
 Set `TOOL_RULE_HOOK_RULES=/absolute/external/rules.json` only in the actual Agent
-process environment. The fixed `hook` command reads it on each invocation; a
+process environment. The fixed exported `optional-hook` command reads it on each invocation; a
 client's variable does not prove inheritance into a daemon/app-server. Supported
 Codex integration is a local `--no-daemon` process (0.167.0); shared-daemon and
 remote-executor selection are not supported by this integration. Claude 2.1.319
@@ -112,6 +112,23 @@ namespace consistently in the effective process-local settings, and confirm the
 actual Hook source/result. CrewMoor places the same selected values in its owned
 process settings and rejects conflicts in the explicit input settings. Arbitrary
 runtime edits to effective settings remain outside a tamper-resistant boundary.
+
+The global plugin's `optional-hook` entry returns `{}` only when all three
+selection variables (`TOOL_RULE_HOOK_RULES`, `TOOL_RULE_HOOK_CONTEXT` and
+`TOOL_RULE_HOOK_VERIFY`) are absent. This is this plugin's `no_match`, never a
+native permission `allow`; other hooks and native permissions still apply. This
+unselected path does not read or validate stdin, so empty/malformed events also
+return `{}`. Any variable present, including an empty or non-UTF-8 value, selects
+the strict checker. Missing/invalid rules, missing files, invalid input, partial
+verifier/context settings, rejected identity and timeouts then deny. Rules that
+do not match return the usual `{}`.
+
+The explicit `hook` entry stays strict even with all selection variables absent;
+CrewMoor's role-local injection uses that entry. Bare `bridge`, compatibility
+envelopes and OpenCode `bridge-session` retain their separate strict contracts.
+Environment selection cannot distinguish an intentionally unselected process
+from one whose three selection variables were all lost upstream. Verify the
+actual executing Hook's environment; a configured client alone is not evidence.
 
 The exported `.codex-plugin/plugin.json` references `hooks/codex-hooks.json`;
 Claude discovers `hooks/hooks.json` beside `.claude-plugin/plugin.json`. Install
@@ -129,6 +146,8 @@ codex plugin add tool-rule-hook@tool-rule-hook-local --json
 These **write the actual user Codex configuration and plugin cache**, enable the
 plugin at user scope and can affect other sessions through configuration refresh.
 They are not performed by the exporter and are not a zero-user-write test path.
+Loaded/trusted plugins can run in other processes at that scope; those processes
+use the unselected `optional-hook` behavior above unless a selection variable is present.
 They require appropriate installation authority and native trust review. Do not
 change `CODEX_HOME`, copy credentials or edit trust to bypass those boundaries.
 After stopping this plugin's test work, operator-run `codex plugin remove

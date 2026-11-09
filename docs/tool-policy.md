@@ -79,6 +79,12 @@ a Codex local marketplace catalog. Exporting files is not installation. Native
 Codex marketplace/plugin add writes user configuration/cache and enables the
 plugin at user scope; it is outside CrewMoor's role launch. No such installation,
 user trust mutation or current-team reconfiguration occurs here.
+The exported command uses the independent `optional-hook` entry: all three
+selection variables absent returns `{}` without granting permission or reading
+stdin; any one present invokes the same strict checker. Role-local `hook`
+injection stays strict. Partial selection loss still denies; losing all three
+variables is indistinguishable from never selecting this plugin. Check actual
+host inheritance when deploying a global plugin.
 
 ## OpenCode: native session selection
 

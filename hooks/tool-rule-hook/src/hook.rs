@@ -23,8 +23,9 @@ pub fn cli(args: &[String]) -> Result<()> {
     match args {
         [mode,path]=>cli_file(mode,Path::new(path)),
         [mode,first,second]=>cli_three(mode,Path::new(first),second),
+        [mode] if mode=="optional-hook"=>emit_optional(),
         [mode] if ["hook","bridge","compat-hook","compat-bridge"].contains(&mode.as_str())=>emit(mode),
-        _=>Err("usage: tool-rule-hook hook|bridge; validate RULES; export-plugin|export-marketplace|export-opencode NEW_DIRECTORY; session-bind|session-update|session-end|session-show STORE < REQUEST; bridge-session STORE REALM; rules-update DEST SOURCE".into()),
+        _=>Err("usage: tool-rule-hook hook|optional-hook|bridge; validate RULES; export-plugin|export-marketplace|export-opencode NEW_DIRECTORY; session-bind|session-update|session-end|session-show STORE < REQUEST; bridge-session STORE REALM; rules-update DEST SOURCE".into()),
     }
 }
 fn cli_file(mode: &str, path: &Path) -> Result<()> {
@@ -132,6 +133,16 @@ fn decide(policy: Policy, scan: Scan, context: String) -> Decision {
             unresolved: scan.unresolved,
         },
     }
+}
+fn emit_optional() -> Result<()> {
+    if [RULES_ENV, CONTEXT_ENV, VERIFY_ENV]
+        .into_iter()
+        .all(|name| std::env::var_os(name).is_none())
+    {
+        println!("{{}}");
+        return Ok(());
+    }
+    emit("hook")
 }
 fn emit(mode: &str) -> Result<()> {
     let bridge = mode.ends_with("bridge");

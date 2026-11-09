@@ -22,7 +22,8 @@ fn main() -> Result<()> {
     valid_verifier_receives_native_event_bound_context_and_identity();
     invalid_verifier_bindings_are_rejected_without_publishing_a_session();
     verifier_failures_deny_instead_of_falling_back_to_independent_rules();
-    println!("3 public session-verifier protocol cases passed");
+    optional_native_hook_keeps_trusted_session_and_instance_checks();
+    println!("4 public session-verifier protocol cases passed");
     Ok(())
 }
 
@@ -45,13 +46,18 @@ fn record(trace: &Path, request: &Value, context: &Path, instance: &str) -> Resu
     Ok(())
 }
 fn verify_identity(request: &Value, context: &Value, instance: &str) -> Result<()> {
-    if request["bridge"] != true || request["input"]["sessionID"] != context["session"] {
+    let (session, directory) = match request["bridge"].as_bool() {
+        Some(true) => ("sessionID", "directory"),
+        Some(false) => ("session_id", "cwd"),
+        None => return Err("checker protocol requires a bridge flag".into()),
+    };
+    if request["input"][session] != context["session"] {
         return Err("calling session differs from trusted verifier context".into());
     }
     if context["instance"].as_str() != Some(instance) {
         return Err("bound verifier instance differs".into());
     }
-    if request["input"]["directory"] != context["directory"] {
+    if request["input"][directory] != context["directory"] {
         return Err("calling directory differs from trusted verifier context".into());
     }
     Ok(())
@@ -112,24 +118,28 @@ impl Fixture {
             "input":{"command":command}})
     }
     fn checker(&self, args: &[&str], event: &Value) -> Output {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"));
+        command
             .args(args)
             .env("TOOL_RULE_HOOK_RULES", &self.decoy)
             .env_remove("TOOL_RULE_HOOK_VERIFY")
             .env_remove("TOOL_RULE_HOOK_CONTEXT")
-            .env_remove("CREWMOOR_FEEDBACK_INSTANCE")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(event.to_string().as_bytes())
-            .unwrap();
-        child.wait_with_output().unwrap()
+            .env_remove("CREWMOOR_FEEDBACK_INSTANCE");
+        capture(&mut command, event)
+    }
+    fn native_hook(&self, event: &Value) -> Value {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"));
+        command
+            .arg("optional-hook")
+            .env("TOOL_RULE_HOOK_RULES", &self.rules)
+            .env("TOOL_RULE_HOOK_CONTEXT", &self.context)
+            .env(
+                "TOOL_RULE_HOOK_VERIFY",
+                serde_json::to_string(&self.verifier).unwrap(),
+            )
+            .env(INSTANCE_ENV, INSTANCE)
+            .env_remove("CREWMOOR_FEEDBACK_INSTANCE");
+        decode(capture(&mut command, event))
     }
     fn bind(&self, selection: &Value) -> Output {
         self.checker(&["session-bind", self.store.to_str().unwrap()], selection)
@@ -145,6 +155,21 @@ impl Fixture {
             "cwd":self.root.path(),"tool_input":{"command":"restricted"}});
         assert_eq!(decode(self.checker(&["hook"], &input)), json!({}));
     }
+}
+fn capture(command: &mut Command, event: &Value) -> Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
 }
 fn write_rules(root: &Path, name: &str, entry: &str) -> PathBuf {
     let path = root.join(format!("{name}.json"));
@@ -224,5 +249,37 @@ fn verifier_failures_deny_instead_of_falling_back_to_independent_rules() {
             assert_checker_failure(&fixture.bridge(&fixture.event("restricted")));
             assert!(fixture.trace.is_file());
         }
+    }
+}
+
+fn optional_native_hook_keeps_trusted_session_and_instance_checks() {
+    let fixture = Fixture::new("context");
+    let event = json!({"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":SESSION,
+        "cwd":fixture.root.path(),"tool_input":{"command":"ordinary"},
+        "role":"untrusted-role-claim","instance":"untrusted-instance-claim"});
+    assert_eq!(fixture.native_hook(&event), json!({}));
+    let trace: Value = serde_json::from_slice(&fs::read(&fixture.trace).unwrap()).unwrap();
+    assert_eq!(trace["request"], json!({"bridge":false,"input":event}));
+    let mut restricted = event.clone();
+    restricted["tool_input"]["command"] = json!("restricted");
+    let denied = fixture.native_hook(&restricted);
+    assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+    let reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(reason.contains("trusted actor A"));
+    assert!(reason.contains("Policy selected"));
+    let mut context: Value = serde_json::from_slice(&fs::read(&fixture.context).unwrap()).unwrap();
+    for field in ["session", "instance"] {
+        let original = context[field].clone();
+        context[field] = json!("wrong-identity");
+        fs::write(&fixture.context, context.to_string()).unwrap();
+        let denied = fixture.native_hook(&event);
+        assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+        let reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap();
+        assert!(reason.contains("checker failure"));
+        context[field] = original;
     }
 }

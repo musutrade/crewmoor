@@ -2,10 +2,16 @@
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Write,
+    io::{Seek, Write},
+    os::unix::ffi::OsStringExt,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
+const SELECTION_ENV: [&str; 3] = [
+    "TOOL_RULE_HOOK_RULES",
+    "TOOL_RULE_HOOK_CONTEXT",
+    "TOOL_RULE_HOOK_VERIFY",
+];
 struct Fixture {
     root: tempfile::TempDir,
     rules: PathBuf,
@@ -65,6 +71,28 @@ fn decode(result: Output) -> Value {
 fn output(command: Command, input: &Value) -> Value {
     decode(spawn(command, input).wait_with_output().unwrap())
 }
+fn unselected(mut command: Command) -> Command {
+    for name in SELECTION_ENV {
+        command.env_remove(name);
+    }
+    command
+}
+fn raw_output(mut command: Command, bytes: &[u8]) -> Value {
+    let mut input = tempfile::tempfile().unwrap();
+    input.write_all(bytes).unwrap();
+    input.rewind().unwrap();
+    decode(command.stdin(Stdio::from(input)).output().unwrap())
+}
+fn fixed_command(text: &str) -> Command {
+    let argv = shlex::split(text).unwrap();
+    assert_eq!(
+        argv,
+        [env!("CARGO_BIN_EXE_tool-rule-hook"), "optional-hook"]
+    );
+    let mut command = Command::new(&argv[0]);
+    command.args(&argv[1..]);
+    unselected(command)
+}
 fn reason(value: &Value) -> &str {
     value["hookSpecificOutput"]["permissionDecisionReason"]
         .as_str()
@@ -115,18 +143,140 @@ fn errors_always_return_checker_denial_and_never_claim_safe_execution() {
 #[test]
 fn verifier_failure_and_half_context_never_fall_back_to_independent_mode() {
     let fixture = Fixture::new();
-    for verifier in ["[\"/bin/false\"]", "[\"/bin/true\"]", "invalid JSON", "[]"] {
-        let mut command = fixture.command("hook", &fixture.rules);
-        command.env("TOOL_RULE_HOOK_VERIFY", verifier).env(
+    for mode in ["hook", "optional-hook"] {
+        for verifier in [
+            "",
+            "[\"/bin/false\"]",
+            "[\"/bin/true\"]",
+            "invalid JSON",
+            "[]",
+        ] {
+            let mut command = fixture.command(mode, &fixture.rules);
+            command.env("TOOL_RULE_HOOK_VERIFY", verifier).env(
+                "TOOL_RULE_HOOK_CONTEXT",
+                fixture.root.path().join("context.json"),
+            );
+            let result = output(command, &fixture.event("echo normal"));
+            assert!(reason(&result).contains("checker failure"));
+        }
+        for name in ["TOOL_RULE_HOOK_CONTEXT", "TOOL_RULE_HOOK_VERIFY"] {
+            let mut command = fixture.command(mode, &fixture.rules);
+            command.env(name, "/context.json");
+            assert!(
+                reason(&output(command, &fixture.event("echo normal"))).contains("no fallback")
+            );
+        }
+        for context in ["", "relative-context.json"] {
+            let mut command = fixture.command(mode, &fixture.rules);
+            command
+                .env("TOOL_RULE_HOOK_CONTEXT", context)
+                .env("TOOL_RULE_HOOK_VERIFY", "[\"/bin/true\"]");
+            assert!(
+                reason(&output(command, &fixture.event("echo normal"))).contains("checker failure")
+            );
+        }
+    }
+}
+
+#[test]
+fn selected_optional_hook_verifier_timeout_remains_denial() {
+    let fixture = Fixture::new();
+    fixture.edit(|rules| rules["timeout_ms"] = json!(25));
+    let mut command = fixture.command("optional-hook", &fixture.rules);
+    command
+        .env(
             "TOOL_RULE_HOOK_CONTEXT",
             fixture.root.path().join("context.json"),
-        );
-        let result = output(command, &fixture.event("echo normal"));
-        assert!(reason(&result).contains("checker failure"));
+        )
+        .env("TOOL_RULE_HOOK_VERIFY", "[\"/bin/sleep\",\"2\"]");
+    let denied = output(command, &fixture.event("echo normal"));
+    assert!(reason(&denied).contains("context/checker process timed out"));
+}
+
+#[test]
+fn unselected_optional_hook_returns_no_match_without_parsing_native_input() {
+    let fixture = Fixture::new();
+    for bytes in [b"".as_slice(), b"{invalid JSON", b"{}", b"null", b"\xff"] {
+        let command = unselected(fixture.command("optional-hook", &fixture.rules));
+        assert_eq!(raw_output(command, bytes), json!({}));
     }
-    let mut command = fixture.command("hook", &fixture.rules);
-    command.env("TOOL_RULE_HOOK_CONTEXT", "/context.json");
-    assert!(reason(&output(command, &fixture.event("echo normal"))).contains("no fallback"));
+    let mut command = unselected(fixture.command("optional-hook", &fixture.rules));
+    let no_input = decode(command.stdin(Stdio::null()).output().unwrap());
+    assert_eq!(no_input, json!({}));
+}
+
+#[test]
+fn any_selection_variable_including_empty_or_non_utf8_stays_strict() {
+    let fixture = Fixture::new();
+    let event = fixture.event("echo normal").to_string();
+    for mask in 1..8 {
+        for value in ["", "/absent-selection"] {
+            let mut command = unselected(fixture.command("optional-hook", &fixture.rules));
+            for (bit, name) in SELECTION_ENV.into_iter().enumerate() {
+                if mask & (1 << bit) != 0 {
+                    command.env(name, value);
+                }
+            }
+            let denied = raw_output(command, event.as_bytes());
+            assert!(reason(&denied).contains("checker failure"), "mask {mask}");
+        }
+    }
+    for name in SELECTION_ENV {
+        let mut command = unselected(fixture.command("optional-hook", &fixture.rules));
+        command.env(name, std::ffi::OsString::from_vec(vec![0xff]));
+        let denied = raw_output(command, event.as_bytes());
+        assert!(reason(&denied).contains("checker failure"), "{name}");
+    }
+}
+
+#[test]
+fn selected_optional_hook_rejects_bad_rules_input_and_deleted_selection() {
+    let fixture = Fixture::new();
+    let event = fixture.event("echo normal").to_string();
+    for path in [
+        Path::new(""),
+        Path::new("relative.json"),
+        fixture.root.path(),
+    ] {
+        let command = fixture.command("optional-hook", path);
+        assert!(reason(&raw_output(command, event.as_bytes())).contains("checker failure"));
+    }
+    for bytes in [b"".as_slice(), b"{invalid JSON", b"{}", b"null", b"\xff"] {
+        let command = fixture.command("optional-hook", &fixture.rules);
+        assert!(reason(&raw_output(command, bytes)).contains("checker failure"));
+    }
+    fixture.edit(|value| value["entries"] = json!([]));
+    let command = fixture.command("optional-hook", &fixture.rules);
+    assert!(reason(&raw_output(command, event.as_bytes())).contains("checker failure"));
+    fs::write(&fixture.rules, "{bad JSON").unwrap();
+    let command = fixture.command("optional-hook", &fixture.rules);
+    assert!(reason(&raw_output(command, event.as_bytes())).contains("checker failure"));
+    fs::remove_file(&fixture.rules).unwrap();
+    let command = fixture.command("optional-hook", &fixture.rules);
+    assert!(reason(&raw_output(command, event.as_bytes())).contains("checker failure"));
+}
+
+#[test]
+fn optional_selection_does_not_relax_explicit_hook_bridge_or_compatibility() {
+    let fixture = Fixture::new();
+    let command = unselected(fixture.command("hook", &fixture.rules));
+    assert!(reason(&output(command, &fixture.event("echo normal"))).contains("RULES is missing"));
+    let command = unselected(fixture.command("bridge", &fixture.rules));
+    let result = output(
+        command,
+        &json!({"tool":"shell","input":{"command":"echo normal"}}),
+    );
+    assert_eq!(result["decision"], "deny");
+    for mode in ["compat-hook", "compat-bridge"] {
+        let command = unselected(fixture.command(mode, &fixture.rules));
+        let result = output(command, &json!({"input":fixture.event("echo normal")}));
+        let denied = if mode == "compat-hook" {
+            result["hookSpecificOutput"]["permissionDecision"].clone()
+        } else {
+            result["decision"].clone()
+        };
+        assert_eq!(denied, "deny");
+    }
 }
 #[test]
 fn same_cwd_parallel_processes_keep_different_rules_and_load_edits_on_next_call() {
@@ -158,6 +308,8 @@ fn scan_timeout_and_packaged_asset_export_are_explicit() {
     assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
     fixture.edit(|rules| rules["timeout_ms"] = json!(10));
     assert!(reason(&fixture.run("python blocked.py")).contains("timed out"));
+    let command = fixture.command("optional-hook", &fixture.rules);
+    assert!(reason(&output(command, &fixture.event("python blocked.py"))).contains("timed out"));
     let destination = fixture.root.path().join("exported-plugin");
     let status = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
         .arg("export-opencode")
@@ -182,6 +334,7 @@ fn scan_timeout_and_packaged_asset_export_are_explicit() {
 
 #[test]
 fn exported_codex_marketplace_and_claude_hook_references_resolve_with_fixed_commands() {
+    let fixture = Fixture::new();
     let root = tempfile::tempdir().unwrap();
     let catalog = root.path().join("catalog");
     let result = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
@@ -206,9 +359,27 @@ fn exported_codex_marketplace_and_claude_hook_references_resolve_with_fixed_comm
         let command = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
-        assert!(command.ends_with(" hook"));
+        assert!(command.ends_with(" optional-hook"));
         assert!(!command.contains("RULES"));
         assert!(!command.contains("stop-that-shit"));
+        let ordinary = fixture.event("echo normal").to_string();
+        let restricted = fixture.event("cargo test").to_string();
+        assert_eq!(
+            raw_output(fixed_command(command), ordinary.as_bytes()),
+            json!({})
+        );
+        assert_eq!(
+            raw_output(fixed_command(command), restricted.as_bytes()),
+            json!({})
+        );
+        let mut selected = fixed_command(command);
+        selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        assert_eq!(raw_output(selected, ordinary.as_bytes()), json!({}));
+        let mut selected = fixed_command(command);
+        selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        let denied = raw_output(selected, restricted.as_bytes());
+        assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert!(reason(&denied).contains("Project chooses focused checks."));
     }
     assert!(plugin.join(".claude-plugin/plugin.json").is_file());
 }
@@ -218,7 +389,8 @@ fn legacy_adapter_envelope_uses_the_same_independent_scanner_and_feedback() {
     let fixture = Fixture::new();
     let policy: Value = serde_json::from_slice(&fs::read(&fixture.rules).unwrap()).unwrap();
     let event = json!({"policy":policy,"input":fixture.event("cargo test"),"context":"synthetic legacy adapter"});
-    let result = output(fixture.command("compat-hook", &fixture.rules), &event);
+    let command = unselected(fixture.command("compat-hook", &fixture.rules));
+    let result = output(command, &event);
     assert_eq!(result["hookSpecificOutput"]["permissionDecision"], "deny");
     assert!(reason(&result).contains("synthetic legacy adapter"));
     assert!(reason(&result).contains("Project chooses focused checks."));
