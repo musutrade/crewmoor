@@ -223,3 +223,88 @@ fn legacy_adapter_envelope_uses_the_same_independent_scanner_and_feedback() {
     assert!(reason(&result).contains("synthetic legacy adapter"));
     assert!(reason(&result).contains("Project chooses focused checks."));
 }
+
+fn update_rules(destination: &Path, source: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        .arg("rules-update")
+        .arg(destination)
+        .arg(source)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn rules_update_publishes_loadable_rules_and_changes_actual_checker_behavior() {
+    let fixture = Fixture::new();
+    let original_denial = fixture.run("cargo test");
+    assert_eq!(
+        original_denial["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+    let source = fixture.root.path().join("candidate.json");
+    let mut candidate: Value = serde_json::from_slice(&fs::read(&fixture.rules).unwrap()).unwrap();
+    candidate["entries"] = json!([{"argv":["npm","run","build"],"label":"published task"}]);
+    candidate["feedback"] = json!("The newly published project rule applies.");
+    let source_text = candidate.to_string();
+    fs::write(&source, &source_text).unwrap();
+    let result = update_rules(&fixture.rules, &source);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let validated = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        .arg("validate")
+        .arg(&fixture.rules)
+        .output()
+        .unwrap();
+    assert!(validated.status.success());
+    assert_eq!(fixture.run("cargo test"), json!({}));
+    let new_denial = fixture.run("npm run build");
+    assert_eq!(
+        new_denial["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+    assert!(reason(&new_denial).contains("published task"));
+    assert!(reason(&new_denial).contains("The newly published project rule applies."));
+    assert_eq!(fs::read_to_string(&source).unwrap(), source_text);
+}
+
+fn assert_live_rules_unchanged(fixture: &Fixture, bytes: &[u8], decision: &Value) {
+    assert_eq!(fs::read(&fixture.rules).unwrap(), bytes);
+    assert_eq!(fixture.run("cargo test"), *decision);
+    assert_eq!(fixture.run("echo normal"), json!({}));
+}
+
+#[test]
+fn rules_update_rejects_invalid_or_missing_sources_and_preserves_live_policy() {
+    let fixture = Fixture::new();
+    let bytes = fs::read(&fixture.rules).unwrap();
+    let decision = fixture.run("cargo test");
+    let mut invalid_policy: Value = serde_json::from_slice(&bytes).unwrap();
+    invalid_policy["entries"] = json!([]);
+    let source = fixture.root.path().join("invalid-source.json");
+    for text in ["{invalid JSON".to_owned(), invalid_policy.to_string()] {
+        fs::write(&source, text).unwrap();
+        let result = update_rules(&fixture.rules, &source);
+        assert!(!result.status.success());
+        assert_live_rules_unchanged(&fixture, &bytes, &decision);
+    }
+    let missing = fixture.root.path().join("missing-source.json");
+    let result = update_rules(&fixture.rules, &missing);
+    assert!(!result.status.success());
+    assert_live_rules_unchanged(&fixture, &bytes, &decision);
+}
+
+#[test]
+fn rules_update_reports_missing_destination_parent_without_creating_partial_rules() {
+    let fixture = Fixture::new();
+    let bytes = fs::read(&fixture.rules).unwrap();
+    let decision = fixture.run("cargo test");
+    let missing_parent = fixture.root.path().join("not-created");
+    let destination = missing_parent.join("rules.json");
+    let result = update_rules(&destination, &fixture.rules);
+    assert!(!result.status.success());
+    assert!(!missing_parent.exists());
+    assert_live_rules_unchanged(&fixture, &bytes, &decision);
+}
