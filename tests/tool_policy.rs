@@ -179,7 +179,7 @@ fn fixed_commands_process_environment_and_shared_plugin_preserve_role_isolation(
     config.tool_guard.as_mut().unwrap().checker =
         first.config.tool_guard.as_ref().unwrap().checker.clone();
     assert_eq!(first.config.native_args(), config.native_args());
-    assert!(config.native_args().contains(&"--no-daemon".into()));
+    assert!(!config.native_args().contains(&"--no-daemon".into()));
     let first_env = first.config.tool_guard.as_ref().unwrap().environment();
     let second_env = config.tool_guard.as_ref().unwrap().environment();
     assert_ne!(first_env, second_env);
@@ -215,6 +215,129 @@ fn fixed_commands_process_environment_and_shared_plugin_preserve_role_isolation(
         &open.directory.path().join("shared-rule-plugin")
     );
     assert!(!open.directory.path().join("tool-policy-opencode").exists());
+}
+
+#[test]
+fn guarded_tui_codex_reuses_the_existing_alias_without_adding_startup_flags() {
+    let fixture = Fixture::new(AgentKind::Codex);
+    let mut config = fixture.config.clone();
+    config.initial_prompt = Some("literal startup 'prompt' with spaces".into());
+    let mut record =
+        crewmoor::record::Record::prepare(config, &fixture.directory.path().join("alias-record"))
+            .unwrap();
+    record.handle = Some("w1:p1".into());
+    let args = crewmoor::tui::launch_args(&record).unwrap();
+    assert_eq!(&args[..2], ["agent", "start"]);
+    let boundary = args.iter().position(|arg| arg == "--").unwrap();
+    let inner = &args[boundary + 1..];
+    assert!(!inner.iter().any(|arg| arg == "--no-daemon"));
+    let quoted: Vec<_> = inner
+        .iter()
+        .map(|arg| format!("'{}'", arg.replace('\'', "'\\''")))
+        .collect();
+    let command = quoted.join(" ");
+    let executable = env!("CARGO_BIN_EXE_transport-fixture");
+    let script = format!("alias codex='{executable} --no-daemon';\ncodex {command}");
+    let path = fixture.directory.path().join("actual-alias-argv.json");
+    let output = Command::new("/bin/bash")
+        .args([
+            "--noprofile",
+            "--norc",
+            "-O",
+            "expand_aliases",
+            "-c",
+            &script,
+        ])
+        .env("CREWMOOR_ARGV_EVIDENCE", &path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let mut expected = vec![executable.to_owned(), "--no-daemon".into()];
+    expected.extend_from_slice(inner);
+    assert_eq!(value["argv"], json!(expected));
+    assert_eq!(value["kernel_argv"], value["argv"]);
+}
+
+#[test]
+fn codex_guard_preserves_explicit_flags_and_existing_core_startup_behavior() {
+    let fixture = Fixture::new(AgentKind::Codex);
+    for explicit in [false, true] {
+        let mut config = fixture.config.clone();
+        if explicit {
+            config.agent_args.push("--no-daemon".into());
+        }
+        let root = fixture
+            .directory
+            .path()
+            .join(format!("prepared-{explicit}"));
+        fs::create_dir(&root).unwrap();
+        config.tool_guard = Some(
+            tool_policy::prepare(
+                &config,
+                &rule_selection::policy(fixture.directory.path()),
+                &root,
+                &fixture.context,
+            )
+            .unwrap(),
+        );
+        let prepared = config.tool_guard.as_ref().unwrap().codex_args.clone();
+        for runtime in [Runtime::Tui, Runtime::Core] {
+            config.runtime = runtime.clone();
+            config.tool_guard.as_mut().unwrap().codex_args = prepared.clone();
+            let expected = usize::from(explicit || runtime == Runtime::Core);
+            assert_eq!(
+                config
+                    .argv()
+                    .iter()
+                    .filter(|arg| *arg == "--no-daemon")
+                    .count(),
+                expected
+            );
+            config.tool_guard.as_mut().unwrap().codex_args = None;
+            assert_eq!(
+                config
+                    .argv()
+                    .iter()
+                    .filter(|arg| *arg == "--no-daemon")
+                    .count(),
+                expected
+            );
+        }
+    }
+    let mut saved = fixture.config.clone();
+    saved.runtime = Runtime::Core;
+    saved
+        .tool_guard
+        .as_mut()
+        .unwrap()
+        .codex_args
+        .as_mut()
+        .unwrap()
+        .push("--no-daemon".into());
+    assert_eq!(
+        saved
+            .argv()
+            .iter()
+            .filter(|arg| *arg == "--no-daemon")
+            .count(),
+        1
+    );
+    saved.tool_guard = None;
+    assert_eq!(
+        saved
+            .argv()
+            .iter()
+            .filter(|arg| *arg == "--no-daemon")
+            .count(),
+        1
+    );
+    let claude = Fixture::new(AgentKind::Claude);
+    assert!(!claude.config.argv().contains(&"--no-daemon".into()));
 }
 #[test]
 fn claude_settings_are_merged_and_source_preserved() {

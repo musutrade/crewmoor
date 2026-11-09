@@ -103,9 +103,13 @@ with `unresolved:true`.
 
 Set `TOOL_RULE_HOOK_RULES=/absolute/external/rules.json` only in the actual Agent
 process environment. The fixed exported `optional-hook` command reads it on each invocation; a
-client's variable does not prove inheritance into a daemon/app-server. Supported
-Codex integration is a local `--no-daemon` process (0.167.0); shared-daemon and
-remote-executor selection are not supported by this integration. Claude 2.1.319
+client's variable does not prove inheritance into a daemon/app-server. Like STS,
+this plugin uses the host's normal loading and execution path; it does not launch
+Agents or add daemon/startup flags. With Codex 0.167.0, verify the actual executing
+CLI/app-server environment. Shared-daemon and remote-executor role isolation has
+not been established by client environment injection. Select a native launch
+mode whose Hook environment has been verified; do not change shared environment
+to alternate between roles. Claude 2.1.319
 uses its own process environment and process-local settings/plugin loading.
 Claude settings.env can override inherited environment: configure this package's
 namespace consistently in the effective process-local settings, and confirm the

@@ -43,8 +43,12 @@ launch environment as `TOOL_RULE_HOOK_RULES`, `TOOL_RULE_HOOK_VERIFY` and
 `TOOL_RULE_HOOK_CONTEXT`. TUI uses native workspace environment injection;
 App/core uses direct child argv environment assignments after removing inherited
 role markers. This describes the intended launch, not evidence that a host loaded
-or ran the Hook. Shared Codex daemons/remote executors are not supported; selected
-Codex processes explicitly use native `--no-daemon`.
+or ran the Hook. Like the STS fixed plugin, tool rules add no Agent startup or
+daemon flags. TUI retains the existing official `agent start` chain and shell
+configuration; Core retains its existing direct-executable startup behavior.
+Explicit Agent arguments remain operator owned. Verify the actual Hook process
+environment for the chosen native CLI/app-server mode; shared daemon/remote
+executor role isolation is not established by client variables alone.
 
 CrewMoor's verifier checks its immutable registry context, actual instance marker,
 unchanged registration and native session association. A role claim in tool text

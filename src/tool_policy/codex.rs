@@ -25,9 +25,6 @@ pub fn inject(args: &[String], command: &str) -> Result<Vec<String>> {
     if !enabled {
         result.extend(["-c".into(), "features.hooks=true".into()]);
     }
-    if !result.iter().any(|arg| arg == "--no-daemon") {
-        result.push("--no-daemon".into());
-    }
     Ok(result)
 }
 fn existing(args: &[String]) -> Result<(Declaration, bool)> {
@@ -189,6 +186,11 @@ mod tests {
         );
         assert!(inject(&["-c".into()], "fixed hook").is_err());
         let ordinary = inject(&[], "fixed hook").unwrap();
-        assert!(ordinary.contains(&"--no-daemon".into()));
+        assert!(!ordinary.contains(&"--no-daemon".into()));
+        let explicit = inject(&["--no-daemon".into()], "fixed hook").unwrap();
+        assert_eq!(
+            explicit.iter().filter(|arg| *arg == "--no-daemon").count(),
+            1
+        );
     }
 }

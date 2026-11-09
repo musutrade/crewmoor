@@ -239,9 +239,6 @@ impl Guard {
                     *args = prepared.clone();
                     return;
                 }
-                if !args.iter().any(|arg| arg == "--no-daemon") {
-                    args.push("--no-daemon".into());
-                }
                 let command = json!(self.command());
                 args.extend(["-c".into(), "features.hooks=true".into(), "-c".into(), format!("hooks.PreToolUse=[{{matcher=\"^Bash$\",hooks=[{{type=\"command\",command={command},timeout=10}}]}}]")]);
             }

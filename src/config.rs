@@ -157,14 +157,14 @@ impl Config {
             args.extend(crate::opencode::prepare::arguments(self));
             return args;
         }
+        let native_args = self.native_args();
         if self.runtime == Runtime::Core
             && self.agent == AgentKind::Codex
-            && self.tool_guard.is_none()
-            && !self.agent_args.iter().any(|a| a == "--no-daemon")
+            && !native_args.iter().any(|a| a == "--no-daemon")
         {
             args.push("--no-daemon".into());
         }
-        args.extend(self.native_args());
+        args.extend(native_args);
         args.extend(self.initial_prompt.clone());
         args
     }
