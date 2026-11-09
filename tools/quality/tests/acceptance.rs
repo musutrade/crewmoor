@@ -325,4 +325,8 @@ fn independent_hook_targets_and_tests_are_in_quality_inventory() {
         .iter()
         .any(|(path, test)| path.ends_with("hooks/tool-rule-hook/tests/scanner.rs") && *test);
     assert!(includes_scanner);
+    let includes_verifier = files.iter().any(|(path, test)| {
+        path.ends_with("hooks/tool-rule-hook/tests/session_verifier.rs") && *test
+    });
+    assert!(includes_verifier);
 }

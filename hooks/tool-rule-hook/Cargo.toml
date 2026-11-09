@@ -21,3 +21,8 @@ rustpython-ast = { version = "0.4.0", features = ["visitor"] }
 
 [dev-dependencies]
 libc = "=0.2.191"
+
+[[test]]
+name = "session_verifier"
+path = "tests/session_verifier.rs"
+harness = false
