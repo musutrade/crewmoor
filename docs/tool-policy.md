@@ -48,7 +48,10 @@ basenames (`cargo`, `full.sh`), not paths. Cargo's leading `+toolchain`,
 matching; the latter accept a separate value or `=value`. Other arguments remain
 part of the exact comparison. Cargo test exceptions must include a concrete
 `--test TARGET` or a leading test-name filter, and cannot include full-sweep
-selectors such as `--workspace`, `--all-targets` or `--tests`. An extra arbitrary
+selectors such as `--workspace`, `--all-targets` or `--tests`. Every repeated
+`--test TARGET` or `--test=TARGET` selector must be concrete; a valid selector does
+not excuse a later wildcard. Arguments after Cargo's `--` belong to the test
+harness and are not interpreted as Cargo target selectors. An extra arbitrary
 flag does not grant an exception. An allowed wrapper still has its nested command
 checked against the same rules.
 
@@ -78,7 +81,10 @@ The implementation uses these verified host versions and native entry points:
 Codex uses its native Hook trust review. This feature does not bypass trust or
 write trust state. Hooks from native configuration layers remain subject to the
 host's normal merging and managed policy. For Claude, a supplied `--settings`
-JSON file/string is read and merged into a new role-local file; existing settings
+JSON file/string is read and merged into a new role-local file; relative file
+paths resolve from that role's startup `config.cwd`, while absolute paths and
+inline JSON retain their meaning. The dispatcher cwd and later Hook execution
+cwd are not used as that base. Existing settings
 and Hook entries remain, the original file is unchanged, and other settings
 sources are not disabled. Only the generated settings argument replaces that
 role's explicit settings argument.
@@ -125,8 +131,8 @@ matches before such a component.
 
 | Input | Supported analysis |
 |---|---|
-| Shell | Simple commands, assignments, literal quoting, `;`, `&&`, `||`, pipelines, subshells and command substitutions exposed by the Bash AST. |
-| Wrappers | `env` assignments, `-i`, `-u NAME`, `--`; `command -p`/`--`; `exec -a NAME`, `-c`, `-l`, `--`; `nohup`/`--`; shell `-c`/`-lc`/`-ec`, and `-s` with available source. `command -v/-V` is a lookup. Other wrapper options are unresolved. |
+| Shell | Simple commands, assignments, literal quoting (including ANSI-C quoted segments and static concatenation), `;`, `&&`, `||`, pipelines, subshells and command substitutions exposed by the Bash AST. |
+| Wrappers | `env` assignments, `-i`, `-u NAME`, `--`; `command -p`/`--`; `exec -a NAME`, `-c`, `-l`, `--`; `nohup`/`--`; shell option-prefix `-c`/`-lc`/`-ec`, `-l/-e`, and `-s` with available source. Interpreter option scanning stops at a script argument or `--`; later script arguments are data. `command -v/-V` is a lookup. Other wrapper options are unresolved. |
 | Python source | `python`/`python3*` `-c` (including attached literal source), readable UTF-8 files, `-`/implicit stdin via literal heredoc, here-string or file redirection. Individual `-u/-B/-I/-E/-s/-S` flags are recognized. |
 | Python calls | By default `subprocess.run/call/check_call/check_output/Popen` and `os.system/popen`; first positional argument or `args=`. String, AST list and AST tuple literal forms are handled. `python_calls` can replace the complete dotted-name list for other known first-argument launchers. |
 
@@ -135,6 +141,17 @@ the scanner does not execute Python or infer its runtime `shell=`/name-shadowing
 semantics. Static possible calls in branches/functions may be inspected even if
 they would not run. Plain lists, documentation strings, comments, `print` data
 and unrelated Python calls do not become commands.
+
+Configured Python launch calls retain a literal `cwd=` as that child call's local
+source-resolution directory, including nested shell/Python file reads; sibling
+calls resume the parent directory. `cwd=None` inherits it. Dynamic cwd and
+`**kwargs` leave the child directory unresolved, so a required relative source
+is rejected instead of being read from the parent directory. This does not
+interpret arbitrary in-program working-directory mutations.
+
+ANSI-C literal decoding supports the documented ASCII/control, octal/hex and
+Unicode escape forms. NUL truncation, non-UTF8 byte escapes and unrecognized
+escape forms request a checking failure rather than guessing a resolved argv.
 
 Relative Python file reads after an in-command `cd` are rejected as unresolved;
 set the tool working directory instead. Multiple stdin redirects are unsupported

@@ -1,4 +1,6 @@
 //! Rust scanner/CLI/configuration simulations; no real Agent or native Hook is run.
+#[path = "support/tool_policy_review.rs"]
+mod review;
 use crewmoor::{
     config::{AgentKind, Config},
     feedback::{self, Evidence, Registration},

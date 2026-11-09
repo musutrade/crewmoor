@@ -1,12 +1,24 @@
-use super::{Scanner, bounded_source, shell::read_source};
+use super::{
+    Scanner, bounded_source,
+    shell::{read_source, source_path},
+};
 use crate::Result;
 use rustpython_ast::{self as ast, Visitor};
 use rustpython_parser::Parse;
 
-enum Invocation {
+enum Command {
     Shell(String),
     Argv(Vec<String>),
     Dynamic,
+}
+enum Directory {
+    Inherited,
+    Literal(String),
+    Dynamic,
+}
+struct Invocation {
+    command: Command,
+    directory: Directory,
 }
 struct Calls<'a> {
     names: &'a [String],
@@ -21,7 +33,20 @@ impl Visitor for Calls<'_> {
                     .find(|kw| kw.arg.as_deref() == Some("args"))
                     .map(|kw| &kw.value)
             });
-            self.calls.push(invocation(argument));
+            let cwd = call
+                .keywords
+                .iter()
+                .find(|kw| kw.arg.as_deref() == Some("cwd"))
+                .map(|kw| &kw.value);
+            let directory = if call.keywords.iter().any(|kw| kw.arg.is_none()) {
+                Directory::Dynamic
+            } else {
+                directory(cwd)
+            };
+            self.calls.push(Invocation {
+                command: invocation(argument),
+                directory,
+            });
         }
         self.generic_visit_expr_call(call);
     }
@@ -54,24 +79,35 @@ fn string(expr: &ast::Expr) -> Option<String> {
         _ => None,
     }
 }
-fn invocation(expr: Option<&ast::Expr>) -> Invocation {
+fn invocation(expr: Option<&ast::Expr>) -> Command {
     let Some(expr) = expr else {
-        return Invocation::Dynamic;
+        return Command::Dynamic;
     };
     if let Some(value) = string(expr) {
-        return Invocation::Shell(value);
+        return Command::Shell(value);
     }
     let items = match expr {
         ast::Expr::List(list) => &list.elts,
         ast::Expr::Tuple(tuple) => &tuple.elts,
-        _ => return Invocation::Dynamic,
+        _ => return Command::Dynamic,
     };
-    Invocation::Argv(
+    Command::Argv(
         items
             .iter()
             .map(|expr| string(expr).unwrap_or_else(|| "\0dynamic".into()))
             .collect(),
     )
+}
+fn directory(expr: Option<&ast::Expr>) -> Directory {
+    let Some(expr) = expr else {
+        return Directory::Inherited;
+    };
+    match expr {
+        ast::Expr::Constant(value) if value.value == ast::Constant::None => Directory::Inherited,
+        expr => string(expr)
+            .map(Directory::Literal)
+            .unwrap_or(Directory::Dynamic),
+    }
 }
 impl Scanner<'_> {
     pub(super) fn python_entry(&mut self, args: &[String], stdin: Option<&str>) -> Result<()> {
@@ -100,13 +136,8 @@ impl Scanner<'_> {
         }
     }
     fn python_file(&mut self, path: &str) -> Result<()> {
-        if !self.cwd_known && std::path::Path::new(path).is_relative() {
-            return Err(
-                "relative Python file after shell cd is unresolved; use the tool working directory"
-                    .into(),
-            );
-        }
-        self.python(&read_source(&self.cwd.join(path))?)
+        let path = source_path(self.cwd_known.then_some(self.cwd.as_path()), path)?;
+        self.python(&read_source(&path)?)
     }
     fn python(&mut self, source: &str) -> Result<()> {
         bounded_source(source)?;
@@ -129,12 +160,39 @@ impl Scanner<'_> {
     }
     fn python_calls(&mut self, calls: Vec<Invocation>) -> Result<()> {
         for call in calls {
-            match call {
-                Invocation::Shell(command) => self.shell(&command)?,
-                Invocation::Argv(argv) => self.argv(&argv, None)?,
-                Invocation::Dynamic => self.scan.unresolved = true,
-            }
+            self.python_call(call)?;
         }
         Ok(())
+    }
+    fn python_call(&mut self, call: Invocation) -> Result<()> {
+        let cwd = self.cwd.clone();
+        let known = self.cwd_known;
+        self.child_directory(call.directory);
+        let result = match call.command {
+            Command::Shell(command) => self.shell(&command),
+            Command::Argv(argv) => self.argv(&argv, None),
+            Command::Dynamic => {
+                self.scan.unresolved = true;
+                Ok(())
+            }
+        };
+        self.cwd = cwd;
+        self.cwd_known = known;
+        result
+    }
+    fn child_directory(&mut self, directory: Directory) {
+        match directory {
+            Directory::Inherited => {}
+            Directory::Literal(path) => {
+                if std::path::Path::new(&path).is_absolute() {
+                    self.cwd_known = true;
+                }
+                self.cwd = self.cwd.join(path);
+            }
+            Directory::Dynamic => {
+                self.cwd_known = false;
+                self.scan.unresolved = true;
+            }
+        }
     }
 }

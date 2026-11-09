@@ -39,24 +39,24 @@ impl Scanner<'_> {
         let name = node
             .child_by_field_name("name")
             .ok_or("shell command has no name")?;
-        argv.push(self.word(name, source));
+        argv.push(self.word(name, source)?);
         let mut cursor = node.walk();
         for argument in node.children_by_field_name("argument", &mut cursor) {
-            argv.push(self.word(argument, source));
+            argv.push(self.word(argument, source)?);
         }
         let stdin = if needs_stdin(&argv) {
-            stdin_source(node, source, &self.cwd)?
+            stdin_source(node, source, self.cwd_known.then_some(self.cwd.as_path()))?
         } else {
             None
         };
         self.argv(&argv, stdin.as_deref())
     }
-    fn word(&mut self, node: Node<'_>, source: &str) -> String {
-        if let Some(word) = literal(node, source) {
-            return word;
+    fn word(&mut self, node: Node<'_>, source: &str) -> Result<String> {
+        if let Some(word) = literal(node, source)? {
+            return Ok(word);
         }
         self.scan.unresolved = true;
-        "\0dynamic".into()
+        Ok("\0dynamic".into())
     }
 }
 fn needs_stdin(mut argv: &[String]) -> bool {
@@ -81,7 +81,9 @@ fn needs_stdin(mut argv: &[String]) -> bool {
 }
 fn interpreter_stdin(program: &str, args: &[String]) -> bool {
     match program {
-        "sh" | "bash" | "dash" | "zsh" => args.first().is_some_and(|arg| arg == "-s"),
+        "sh" | "bash" | "dash" | "zsh" => {
+            matches!(super::shell_source(args), Ok(super::ShellSource::Stdin))
+        }
         name if name == "python" || name.starts_with("python3") => python_stdin(args),
         _ => false,
     }
@@ -92,9 +94,14 @@ fn python_stdin(args: &[String]) -> bool {
         .find(|arg| !matches!(arg.as_str(), "-u" | "-B" | "-I" | "-E" | "-s" | "-S"));
     first.is_none_or(|arg| arg == "-")
 }
-fn literal(node: Node<'_>, source: &str) -> Option<String> {
+fn literal(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut nodes = vec![node];
+    let mut ansi = Vec::new();
     while let Some(part) = nodes.pop() {
+        if part.kind() == "ansi_c_string" {
+            ansi.push(part);
+            continue;
+        }
         if matches!(
             part.kind(),
             "simple_expansion"
@@ -103,19 +110,31 @@ fn literal(node: Node<'_>, source: &str) -> Option<String> {
                 | "process_substitution"
                 | "arithmetic_expansion"
         ) {
-            return None;
+            return Ok(None);
         }
         let mut cursor = part.walk();
         nodes.extend(part.named_children(&mut cursor));
     }
-    let words = shlex::split(node.utf8_text(source.as_bytes()).ok()?)?;
+    let decoded = ansi_words(node, ansi, source)?;
+    let words = shlex::split(&decoded).ok_or("invalid literal shell word")?;
     if words.len() == 1 {
-        words.into_iter().next()
+        Ok(words.into_iter().next())
     } else {
-        None
+        Ok(None)
     }
 }
-fn stdin_source(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<String>> {
+fn ansi_words(node: Node<'_>, mut parts: Vec<Node<'_>>, source: &str) -> Result<String> {
+    let mut text = node.utf8_text(source.as_bytes())?.to_owned();
+    parts.sort_by_key(|part| std::cmp::Reverse(part.start_byte()));
+    for part in parts {
+        let value = super::ansi::decode(part.utf8_text(source.as_bytes())?)?;
+        let quoted = shlex::try_quote(&value)?;
+        let range = part.start_byte() - node.start_byte()..part.end_byte() - node.start_byte();
+        text.replace_range(range, &quoted);
+    }
+    Ok(text)
+}
+fn stdin_source(node: Node<'_>, source: &str, cwd: Option<&Path>) -> Result<Option<String>> {
     // Redirects live either on the command or its enclosing redirected_statement.
     let scope = node
         .parent()
@@ -133,7 +152,7 @@ fn stdin_source(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<Strin
     }
     Ok(content)
 }
-fn redirect_source(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<String>> {
+fn redirect_source(node: Node<'_>, source: &str, cwd: Option<&Path>) -> Result<Option<String>> {
     let mut cursor = node.walk();
     match node.kind() {
         "heredoc_redirect" => {
@@ -144,18 +163,18 @@ fn redirect_source(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<St
             Ok(Some(body.utf8_text(source.as_bytes())?.into()))
         }
         "herestring_redirect" => {
-            let value = node
+            let part = node
                 .named_children(&mut cursor)
                 .last()
-                .and_then(|part| literal(part, source))
-                .ok_or("dynamic here-string source unavailable")?;
+                .ok_or("here-string source missing")?;
+            let value = literal(part, source)?.ok_or("dynamic here-string source unavailable")?;
             Ok(Some(value))
         }
         "file_redirect" => file_stdin(node, source, cwd),
         _ => Ok(None),
     }
 }
-fn file_stdin(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<String>> {
+fn file_stdin(node: Node<'_>, source: &str, cwd: Option<&Path>) -> Result<Option<String>> {
     let text = node.utf8_text(source.as_bytes())?.trim_start();
     if !text.starts_with('<') {
         return Ok(None);
@@ -163,8 +182,17 @@ fn file_stdin(node: Node<'_>, source: &str, cwd: &Path) -> Result<Option<String>
     let destination = node
         .child_by_field_name("destination")
         .ok_or("stdin file missing")?;
-    let path = literal(destination, source).ok_or("dynamic stdin file unavailable")?;
-    Ok(Some(read_source(&cwd.join(path))?))
+    let path = literal(destination, source)?.ok_or("dynamic stdin file unavailable")?;
+    Ok(Some(read_source(&source_path(cwd, &path)?)?))
+}
+pub(super) fn source_path(cwd: Option<&Path>, path: &str) -> Result<std::path::PathBuf> {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Ok(path.into());
+    }
+    Ok(cwd
+        .ok_or("relative source requires a known working directory")?
+        .join(path))
 }
 pub(super) fn read_source(path: &Path) -> Result<String> {
     let mut source = String::new();

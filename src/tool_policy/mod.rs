@@ -1,4 +1,5 @@
 //! Role-local pre-tool engineering rules. No script execution and no safety claim.
+mod ansi;
 mod hook;
 mod launch;
 mod python;
@@ -94,7 +95,11 @@ fn cargo_target(argv: &[String]) -> Result<()> {
         return Ok(());
     }
     let arguments = &argv[2..];
-    if arguments.iter().any(|arg| {
+    let end = arguments
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(arguments.len());
+    if arguments[..end].iter().any(|arg| {
         matches!(
             arg.as_str(),
             "--all" | "--workspace" | "--all-targets" | "--tests" | "--bins" | "--benches"
@@ -102,9 +107,7 @@ fn cargo_target(argv: &[String]) -> Result<()> {
     }) {
         return Err("cargo test exception cannot select a full test sweep".into());
     }
-    let target = arguments
-        .windows(2)
-        .any(|pair| pair[0] == "--test" && concrete(&pair[1]));
+    let target = cargo_test_targets(arguments)?;
     let filter = arguments.first().is_some_and(|arg| concrete(arg));
     if !target && !filter {
         return Err(
@@ -113,8 +116,29 @@ fn cargo_target(argv: &[String]) -> Result<()> {
     }
     Ok(())
 }
+fn cargo_test_targets(arguments: &[String]) -> Result<bool> {
+    let mut args = arguments.iter();
+    let mut selected = false;
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+        let target = if arg == "--test" {
+            Some(args.next().ok_or("Cargo --test target missing")?.as_str())
+        } else {
+            arg.strip_prefix("--test=")
+        };
+        if let Some(target) = target {
+            if !concrete(target) {
+                return Err("every Cargo --test target must be concrete".into());
+            }
+            selected = true;
+        }
+    }
+    Ok(selected)
+}
 fn concrete(value: &str) -> bool {
-    !value.starts_with('-') && !value.contains(['*', '?', '[', '\0'])
+    !value.is_empty() && !value.starts_with('-') && !value.contains(['*', '?', '[', '\0'])
 }
 fn nonblank(value: &str) -> Result<()> {
     if value.trim().is_empty() || value.contains('\0') || value.len() > 16_384 {
@@ -229,18 +253,51 @@ impl Scanner<'_> {
         Ok(())
     }
     fn shell_wrapper(&mut self, args: &[String], stdin: Option<&str>) -> Result<()> {
-        if let Some(index) = args
-            .iter()
-            .position(|arg| arg == "-c" || arg == "-lc" || arg == "-ec")
-        {
-            return self.shell(args.get(index + 1).ok_or("shell -c source missing")?);
+        match shell_source(args)? {
+            ShellSource::Command(source) => self.shell(source),
+            ShellSource::Stdin => self.shell(stdin.ok_or("shell stdin source unavailable")?),
+            ShellSource::Unresolved => {
+                self.scan.unresolved = true;
+                Ok(())
+            }
         }
-        if args.first().is_some_and(|arg| arg == "-s") {
-            return self.shell(stdin.ok_or("shell stdin source unavailable")?);
-        }
-        self.scan.unresolved = true;
-        Ok(())
     }
+}
+enum ShellSource<'a> {
+    Command(&'a str),
+    Stdin,
+    Unresolved,
+}
+fn shell_source(args: &[String]) -> Result<ShellSource<'_>> {
+    let Some((index, command, stdin)) = shell_options(args) else {
+        return Ok(ShellSource::Unresolved);
+    };
+    if command {
+        return Ok(ShellSource::Command(
+            args.get(index).ok_or("shell -c source missing")?,
+        ));
+    }
+    if stdin {
+        return Ok(ShellSource::Stdin);
+    }
+    Ok(ShellSource::Unresolved)
+}
+fn shell_options(args: &[String]) -> Option<(usize, bool, bool)> {
+    let (mut command, mut stdin) = (false, false);
+    for (index, arg) in args.iter().enumerate() {
+        match arg.as_str() {
+            "--" | "-" => return Some((index + 1, command, stdin)),
+            "-c" | "-lc" | "-ec" => command = true,
+            "-s" => stdin = true,
+            "-l" | "-e" => {}
+            value if shell_script(value) => return Some((index, command, stdin)),
+            _ => return None,
+        }
+    }
+    Some((args.len(), command, stdin))
+}
+fn shell_script(arg: &str) -> bool {
+    !arg.starts_with('-')
 }
 fn wrapper_args<'a>(program: &str, args: &'a [String]) -> Option<&'a [String]> {
     let mut index = 0;

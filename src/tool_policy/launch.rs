@@ -88,7 +88,7 @@ impl Guard {
         handler
     }
     fn claude(&mut self, config: &Config, root: &Path) -> Result<()> {
-        let mut document = claude_settings(&config.agent_args)?;
+        let mut document = claude_settings(&config.agent_args, &config.cwd)?;
         let object = document
             .as_object_mut()
             .ok_or("Claude --settings must be an object")?;
@@ -147,7 +147,7 @@ impl Guard {
         Ok(content.to_string())
     }
 }
-fn claude_settings(args: &[String]) -> Result<Value> {
+fn claude_settings(args: &[String], cwd: &Path) -> Result<Value> {
     let Some(index) = args.iter().rposition(|arg| arg == "--settings") else {
         return Ok(json!({}));
     };
@@ -157,7 +157,7 @@ fn claude_settings(args: &[String]) -> Result<Value> {
     let text = if input.trim_start().starts_with('{') {
         input.clone()
     } else {
-        fs::read_to_string(input)?
+        fs::read_to_string(cwd.join(input))?
     };
     Ok(serde_json::from_str(&text)?)
 }
@@ -194,5 +194,75 @@ mod tests {
         assert_eq!(merged["example"], "preserved");
         assert!(guard.opencode_content(Some("{\"plugins\":false}")).is_err());
         assert!(guard.opencode_content(Some("invalid")).is_err());
+    }
+    #[test]
+    fn relative_claude_settings_use_the_role_startup_directory() {
+        const CHILD: &str = "CM6465_ROLE_SETTINGS_PROBE_CHILD";
+        if let Some(role) = std::env::var_os(CHILD) {
+            relative_settings_probe(Path::new(&role));
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let role = root.path().join("role");
+        let dispatcher = root.path().join("dispatcher");
+        fs::create_dir(&role).unwrap();
+        fs::create_dir(&dispatcher).unwrap();
+        let role_text = "{\"env\":{\"SETTINGS_ORIGIN\":\"role\"}}";
+        let dispatcher_text = "{\"env\":{\"SETTINGS_ORIGIN\":\"dispatcher\"}}";
+        fs::write(role.join("native-settings.json"), role_text).unwrap();
+        fs::write(dispatcher.join("native-settings.json"), dispatcher_text).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tool_policy::launch::tests::relative_claude_settings_use_the_role_startup_directory"])
+            .env(CHILD, &role).current_dir(&dispatcher).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            fs::read_to_string(role.join("native-settings.json")).unwrap(),
+            role_text
+        );
+        assert_eq!(
+            fs::read_to_string(dispatcher.join("native-settings.json")).unwrap(),
+            dispatcher_text
+        );
+    }
+    fn relative_settings_probe(role: &Path) {
+        use crate::feedback::{self, Evidence, Registration};
+        let context = feedback::register(
+            role,
+            Registration {
+                team: "policy-team".into(),
+                role: "builder".into(),
+                task: "settings-probe".into(),
+                cwd: role.into(),
+                agent: AgentKind::Claude,
+                agent_version: "synthetic".into(),
+                evidence: Evidence::Synthetic,
+                native_session_id: Some("native-main".into()),
+            },
+        )
+        .unwrap();
+        let config: Config = serde_json::from_value(json!({
+            "team":"policy-team","role":"builder","runtime":"tui","cwd":role,"store":role,
+            "runtime_binary":"/bin/false","runtime_version":"synthetic","agent":"claude",
+            "agent_executable":"/bin/false","agent_version":"synthetic","feedback_registry":role,
+            "feedback_instance":context.instance,"agent_args":["--settings","native-settings.json"]
+        }))
+        .unwrap();
+        let policy: Policy = serde_json::from_value(json!({"checker":"/bin/false","entries":[{"argv":["cargo","test"],"label":"tests"}],"feedback":"Submission owns full tests."})).unwrap();
+        let guard = prepare(&config, &policy, role, &context).unwrap();
+        let settings: Value =
+            serde_json::from_slice(&fs::read(guard.settings.unwrap()).unwrap()).unwrap();
+        assert_eq!(settings["env"]["SETTINGS_ORIGIN"], "role");
+        let inline = vec![
+            "--settings".into(),
+            "{\"env\":{\"SETTINGS_ORIGIN\":\"inline\"}}".into(),
+        ];
+        assert_eq!(
+            claude_settings(&inline, role).unwrap()["env"]["SETTINGS_ORIGIN"],
+            "inline"
+        );
     }
 }
