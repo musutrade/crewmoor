@@ -2,6 +2,8 @@
 mod common;
 #[path = "support/opencode_watch.rs"]
 mod opencode_watch;
+#[path = "support/rule_selection.rs"]
+mod rule_selection;
 #[path = "support/team_core_checks.rs"]
 mod team_core_checks;
 #[path = "support/team_opencode_checks.rs"]
@@ -316,7 +318,7 @@ fn role_constraint_is_snapshotted_without_entering_startup_and_bound_once() {
 fn role_tool_policy_is_bound_to_the_start_context_and_never_injected_into_other_roles() {
     let setup = Setup::new();
     let mut team = setup.team();
-    team.roles[0].tool_policy = Some(serde_json::from_value(json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"allow":[["cargo","test","--test","message"]],"feedback":"Submit role owns full tests."})).unwrap());
+    team.roles[0].tool_policy = Some(rule_selection::policy(setup.dir.path()));
     let mut next = 0;
     team::start(
         team,

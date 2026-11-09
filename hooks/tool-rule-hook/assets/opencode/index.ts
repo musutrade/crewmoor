@@ -2,13 +2,13 @@
 import { Plugin } from "@opencode/plugin"
 import { spawn } from "node:child_process"
 
-function check(checker: string, snapshot: string, event: unknown): Promise<void> {
+function check(checker: string, store: string, scope: string, event: unknown): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(checker, ["tool-policy", "bridge", snapshot], { stdio: ["pipe", "pipe", "pipe"] })
+    const child = spawn(checker, ["bridge-session", store, scope], { stdio: ["pipe", "pipe", "pipe"] })
     let output = ""
     const timer = setTimeout(() => {
       child.kill("SIGKILL")
-      reject(new Error("CrewMoor role checker timed out; tool not executed. Do not bypass with another wrapper."))
+      reject(new Error("Tool rule hook timed out; refusing this tool call. Do not bypass with another wrapper."))
     }, 7000)
     const fail = (message: string) => {
       clearTimeout(timer)
@@ -16,13 +16,13 @@ function check(checker: string, snapshot: string, event: unknown): Promise<void>
       // V2.2.6 converts this Promise rejection to native Tool.Error before executeTool.
       reject(new Error(message))
     }
-    child.on("error", () => fail("CrewMoor role checker could not start; tool not executed."))
-    child.stdin.on("error", () => fail("CrewMoor role checker input failed; tool not executed."))
+    child.on("error", () => fail("Tool rule hook could not start; refusing this tool call."))
+    child.stdin.on("error", () => fail("Tool rule hook input failed; refusing this tool call."))
     child.stdout.on("data", (chunk) => {
       output += chunk.toString()
       if (output.length > 262144) {
         child.kill("SIGKILL")
-        fail("CrewMoor role checker output invalid; tool not executed.")
+        fail("Tool rule hook output invalid; refusing this tool call.")
       }
     })
     child.stderr.resume()
@@ -39,7 +39,7 @@ function check(checker: string, snapshot: string, event: unknown): Promise<void>
         if (result.reason !== null) throw new Error("invalid no-match reason")
         resolve()
       } catch {
-        fail("CrewMoor role checker failed or returned invalid output; tool not executed. Do not bypass with another wrapper.")
+        fail("Tool rule hook failed or returned invalid output; refusing this tool call. Do not bypass with another wrapper.")
       }
     })
     child.stdin.end(JSON.stringify(event))
@@ -47,13 +47,19 @@ function check(checker: string, snapshot: string, event: unknown): Promise<void>
 }
 
 export default Plugin.define({
-  id: "crewmoor.role-tool-policy",
+  id: "tool-rule-hook",
   async setup(ctx) {
-    const { checker, snapshot } = ctx.options
-    if (typeof checker !== "string" || typeof snapshot !== "string") throw new Error("CrewMoor role checker configuration missing")
-    await ctx.tool.hook("execute.before", (event) => check(checker, snapshot, {
-      ...event,
-      instance: process.env.CREWMOOR_FEEDBACK_INSTANCE,
-    }))
+    const { checker, store, scope } = ctx.options
+    if (typeof checker !== "string" || typeof store !== "string" || typeof scope !== "string" || !scope.trim()) throw new Error("Tool rule hook configuration missing")
+    await ctx.tool.hook("execute.before", async (event) => {
+      const session = await ctx.session.get({ sessionID: event.sessionID })
+      if (session.id !== event.sessionID) throw new Error("Tool rule hook native session mismatch")
+      await check(checker, store, scope, {
+        ...event,
+        directory: session.location.directory,
+        workspace: session.location.workspaceID ?? null,
+        parentID: session.parentID ?? null,
+      })
+    })
   },
 })

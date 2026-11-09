@@ -84,15 +84,13 @@ fn interpreter_stdin(program: &str, args: &[String]) -> bool {
         "sh" | "bash" | "dash" | "zsh" => {
             matches!(super::shell_source(args), Ok(super::ShellSource::Stdin))
         }
-        name if name == "python" || name.starts_with("python3") => python_stdin(args),
+        name if super::normalize::python(name) => python_stdin(args),
         _ => false,
     }
 }
 fn python_stdin(args: &[String]) -> bool {
-    let first = args
-        .iter()
-        .find(|arg| !matches!(arg.as_str(), "-u" | "-B" | "-I" | "-E" | "-s" | "-S"));
-    first.is_none_or(|arg| arg == "-")
+    super::normalize::python_index(args)
+        .is_ok_and(|index| index.is_some_and(|index| args.get(index).is_none_or(|arg| arg == "-")))
 }
 fn literal(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut nodes = vec![node];

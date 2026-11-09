@@ -168,6 +168,9 @@ pub fn decode(reply: Value) -> Result<Value> {
 /// Strip inherited launcher context in the new child, never alter the existing core.
 /// Native core terminal/session routing, authentication, tools and proxies are retained.
 pub const CHILD_MARKERS: &[&str] = &[
+    "TOOL_RULE_HOOK_RULES",
+    "TOOL_RULE_HOOK_CONTEXT",
+    "TOOL_RULE_HOOK_VERIFY",
     "HERDR_SOCKET_PATH",
     "HERDR_SESSION",
     "HERDR_CONFIG_PATH",
@@ -203,6 +206,14 @@ fn check_env_program() -> Result<()> {
 /// core 0.1.17 env is a string overlay, so remove keys with env's direct exec argv.
 pub fn child_argv(config: &crate::config::Config) -> Vec<String> {
     let mut argv = child_prefix(config.feedback_instance.is_some());
+    if let Some(guard) = &config.tool_guard {
+        argv.extend(
+            guard
+                .environment()
+                .into_iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        );
+    }
     argv.extend(config.argv());
     argv
 }

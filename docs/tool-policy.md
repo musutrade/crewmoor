@@ -1,204 +1,153 @@
-# Optional role tool policy
+# Role tool rules and independent Hook integration
 
-`roles[].tool_policy` checks configured test/coverage commands before a new
-role's supported shell tool executes. Omit the field on the submission role,
-which continues to run the complete local quality gates. Role names are arbitrary;
-there is no built-in `dev`/`release` classification or default command blacklist.
-This is independent of `initial_prompt` and the later `message_constraint` reminder.
+The scanner is distributed separately as
+[`hooks/tool-rule-hook`](../hooks/tool-rule-hook/README.md), program
+`tool-rule-hook`. CrewMoor has no Shell/Python scanner implementation or parser
+dependencies. The standalone package needs neither CrewMoor nor STS. Its README
+covers installation/export, rules, exact exceptions, session control, native host
+versions, writable boundaries and limitations.
 
-## Configure a role
+## New role configuration
 
-The [generation template](../examples/team-tool-policy.toml) has an unrestricted
-coordinator/submission role and a restricted builder. Its policy section is:
+Install the independent program at a stable chosen path. Keep rules outside its
+package. Roles opt in by selecting paths, without embedding their business rules
+in CrewMoor:
 
 ```toml
 [roles.tool_policy]
-checker = "/absolute/durable/crewmoor"
-feedback = "Full tests and coverage belong to the submission role."
-timeout_ms = 3000
-allow = [["cargo", "test", "--test", "message", "only_this_test"]]
-
-[[roles.tool_policy.entries]]
-argv = ["cargo", "test"]
-label = "full Cargo tests"
-
-[[roles.tool_policy.entries]]
-argv = ["cargo", "llvm-cov"]
-label = "coverage"
-
-[[roles.tool_policy.entries]]
-argv = ["make", "full-check"]
-label = "project full check"
+checker = "/chosen/prefix/bin/tool-rule-hook"
+rules = "/absolute/external/builder-rules.json"
+# OpenCode only:
+opencode_plugin = "/chosen/fixed-opencode-plugin"
+session_store = "/absolute/tool-rule-hook-state"
+session_scope = "trusted-server-realm"
 ```
 
-`checker` must be an absolute executable path to a build containing this feature;
-CrewMoor does not install or replace it. Generation validates and preserves the
-policy without writing Hook settings. Start saves the role configuration and,
-after registering the actual role instance, creates private role-local
-`tool-policy.json` plus the required native configuration. The snapshot contains
-the policy, registered context and registry path. Launch records retain the
-derived `tool_guard` paths and intended arguments. Later configuration edits do
-not update a running role. Existing teams and bindings are not modified.
+Relative paths are resolved against that role's `cwd` at start; they never use the
+dispatcher's cwd. Generation preserves the provided selection. Start validates
+all role selections/configurations before launching, then records resolved paths
+and a trusted context snapshot. Changed path selections require a new explicit
+launch; running teams are never rewritten. Optional fields are absent on old or
+unrestricted roles, which receive no new Hook injection.
 
-Each entry matches a literal argv prefix. Exceptions match a complete argv exactly,
-with no wildcards or interpretation of an Agent's request text. Configure executable
-basenames (`cargo`, `full.sh`), not paths. Cargo's leading `+toolchain`,
-`--locked/--offline/--frozen/--quiet/-q/--verbose/-v` and leading
-`--color/--config/--manifest-path/--target-dir` options are normalized before
-matching; the latter accept a separate value or `=value`. Other arguments remain
-part of the exact comparison. Cargo test exceptions must include a concrete
-`--test TARGET` or a leading test-name filter, and cannot include full-sweep
-selectors such as `--workspace`, `--all-targets` or `--tests`. Every repeated
-`--test TARGET` or `--test=TARGET` selector must be concrete; a valid selector does
-not excuse a later wildcard. Arguments after Cargo's `--` belong to the test
-harness and are not interpreted as Cargo target selectors. An extra arbitrary
-flag does not grant an exception. An allowed wrapper still has its nested command
-checked against the same rules.
+`tool-rule-hook validate RULES` is the external configuration validator. Checker
+path/executable errors and invalid settings/overrides fail startup. CrewMoor does
+not mirror scanner validation. Role names remain arbitrary; no role is named or
+assumed to be the release owner.
 
-For this example, `cargo test`, `cargo test --nocapture`, `cargo llvm-cov` and
-`make full-check` are denied. Only the configured complete targeted command is
-exempt; `cargo +stable test --test message only_this_test` normalizes to that
-command. Known project aliases/tasks/scripts can be added as entries, for example
-`argv = ["full.sh"]` or `["cargo", "my-full-alias"]`. Unlisted aliases are outside
-the scanner's guarantees.
+## Fixed native command and trustworthy identity
 
-Policy strings are nonblank, have at most 16384 UTF-8 bytes, and contain no NUL.
-`timeout_ms` is 1–5000 (default 3000). Source and incoming Hook JSON are separately
-limited to 1 MiB; wrapper recursion is limited to 16. Configuration and derived
-settings are private files and may retain explicitly supplied native settings;
-keep them private and do not put secrets in policy text.
+For Codex/Claude, the command is the fixed absolute `checker` path plus `hook`.
+The rule path and trusted verifier context are provided to the actual Agent's
+launch environment as `TOOL_RULE_HOOK_RULES`, `TOOL_RULE_HOOK_VERIFY` and
+`TOOL_RULE_HOOK_CONTEXT`. TUI uses native workspace environment injection;
+App/core uses direct child argv environment assignments after removing inherited
+role markers. This describes the intended launch, not evidence that a host loaded
+or ran the Hook. Shared Codex daemons/remote executors are not supported; selected
+Codex processes explicitly use native `--no-daemon`.
 
-## Native entry and identity
+CrewMoor's verifier checks its immutable registry context, actual instance marker,
+unchanged registration and native session association. A role claim in tool text
+is irrelevant. Another session, including an unassociated child, is rejected.
+Verifier errors never fall back to independent mode. It returns context metadata
+only; the independent checker owns rules, analysis and feedback. The command
+`crewmoor tool-policy verify` is an optional adapter, not a standalone dependency.
 
-The implementation uses these verified host versions and native entry points:
+For Codex 0.167.0, user/project/CLI Hook layers accumulate natively. Within one CLI
+layer later same-key overrides replace earlier arrays. With no existing CLI
+PreToolUse declaration, CrewMoor adds one. With exactly one supported separated
+`-c`/`--config hooks.PreToolUse=ARRAY`, it preserves existing group order and
+appends its group at the original argument position. Other overrides are kept.
+Repeated/parent-table/child-field/quoted ambiguous declarations, invalid arrays
+and conflicting hooks enablement are rejected. Joined argument forms are outside
+this entrypoint's supported argument list. Existing groups retain indices and
+source; newly added groups and plugin updates still require native trust review.
+No trust state is modified. Codex failures/timeouts may fail open, and
+`write_stdin` has no second pre-tool check.
 
-| Agent | Role-local entry | Failure boundary |
-|---|---|---|
-| Codex CLI 0.167.0 | Process `-c features.hooks=true` and inline `hooks.PreToolUse`, synchronous `^Bash$` command | A valid deny blocks; native start failure, timeout, invalid output or disabled/untrusted Hook can fail open. `write_stdin` has no second PreToolUse check. |
-| Claude Code 2.1.319 | A process-only `--settings` file with synchronous `PreToolUse/^Bash$`, `onFailure: "block"` | Native command failures/timeouts/schema failures use that version's blocking failure option. Disabled/unloaded Hook configuration is not evidence of protection. |
-| OpenCode v2.2.6 | The authorized V2 `ctx.tool.hook("execute.before")` bridge in the role's private native server | Rejected callback becomes native `Tool.Error` before `executeTool`; bridge start/exit/invalid-output/7-second timeout failures reject too. An unloaded plugin is not protection. |
+Claude 2.1.319 gets one process-local `--settings` file. Existing explicit settings
+are read relative to the role cwd, their fields/hooks preserved, and the new
+synchronous PreToolUse/Bash group is appended with `onFailure:block`. The same three selected rule/verifier environment values are also set in this
+process-local settings document, so an inherited settings.env selection cannot
+silently replace the intended startup selection. Other environment fields remain
+preserved. Original files and native default sources are retained. Repeated `--settings`, invalid
+shapes or explicit settings environment keys conflicting with the new rule
+namespace are rejected. Directory trust and tool permissions remain native.
 
-Codex uses its native Hook trust review. This feature does not bypass trust or
-write trust state. Hooks from native configuration layers remain subject to the
-host's normal merging and managed policy. For Claude, a supplied `--settings`
-JSON file/string is read and merged into a new role-local file; relative file
-paths resolve from that role's startup `config.cwd`, while absolute paths and
-inline JSON retain their meaning. The dispatcher cwd and later Hook execution
-cwd are not used as that base. Existing settings
-and Hook entries remain, the original file is unchanged, and other settings
-sources are not disabled. Only the generated settings argument replaces that
-role's explicit settings argument.
+The independent package also exports native Codex/Claude plugin assets, including
+a Codex local marketplace catalog. Exporting files is not installation. Native
+Codex marketplace/plugin add writes user configuration/cache and enables the
+plugin at user scope; it is outside CrewMoor's role launch. No such installation,
+user trust mutation or current-team reconfiguration occurs here.
 
-OpenCode's private server/TUI command receives an in-memory
-`OPENCODE_CONFIG_CONTENT` overlay containing an absolute local plugin directory
-and checker/snapshot options. Existing JSON content and plugin entries are
-preserved; malformed/non-object content or a non-array plugin list is rejected.
-No project/global plugin is installed, no project cwd file is edited, and the
-configuration content is not copied into the persisted launch environment.
-The V2 bridge only transports input and turns checker failures into rejected
-Promises. Its native v2.2.6 adapter converts those errors to `Tool.Error`; all
-command parsing, policy and exceptions remain Rust. The narrower permission
-ask/reply API is not used as a substitute: saved approvals and missing original
-input can bypass that API's observation path.
+## OpenCode: native session selection
 
-Every check verifies the snapshot against the registered context, actual
-`CREWMOOR_FEEDBACK_INSTANCE`, Agent kind, unchanged native association and incoming
-native session ID. Codex/Claude use their existing SessionStart association;
-OpenCode uses the existing `session.create`/enrollment path. The role does not come
-from a command, event profile name or self-reported text. Missing association,
-changed context/session or mismatched instance requests denial. Current tool cwd
-only resolves relative sources; it does not reassign the role. OpenCode's missing
-`workdir` uses the owned main session's initial registered directory; arbitrary
-later external changes to that native session location are not tracked.
+The fixed V2 plugin directory is shared by roles. Its server options contain only
+checker, independent store and a trusted persistent `session_scope` realm. It
+uses actual `execute.before.sessionID`, calls native `session.get`, verifies
+`Info.id`, and passes that session's directory/workspace to Rust. It never chooses
+rules from client environment or Agent profile text, never reads messages or
+`session.context`, and never automatically follows a parent/fork to a root role.
 
-The native command entry is `crewmoor tool-policy hook SNAPSHOT`; it reads one
-Hook JSON input on stdin. Denials emit the native `PreToolUse` JSON
-`permissionDecision: "deny"` and reason. No match emits `{}`, which grants no
-permission and preserves the host's other checks. The bridge entry uses
-`tool-policy bridge SNAPSHOT` and returns `deny` or `no_match` plus a detected
-`unresolved` flag. No-match never means safe. Missing/invalid configuration,
-identity, consumed input fields or supported source parsing/read failures produce
-a valid denial response instead of an ordinary nonzero checker exit. The bounded
-Rust scan also returns a denial on timeout; it never executes the inspected script.
+Rust stores `(opencode, realm, calling session)` separately from rule source,
+revision and optional CrewMoor verifier. The controller binds a session only
+after receiving and checking native `session.create` data, before first prompt.
+CrewMoor calls the external `session-bind` after its existing enrollment path.
+The bound verifier supplies the trusted role instance environment; the native
+event supplies the actual caller session. The server's shared process environment
+does not stand in for either role.
 
-## Static source coverage
+The independent plugin supports different policies in a shared server/cwd,
+including explicit `rules:null` unrestricted bindings. **Unbound sessions in its
+enabled scope are denied**, as are ended/mismatched locations. A location move
+requires an explicit trusted update. Children/new IDs require their own binding.
+HTTP public metadata omits workspace ID; CrewMoor's existing local launch path
+does not infer remote workspace execution. See the package README for shared
+server control and native source boundaries.
 
-Rust uses the Bash grammar AST, shell word decoding and the RustPython AST.
-It examines executable command nodes, not text appearing in comments or data.
-Lists/tuples of literal Python argv share the direct-command rules; dynamic argv
-components cannot match an exact exception, while a known blocked prefix still
-matches before such a component.
+CrewMoor reuses its existing resource/session creation topology; this issue adds
+no server manager or server just for the Hook. Its existing role launch currently
+creates owned native server/session resources. That existing topology is not a
+requirement of the independent plugin's shared-server mapping. It does not
+silently attach this plugin to an existing user server.
 
-| Input | Supported analysis |
-|---|---|
-| Shell | Simple commands, assignments, literal quoting (including ANSI-C quoted segments and static concatenation), `;`, `&&`, `||`, pipelines, subshells and command substitutions exposed by the Bash AST. |
-| Wrappers | `env` assignments, `-i`, `-u NAME`, `--`; `command -p`/`--`; `exec -a NAME`, `-c`, `-l`, `--`; `nohup`/`--`; shell option-prefix `-c`/`-lc`/`-ec`, `-l/-e`, and `-s` with available source. Interpreter option scanning stops at a script argument or `--`; later script arguments are data. `command -v/-V` is a lookup. Other wrapper options are unresolved. |
-| Python source | `python`/`python3*` `-c` (including attached literal source), readable UTF-8 files, `-`/implicit stdin via literal heredoc, here-string or file redirection. Individual `-u/-B/-I/-E/-s/-S` flags are recognized. |
-| Python calls | By default `subprocess.run/call/check_call/check_output/Popen` and `os.system/popen`; first positional argument or `args=`. String, AST list and AST tuple literal forms are handled. `python_calls` can replace the complete dotted-name list for other known first-argument launchers. |
+A writer file lock covers revision comparison and atomic publication. Bind cannot
+overwrite; update requires expected revision. Each mapping contains an immutable
+validated rules snapshot, so editing its source file alone does not change it.
+Next tool check reads a whole old/new revision; in-flight checks may finish under
+the old one. Restart/resume of the same legitimate realm/session retains it.
+Explicit end leaves a closed tombstone; idle/turn completion/uncertain shutdown
+never erase bindings. No lifecycle ledger, automatic rebind or scheduler exists.
 
-Python literal strings at configured launch calls are analyzed as command strings;
-the scanner does not execute Python or infer its runtime `shell=`/name-shadowing
-semantics. Static possible calls in branches/functions may be inspected even if
-they would not run. Plain lists, documentation strings, comments, `print` data
-and unrelated Python calls do not become commands.
+## Migration and existing teams
 
-Configured Python launch calls retain a literal `cwd=` as that child call's local
-source-resolution directory, including nested shell/Python file reads; sibling
-calls resume the parent directory. `cwd=None` inherits it. Dynamic cwd and
-`**kwargs` leave the child directory unresolved, so a required relative source
-is rejected instead of being read from the parent directory. This does not
-interpret arbitrary in-program working-directory mutations.
+Old `roles[].tool_policy` inline entries are no longer accepted for **new starts**;
+move them to an external rule file, add absolute `base_dir`, remove the old
+`checker` field from that rules document, and select checker/rules as above.
+Messages, state hooks and bindings for running teams are not rewritten. An
+already-running pinned old binary remains unchanged by this source migration.
 
-ANSI-C literal decoding supports the documented ASCII/control, octal/hex and
-Unicode escape forms. NUL truncation, non-UTF8 byte escapes and unrecognized
-escape forms request a checking failure rather than guessing a resolved argv.
+The legacy `crewmoor tool-policy hook|bridge SNAPSHOT` entry remains a temporary
+thin adapter. It retains the old role/instance/session checks, translates the
+inline policy, then forwards to the independent program. The checker must be
+selected explicitly through absolute `TOOL_RULE_HOOK_EXECUTABLE`; no sibling/PATH
+checker is guessed. Missing program/configuration, bad identity, process errors
+or timeout return a native denial. It contains no scanner implementation. Old
+native declarations/snapshots are not silently changed. Its removal condition is
+the next incompatible release after operators retire/migrate all legacy guarded
+teams; it is not an indefinite duplicate implementation.
 
-Relative Python file reads after an in-command `cd` are rejected as unresolved;
-set the tool working directory instead. Multiple stdin redirects are unsupported
-and request denial. Unreadable/non-UTF8 files, malformed or
-unsupported source and exceeded source/depth budgets request denial for the
-supported source path. Dynamic configured Python calls and unsupported interpreter
-modes are recorded as unresolved no-match, not as confirmed safe. Detection of
-`unresolved` is not exhaustive for arbitrary programs.
+## Evidence and coexistence
 
-## Feedback and limits
+Static tests and synthetic native-shaped events are separate from actual host
+loading, native blocking, feedback delivery and later Agent behavior. Installation
+and trust require their normal native workflows and appropriate authorization;
+this change does not install programs/plugins globally or modify existing STS
+state. Other native hooks continue to apply. OpenCode callbacks are ordered and
+a prior rejection can short-circuit later hooks; both matching plugins need not
+produce two visible reasons. `no_match` is never permission approval.
 
-The denial reason includes the actual role, configured entry label (or checker
-failure), configured explanation, before-execution refusal and next step: full
-checks belong to the submission role, do not switch wrappers/languages to bypass,
-and run only necessary explicitly allowed targeted tests. It returns directly to
-the invoking Agent through the native Hook/tool error, not only to a dispatcher
-or local log. The "not executed" reason describes a denial honored by the loaded,
-supported native entry; checker stdout alone does not prove that fact.
-
-This is an engineering constraint rather than a sandbox. Dynamic concatenation,
-imported/indirect calls, encoded commands, unlisted binaries/aliases/languages,
-unsupported tools, alternate execution paths and future native schema changes
-are not guaranteed to be detected. Python files can change after scanning
-(TOCTOU). Codex interactive `write_stdin`, remote execution file resolution,
-untrusted/disabled Hooks, unloaded plugins, process crashes and host fail-open
-behavior remain explicit limits. No filesystem sandbox, child-process takeover,
-retry service, custom state protocol or blanket Python ban is added.
-
-CrewMoor does not persist command/script bodies or tool input. Its response uses
-only role, entry label and concise error/feedback. A native host may independently
-include the original command in its own rejection message or logs.
-
-`tests/tool_policy.rs` covers Rust source analysis, native-shaped checker I/O,
-fixed identity, exact exceptions, settings preservation, timeout and failure
-responses. Team/generation tests cover role-local propagation and omission on
-other roles; the library overlay test covers OpenCode content preservation.
-These tests are simulations, not actual host Hook calls, plugin loading or Agent
-behavior. Actual Hook refusal, actual Agent receipt and subsequent behavior must
-be recorded separately for each Agent/runtime combination. No existing team is
-claimed to be mechanically blocked by merely building or injecting configuration.
-
-Native references: [Codex Hooks](https://learn.chatgpt.com/docs/hooks),
-[Claude Hook failure control](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails),
-[OpenCode V2 server plugins](https://opencode.ai/docs/build/plugins/server),
-[OpenCode plugin configuration](https://opencode.ai/docs/plugins/).
-Fixed source: Codex `086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a`
-([PreToolUse](https://github.com/openai/codex/blob/086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a/codex-rs/hooks/src/events/pre_tool_use.rs));
-OpenCode `dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06`
-([server environment](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/cli/src/server-process.ts),
-[Promise error conversion](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/adapter.ts)).
+These are engineering constraints, not a sandbox. Dynamic/indirect execution,
+unsupported syntax, subsequent hook transformations, writable rules/context,
+TOCTOU, host fail-open and unloaded/untrusted hooks retain their documented
+boundaries. True project acceptance remains separately authorized.

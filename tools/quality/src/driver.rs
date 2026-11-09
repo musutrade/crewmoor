@@ -213,10 +213,23 @@ pub fn verify() -> Result<()> {
     verify_with(check)
 }
 pub fn verify_with(run: impl Fn(&Path) -> Result<()>) -> Result<()> {
-    for manifest in ["tools/quality/Cargo.toml", "fixtures/quality/Cargo.toml"] {
-        run(&root().join(manifest))?;
+    verify_in(&root(), run)
+}
+pub fn verify_in(root: &Path, run: impl Fn(&Path) -> Result<()>) -> Result<()> {
+    for name in [
+        "tools/quality/Cargo.toml",
+        "fixtures/quality/Cargo.toml",
+        "hooks/tool-rule-hook/Cargo.toml",
+    ] {
+        let manifest = root.join(name);
+        if !manifest.is_file() {
+            return Err(
+                format!("required quality manifest missing: {}", manifest.display()).into(),
+            );
+        }
+        run(&manifest)?;
     }
-    business_with(&root(), run)
+    business_with(root, run)
 }
 
 fn excluded_sources(manifest: &Path) -> Result<Vec<PathBuf>> {

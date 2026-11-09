@@ -208,13 +208,33 @@ fn verify_checks_tool_before_fixture_and_propagates_errors() {
     })
     .unwrap();
     let count = if driver::root().join("Cargo.toml").is_file() {
-        3
+        4
     } else {
-        2
+        3
     };
     assert_eq!(paths.borrow().len(), count);
     assert!(paths.borrow()[0].ends_with("tools/quality/Cargo.toml"));
     assert!(paths.borrow()[1].ends_with("fixtures/quality/Cargo.toml"));
+    assert!(paths.borrow()[2].ends_with("hooks/tool-rule-hook/Cargo.toml"));
+    let hook_failure = driver::verify_with(|path| {
+        if path.ends_with("hooks/tool-rule-hook/Cargo.toml") {
+            Err("hook failed".into())
+        } else {
+            Ok(())
+        }
+    });
+    assert!(hook_failure.is_err());
+    let missing = tempfile::tempdir().unwrap();
+    for directory in ["tools/quality", "fixtures/quality"] {
+        fs::create_dir_all(missing.path().join(directory)).unwrap();
+        fs::write(missing.path().join(directory).join("Cargo.toml"), "").unwrap();
+    }
+    let missing_error = driver::verify_in(missing.path(), |_| Ok(())).unwrap_err();
+    assert!(
+        missing_error
+            .to_string()
+            .contains("hooks/tool-rule-hook/Cargo.toml")
+    );
     assert!(driver::verify_with(|_| Err("check failed".into())).is_err());
 }
 
@@ -286,4 +306,23 @@ fn gate_metadata_for_target() -> serde_json::Value {
         .unwrap(),
     )
     .unwrap()
+}
+
+#[test]
+fn independent_hook_targets_and_tests_are_in_quality_inventory() {
+    let files = driver::inventory(&driver::root().join("hooks/tool-rule-hook/Cargo.toml")).unwrap();
+    assert!(
+        files
+            .keys()
+            .any(|path| path.ends_with("hooks/tool-rule-hook/src/lib.rs"))
+    );
+    assert!(
+        files
+            .keys()
+            .any(|path| path.ends_with("hooks/tool-rule-hook/src/main.rs"))
+    );
+    let includes_scanner = files
+        .iter()
+        .any(|(path, test)| path.ends_with("hooks/tool-rule-hook/tests/scanner.rs") && *test);
+    assert!(includes_scanner);
 }

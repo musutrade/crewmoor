@@ -135,6 +135,9 @@ fn create_session(config: &Config, context: &feedback::Context, api: &Api) -> Re
     let fact = api.session(&session)?;
     options.check_session(&fact)?;
     super::events::enroll(config, context, &made["data"])?;
+    if let Some(guard) = &config.tool_guard {
+        guard.bind_opencode(config, &made["data"])?;
+    }
     Ok(session)
 }
 fn interact(

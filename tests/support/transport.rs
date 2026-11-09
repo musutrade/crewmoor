@@ -4,8 +4,12 @@ mod environment;
 mod live_environment;
 mod message_transport;
 mod probe;
+mod tool_hook;
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().collect();
+    if let Some(value) = tool_hook::dispatch(&args) {
+        return result(value);
+    }
     if let Some(value) = discovery::dispatch(&args) {
         return result(value);
     }

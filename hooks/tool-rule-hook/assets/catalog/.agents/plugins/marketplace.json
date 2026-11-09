@@ -1,0 +1,1 @@
+{"name":"tool-rule-hook-local","plugins":[{"name":"tool-rule-hook","source":{"source":"local","path":"./plugins/tool-rule-hook"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"}]}

@@ -10,13 +10,22 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-const OPENCODE_BRIDGE: &[u8] = include_bytes!("../../assets/opencode-tool-policy/index.ts");
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Guard {
     pub snapshot: PathBuf,
     pub checker: PathBuf,
+    #[serde(default)]
+    pub rules: Option<PathBuf>,
+    #[serde(default)]
+    pub verifier: Option<PathBuf>,
+    #[serde(default)]
+    pub codex_args: Option<Vec<String>>,
+    #[serde(default)]
+    pub session_store: Option<PathBuf>,
+    #[serde(default)]
+    pub session_scope: Option<String>,
     pub settings: Option<PathBuf>,
     pub plugin: Option<PathBuf>,
 }
@@ -25,10 +34,34 @@ pub struct Guard {
 pub(super) struct Snapshot {
     pub registry: PathBuf,
     pub context: Context,
-    pub policy: Policy,
+    #[serde(default)]
+    pub policy: Option<Value>,
 }
 pub fn prepare(config: &Config, policy: &Policy, root: &Path, context: &Context) -> Result<Guard> {
-    policy.validate()?;
+    let policy = policy.resolve(&config.cwd);
+    policy.validate_role(&config.agent, &config.agent_args, &config.cwd)?;
+    let snapshot = write_context(config, root, context)?;
+    let mut guard = Guard {
+        snapshot,
+        checker: policy.checker.clone(),
+        rules: Some(policy.rules.clone()),
+        verifier: Some(std::env::current_exe()?),
+        codex_args: None,
+        session_store: policy.session_store.clone(),
+        session_scope: policy.session_scope.clone(),
+        settings: None,
+        plugin: None,
+    };
+    match config.agent {
+        AgentKind::Claude => guard.claude(config, root)?,
+        AgentKind::OpenCode => guard.prepare_opencode(&policy)?,
+        AgentKind::Codex => {
+            guard.codex_args = Some(super::codex::inject(&config.agent_args, &guard.command())?)
+        }
+    }
+    Ok(guard)
+}
+fn write_context(config: &Config, root: &Path, context: &Context) -> Result<PathBuf> {
     let registry = config
         .feedback_registry
         .as_ref()
@@ -37,48 +70,103 @@ pub fn prepare(config: &Config, policy: &Policy, root: &Path, context: &Context)
     let state = Snapshot {
         registry: registry.clone(),
         context: context.clone(),
-        policy: policy.clone(),
+        policy: None,
     };
     model::write_new(&snapshot, &serde_json::to_vec_pretty(&state)?)?;
-    let mut guard = Guard {
-        snapshot,
-        checker: policy.checker.clone(),
-        settings: None,
-        plugin: None,
-    };
-    match config.agent {
-        AgentKind::Claude => guard.claude(config, root)?,
-        AgentKind::OpenCode => guard.opencode(root)?,
-        AgentKind::Codex => {}
-    }
-    Ok(guard)
+    Ok(snapshot)
 }
 impl Guard {
+    fn prepare_opencode(&mut self, policy: &Policy) -> Result<()> {
+        self.plugin = Some(
+            policy
+                .opencode_plugin
+                .clone()
+                .ok_or("OpenCode role requires shared exported opencode_plugin")?,
+        );
+        self.session_store
+            .as_ref()
+            .ok_or("OpenCode role requires a trusted session_store")?;
+        self.session_scope
+            .as_ref()
+            .ok_or("OpenCode role requires a trusted session_scope realm")?;
+        Ok(())
+    }
+    pub(crate) fn bind_opencode(&self, config: &Config, info: &Value) -> Result<()> {
+        let store = self.session_store.as_ref().ok_or("session store missing")?;
+        let scope = self
+            .session_scope
+            .as_deref()
+            .ok_or("session scope missing")?;
+        let session = crate::native::text(info, "/id")?;
+        let directory = crate::native::text(info, "/location/directory")?;
+        if Path::new(&directory) != config.cwd {
+            return Err("native session location differs from launch context".into());
+        }
+        let verifier = self.verifier.as_ref().ok_or("context verifier missing")?;
+        let mut command = std::process::Command::new(&self.checker);
+        command.arg("session-bind").arg(store);
+        let result = super::hook::forward(
+            command,
+            &json!({"scope":scope,"session":session,"directory":directory,"rules":self.rules,"verifier":{"argv":[verifier,"tool-policy","verify"],"context":self.snapshot,"env":{"CREWMOOR_FEEDBACK_INSTANCE":config.feedback_instance}}}),
+        )?;
+        if result["revision"] != 1 {
+            return Err("independent hook binding was not confirmed; do not retry".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate(&self, config: &Config) -> Result<()> {
         for path in [&self.snapshot, &self.checker]
             .into_iter()
+            .chain(self.rules.as_ref())
+            .chain(self.verifier.as_ref())
             .chain(self.settings.as_ref())
             .chain(self.plugin.as_ref())
         {
             crate::config::absolute(path)?;
         }
+        if self.rules.is_some() != self.verifier.is_some() {
+            return Err("incomplete tool-rule-hook selection".into());
+        }
         if config.feedback_instance.is_none() || config.feedback_registry.is_none() {
             return Err("tool policy requires an explicitly registered role instance".into());
         }
-        if config.agent == AgentKind::Claude && self.settings.is_none() {
+        self.validate_agent(&config.agent)
+    }
+    fn validate_agent(&self, agent: &AgentKind) -> Result<()> {
+        if *agent == AgentKind::Claude && self.settings.is_none() {
             return Err("Claude role guard needs local settings".into());
         }
-        if config.agent == AgentKind::OpenCode && self.plugin.is_none() {
+        if *agent == AgentKind::OpenCode && self.plugin.is_none() {
             return Err("OpenCode role guard needs its authorized local bridge".into());
         }
         Ok(())
     }
     fn command(&self) -> String {
-        format!(
-            "{} tool-policy hook {}",
-            quote(&self.checker),
-            quote(&self.snapshot)
-        )
+        if self.rules.is_none() {
+            return format!(
+                "{} tool-policy hook {}",
+                quote(&self.checker),
+                quote(&self.snapshot)
+            );
+        }
+        format!("{} hook", quote(&self.checker))
+    }
+    pub fn environment(&self) -> Vec<(String, String)> {
+        let (Some(rules), Some(verifier)) = (&self.rules, &self.verifier) else {
+            return Vec::new();
+        };
+        vec![
+            ("TOOL_RULE_HOOK_RULES".into(), rules.display().to_string()),
+            (
+                "TOOL_RULE_HOOK_CONTEXT".into(),
+                self.snapshot.display().to_string(),
+            ),
+            (
+                "TOOL_RULE_HOOK_VERIFY".into(),
+                json!([verifier, "tool-policy", "verify"]).to_string(),
+            ),
+        ]
     }
     fn handler(&self, claude: bool) -> Value {
         let mut handler = json!({"type":"command","command":self.command(),"timeout":10});
@@ -88,36 +176,37 @@ impl Guard {
         handler
     }
     fn claude(&mut self, config: &Config, root: &Path) -> Result<()> {
-        let mut document = claude_settings(&config.agent_args, &config.cwd)?;
-        let object = document
-            .as_object_mut()
-            .ok_or("Claude --settings must be an object")?;
-        let hooks = object
-            .entry("hooks")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or("Claude hooks must be an object")?;
-        let entries = hooks
-            .entry("PreToolUse")
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .ok_or("Claude PreToolUse must be an array")?;
-        entries.push(json!({"matcher":"^Bash$","hooks":[self.handler(true)]}));
+        let mut document = claude_document(&config.agent_args, &config.cwd, self.handler(true))?;
+        self.claude_environment(&mut document)?;
         let path = root.join("tool-policy-claude-settings.json");
         model::write_new(&path, &serde_json::to_vec_pretty(&document)?)?;
         self.settings = Some(path);
         Ok(())
     }
-    fn opencode(&mut self, root: &Path) -> Result<()> {
-        let directory = root.join("tool-policy-opencode");
-        model::private_dir(&directory)?;
-        model::write_new(&directory.join("index.ts"), OPENCODE_BRIDGE)?;
-        self.plugin = Some(directory);
+    fn claude_environment(&self, document: &mut Value) -> Result<()> {
+        let object = document
+            .as_object_mut()
+            .ok_or("Claude settings must be an object")?;
+        let env = object
+            .entry("env")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("Claude settings env must be an object")?;
+        for (key, value) in self.environment() {
+            env.insert(key, json!(value));
+        }
         Ok(())
     }
     pub(crate) fn apply(&self, agent: &AgentKind, args: &mut Vec<String>) {
         match agent {
             AgentKind::Codex => {
+                if let Some(prepared) = &self.codex_args {
+                    *args = prepared.clone();
+                    return;
+                }
+                if !args.iter().any(|arg| arg == "--no-daemon") {
+                    args.push("--no-daemon".into());
+                }
                 let command = json!(self.command());
                 args.extend(["-c".into(), "features.hooks=true".into(), "-c".into(), format!("hooks.PreToolUse=[{{matcher=\"^Bash$\",hooks=[{{type=\"command\",command={command},timeout=10}}]}}]")]);
             }
@@ -141,13 +230,59 @@ impl Guard {
             .as_array_mut()
             .ok_or("OpenCode plugins must be an array")?;
         let plugin = self.plugin.as_ref().ok_or("OpenCode bridge missing")?;
-        plugins.push(
-            json!({"package":plugin,"options":{"checker":self.checker,"snapshot":self.snapshot}}),
-        );
+        let mut options =
+            json!({"checker":self.checker,"store":self.session_store,"scope":self.session_scope});
+        if self.rules.is_none() {
+            options["snapshot"] = json!(self.snapshot);
+        }
+        plugins.push(json!({"package":plugin,"options":options}));
         Ok(content.to_string())
     }
 }
+pub(super) fn validate_claude(args: &[String], cwd: &Path) -> Result<()> {
+    claude_document(args, cwd, json!({"type":"command","command":"fixed hook"})).map(|_| ())
+}
+fn claude_document(args: &[String], cwd: &Path, handler: Value) -> Result<Value> {
+    let mut document = claude_settings(args, cwd)?;
+    let object = document
+        .as_object_mut()
+        .ok_or("Claude --settings must be an object")?;
+    validate_claude_environment(object.get("env"))?;
+    let hooks = object
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Claude hooks must be an object")?;
+    let entries = hooks
+        .entry("PreToolUse")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or("Claude PreToolUse must be an array")?;
+    entries.push(json!({"matcher":"^Bash$","hooks":[handler]}));
+    Ok(document)
+}
+fn validate_claude_environment(value: Option<&Value>) -> Result<()> {
+    if let Some(value) = value {
+        let env = value
+            .as_object()
+            .ok_or("Claude settings env must be an object")?;
+        if env.keys().any(|key| key.starts_with("TOOL_RULE_HOOK_")) {
+            return Err(
+                "Claude explicit settings env conflicts with role hook process environment".into(),
+            );
+        }
+    }
+    Ok(())
+}
 fn claude_settings(args: &[String], cwd: &Path) -> Result<Value> {
+    if args
+        .iter()
+        .filter(|arg| arg.as_str() == "--settings")
+        .count()
+        > 1
+    {
+        return Err("role hook requires at most one Claude --settings source".into());
+    }
     let Some(index) = args.iter().rposition(|arg| arg == "--settings") else {
         return Ok(json!({}));
     };
@@ -178,6 +313,11 @@ mod tests {
         let guard = Guard {
             snapshot: "/owned/policy.json".into(),
             checker: "/owned/checker".into(),
+            rules: Some("/owned/rules".into()),
+            verifier: Some("/owned/crewmoor".into()),
+            codex_args: None,
+            session_store: Some("/owned/state".into()),
+            session_scope: Some("owned-realm".into()),
             settings: None,
             plugin: Some("/owned/plugin".into()),
         };
@@ -251,7 +391,9 @@ mod tests {
             "feedback_instance":context.instance,"agent_args":["--settings","native-settings.json"]
         }))
         .unwrap();
-        let policy: Policy = serde_json::from_value(json!({"checker":"/bin/false","entries":[{"argv":["cargo","test"],"label":"tests"}],"feedback":"Submission owns full tests."})).unwrap();
+        let policy: Policy =
+            serde_json::from_value(json!({"checker":"/bin/true","rules":role.join("rules.json")}))
+                .unwrap();
         let guard = prepare(&config, &policy, role, &context).unwrap();
         let settings: Value =
             serde_json::from_slice(&fs::read(guard.settings.unwrap()).unwrap()).unwrap();

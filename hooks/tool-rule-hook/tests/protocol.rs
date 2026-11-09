@@ -1,0 +1,225 @@
+//! Real independent checker subprocesses with synthetic native events; no Agent host.
+use serde_json::{Value, json};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+};
+struct Fixture {
+    root: tempfile::TempDir,
+    rules: PathBuf,
+}
+impl Fixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let rules = root.path().join("rules.json");
+        fs::write(&rules,json!({"base_dir":root.path(),"entries":[{"argv":["cargo","test"],"label":"suite"}],"feedback":{"reason":"Project chooses focused checks.","responsibility":"Owner integrates.","next":"Use one configured target."}}).to_string()).unwrap();
+        Self { root, rules }
+    }
+    fn command(&self, mode: &str, path: &Path) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"));
+        command
+            .arg(mode)
+            .env("TOOL_RULE_HOOK_RULES", path)
+            .env_remove("TOOL_RULE_HOOK_CONTEXT")
+            .env_remove("TOOL_RULE_HOOK_VERIFY")
+            .env_remove("CREWMOOR_FEEDBACK_INSTANCE");
+        command
+    }
+    fn event(&self, command: &str) -> Value {
+        json!({"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":command},"cwd":self.root.path(),"session_id":"synthetic-independent"})
+    }
+    fn run(&self, command: &str) -> Value {
+        output(self.command("hook", &self.rules), &self.event(command))
+    }
+    fn edit(&self, edit: impl FnOnce(&mut Value)) {
+        let mut rules: Value = serde_json::from_slice(&fs::read(&self.rules).unwrap()).unwrap();
+        edit(&mut rules);
+        fs::write(&self.rules, rules.to_string()).unwrap();
+    }
+}
+fn spawn(mut command: Command, input: &Value) -> std::process::Child {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
+    child
+}
+fn decode(result: Output) -> Value {
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    serde_json::from_slice(&result.stdout).unwrap()
+}
+fn output(command: Command, input: &Value) -> Value {
+    decode(spawn(command, input).wait_with_output().unwrap())
+}
+fn reason(value: &Value) -> &str {
+    value["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap()
+}
+#[test]
+fn standalone_native_feedback_and_no_match_need_no_crewmoor() {
+    let fixture = Fixture::new();
+    let denied = fixture.run("cargo test");
+    assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
+    for detail in [
+        "suite",
+        "Project chooses focused checks.",
+        "Owner integrates.",
+        "Use one configured target.",
+    ] {
+        assert!(reason(&denied).contains(detail));
+    }
+    assert!(!reason(&denied).contains("submission role"));
+    assert_eq!(fixture.run("echo normal"), json!({}));
+    let bridge = output(
+        fixture.command("bridge", &fixture.rules),
+        &json!({"tool":"shell","sessionID":"independent","input":{"command":"$DYNAMIC argument","workdir":fixture.root.path()}}),
+    );
+    assert_eq!(bridge["decision"], "no_match");
+    assert_eq!(bridge["unresolved"], true);
+    let bridge = output(
+        fixture.command("bridge", &fixture.rules),
+        &json!({"tool":"shell","input":{"command":"cargo test"}}),
+    );
+    assert_eq!(bridge["decision"], "deny");
+}
+#[test]
+fn errors_always_return_checker_denial_and_never_claim_safe_execution() {
+    let fixture = Fixture::new();
+    for command in ["python absent.py", "python -c '('", "echo 'unterminated"] {
+        assert!(reason(&fixture.run(command)).contains("checker failure"));
+    }
+    let malformed = output(fixture.command("hook", &fixture.rules), &json!({}));
+    assert!(reason(&malformed).contains("checker failure"));
+    fixture.edit(|value| value["entries"] = json!([]));
+    assert!(reason(&fixture.run("echo normal")).contains("checker failure"));
+    fs::write(&fixture.rules, "invalid JSON").unwrap();
+    assert!(reason(&fixture.run("echo normal")).contains("checker failure"));
+    fs::remove_file(&fixture.rules).unwrap();
+    assert!(reason(&fixture.run("echo normal")).contains("checker failure"));
+}
+#[test]
+fn verifier_failure_and_half_context_never_fall_back_to_independent_mode() {
+    let fixture = Fixture::new();
+    for verifier in ["[\"/bin/false\"]", "[\"/bin/true\"]", "invalid JSON", "[]"] {
+        let mut command = fixture.command("hook", &fixture.rules);
+        command.env("TOOL_RULE_HOOK_VERIFY", verifier).env(
+            "TOOL_RULE_HOOK_CONTEXT",
+            fixture.root.path().join("context.json"),
+        );
+        let result = output(command, &fixture.event("echo normal"));
+        assert!(reason(&result).contains("checker failure"));
+    }
+    let mut command = fixture.command("hook", &fixture.rules);
+    command.env("TOOL_RULE_HOOK_CONTEXT", "/context.json");
+    assert!(reason(&output(command, &fixture.event("echo normal"))).contains("no fallback"));
+}
+#[test]
+fn same_cwd_parallel_processes_keep_different_rules_and_load_edits_on_next_call() {
+    let fixture = Fixture::new();
+    let other = fixture.root.path().join("other.json");
+    fs::copy(&fixture.rules, &other).unwrap();
+    let mut value: Value = serde_json::from_slice(&fs::read(&other).unwrap()).unwrap();
+    value["entries"][0]["argv"] = json!(["unrelated"]);
+    value["feedback"] = json!("Other agent policy");
+    fs::write(&other, value.to_string()).unwrap();
+    let first = spawn(
+        fixture.command("hook", &fixture.rules),
+        &fixture.event("cargo test"),
+    );
+    let second = spawn(
+        fixture.command("hook", &other),
+        &fixture.event("cargo test"),
+    );
+    assert!(reason(&decode(first.wait_with_output().unwrap())).contains("suite"));
+    assert_eq!(decode(second.wait_with_output().unwrap()), json!({}));
+    fixture.edit(|rules| rules["feedback"] = json!("changed on next hook invocation"));
+    assert!(reason(&fixture.run("cargo test")).contains("changed on next hook invocation"));
+}
+#[test]
+fn scan_timeout_and_packaged_asset_export_are_explicit() {
+    let fixture = Fixture::new();
+    let fifo = fixture.root.path().join("blocked.py");
+    let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    fixture.edit(|rules| rules["timeout_ms"] = json!(10));
+    assert!(reason(&fixture.run("python blocked.py")).contains("timed out"));
+    let destination = fixture.root.path().join("exported-plugin");
+    let status = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        .arg("export-opencode")
+        .arg(&destination)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let source = fs::read_to_string(destination.join("index.ts")).unwrap();
+    assert!(source.contains("execute.before"));
+    assert!(source.contains("[\"bridge-session\", store, scope]"));
+    assert!(!source.contains("tool-policy"));
+    assert!(
+        !Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+            .arg("export-opencode")
+            .arg(&destination)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn exported_codex_marketplace_and_claude_hook_references_resolve_with_fixed_commands() {
+    let root = tempfile::tempdir().unwrap();
+    let catalog = root.path().join("catalog");
+    let result = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        .arg("export-marketplace")
+        .arg(&catalog)
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let document: Value = serde_json::from_slice(
+        &fs::read(catalog.join(".agents/plugins/marketplace.json")).unwrap(),
+    )
+    .unwrap();
+    let relative = document["plugins"][0]["source"]["path"].as_str().unwrap();
+    let plugin = catalog.join(relative);
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(plugin.join(".codex-plugin/plugin.json")).unwrap())
+            .unwrap();
+    assert_eq!(document["plugins"][0]["name"], manifest["name"]);
+    let hook_path = plugin.join(manifest["hooks"].as_str().unwrap());
+    for path in [hook_path, plugin.join("hooks/hooks.json")] {
+        let hooks: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        let command = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(command.ends_with(" hook"));
+        assert!(!command.contains("RULES"));
+        assert!(!command.contains("stop-that-shit"));
+    }
+    assert!(plugin.join(".claude-plugin/plugin.json").is_file());
+}
+
+#[test]
+fn legacy_adapter_envelope_uses_the_same_independent_scanner_and_feedback() {
+    let fixture = Fixture::new();
+    let policy: Value = serde_json::from_slice(&fs::read(&fixture.rules).unwrap()).unwrap();
+    let event = json!({"policy":policy,"input":fixture.event("cargo test"),"context":"synthetic legacy adapter"});
+    let result = output(fixture.command("compat-hook", &fixture.rules), &event);
+    assert_eq!(result["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(reason(&result).contains("synthetic legacy adapter"));
+    assert!(reason(&result).contains("Project chooses focused checks."));
+}

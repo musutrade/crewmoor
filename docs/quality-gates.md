@@ -1,6 +1,6 @@
 # crewmoor quality gates
 
-Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。根 `Cargo.toml` 是 CrewMoor 业务 crate；`tools/quality` 是 Rust 质量 CLI，`fixtures/quality` 是隔离验收 fixture。
+Rust 最新 stable、edition 2024，不维护旧版本/MSRV 兼容矩阵。根 `Cargo.toml` 是 CrewMoor 业务 crate；`tools/quality` 是 Rust 质量 CLI，`fixtures/quality` 是隔离验收 fixture；`hooks/tool-rule-hook` 是独立分发的 Hook workspace，拥有自己的 lockfile。
 
 ## 本地与 CI 的统一入口
 
@@ -15,7 +15,7 @@ CI 最后一步使用相同 `verify` 命令，job 显式设置 `CARGO_TARGET_DIR
 
 并行开发/审计必须在各自调用中设置不同的绝对 `CARGO_TARGET_DIR`，并让完整 verify 的全部 Cargo/LLVM 子进程继承它；不要共享同项目不同 checkout 的 target，也不要修改全局 Cargo/代理配置或 clean 共享目录。报告记录准确 SHA、target、命令及日志；覆盖率源码映射出现另一 checkout 时必须失败，不能忽略 unknown coverage source。Issue #2 中旧共享 target 下的通过结论已撤回，不作为验收依据。
 
-`verify` 依次检查工具自身、fixture，然后判断根目录业务 Cargo.toml：没有业务 crate 时明确输出 N/A；有业务 crate 时运行同一完整检查。工具自身也执行 fmt、策略检查、Clippy `--workspace --all-targets --all-features -- -D warnings`、真实测试覆盖率及全部命名函数的 CRAP，包括测试源码。每个子进程必须成功，不吞失败。
+`verify` 依次检查工具自身、fixture、必需的 `hooks/tool-rule-hook/Cargo.toml`，然后判断根目录业务 Cargo.toml：没有业务 crate 时明确输出 N/A；有业务 crate 时运行同一完整检查。工具自身也执行 fmt、策略检查、Clippy `--workspace --all-targets --all-features -- -D warnings`、真实测试覆盖率及全部命名函数的 CRAP，包括测试源码。每个子进程必须成功，不吞失败。
 
 可独立运行以下子命令（相对于仓库根目录）：
 
@@ -63,3 +63,5 @@ inventory 回归验证：外部 `#[path]`/include 文件中的 suppression、unw
 根业务 crate 必须执行完整门禁，不能报告 N/A。Issue #2 的最终验证回报绑定准确提交、独立 target 绝对路径、命令和日志；旧共享 target 的结果无效。远端 GitHub Actions 尚未执行；自动门禁、真实容器生命周期和用户 App 观察分别验收。
 
 来源：[Rust 1.99.1 官方公告](https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/)、[LLVM coverage export](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export)、[Rust 模块与 path 属性规则](https://doc.rust-lang.org/reference/items/modules.html)。
+
+独立 Hook workspace 使用同一个 `check` 流程且只检查一次，缺失 manifest 会失败。它的 library、binary 和 Rust 测试源进入自身 inventory/coverage/CRAP 度量，不作第三方排除。根 crate 与 Hook 分别使用各自 lockfile 和依赖清单；CI 继续使用统一 `verify`。包资产、解包独立构建和专用 prefix 安装是另行记录的发布交付检查，不代替上述质量门禁。

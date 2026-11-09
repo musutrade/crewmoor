@@ -1,3 +1,5 @@
+#[path = "support/rule_selection.rs"]
+mod rule_selection;
 use crewmoor::{app, team::Team};
 use serde_json::{Value, json};
 use std::{
@@ -109,10 +111,11 @@ fn generation_preserves_role_reminders_independently_and_rejects_oversize() {
 #[test]
 fn generation_preserves_role_policy_without_writing_native_hook_files() {
     let mut fixture = Fixture::new();
-    fixture.input["roles"][1]["tool_policy"] = json!({"checker":env!("CARGO_BIN_EXE_crewmoor"),"entries":[{"argv":["cargo","test"],"label":"full tests"}],"allow":[["cargo","test","--test","message"]],"feedback":"Full tests belong to submission role."});
+    fixture.input["roles"][1]["tool_policy"] =
+        serde_json::to_value(rule_selection::policy(fixture.root())).unwrap();
     let team = parse(&fixture.run(&[]));
     let policy = team.roles[1].tool_policy.as_ref().unwrap();
-    assert_eq!(policy.entries[0].argv, vec!["cargo", "test"]);
+    assert_eq!(policy.rules, fixture.root().join("external-rules.json"));
     assert!(team.roles[0].tool_policy.is_none());
     assert!(!fixture.root().join("registry").exists());
     assert!(!fixture.root().join("teams").exists());

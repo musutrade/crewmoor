@@ -1,0 +1,6 @@
+{
+  "scope": "operator-owned-server-realm",
+  "session": "REPLACE_WITH_NATIVE_SESSION_ID",
+  "directory": "/absolute/project",
+  "rules": "/absolute/external/rules.json"
+}
