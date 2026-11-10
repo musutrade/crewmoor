@@ -1,5 +1,6 @@
 //! Public checker-to-verifier protocol tests. This Rust test target also serves
 //! as its own trusted verifier child, with no test-harness output on that path.
+
 //! The whole target (including the child code) is inventoried and instrumented.
 use serde_json::{Value, json};
 use std::{
@@ -23,7 +24,8 @@ fn main() -> Result<()> {
     invalid_verifier_bindings_are_rejected_without_publishing_a_session();
     verifier_failures_deny_instead_of_falling_back_to_independent_rules();
     optional_native_hook_keeps_trusted_session_and_instance_checks();
-    println!("4 public session-verifier protocol cases passed");
+    codex_binding_passes_native_mode_and_keeps_verifier_failures_strict();
+    println!("5 public session-verifier protocol cases passed");
     Ok(())
 }
 
@@ -281,5 +283,45 @@ fn optional_native_hook_keeps_trusted_session_and_instance_checks() {
             .unwrap();
         assert!(reason.contains("checker failure"));
         context[field] = original;
+    }
+}
+
+fn codex_binding_passes_native_mode_and_keeps_verifier_failures_strict() {
+    for mode in [
+        "context",
+        "process-error",
+        "invalid-json",
+        "missing-context",
+        "wrong-context-type",
+    ] {
+        let fixture = Fixture::new(mode);
+        let mut selection = fixture.selection();
+        selection["scope"] = json!(SESSION);
+        let store = fixture.root.path().join("tool-rule-hook");
+        assert_eq!(
+            decode(fixture.checker(&["codex-session-bind", store.to_str().unwrap()], &selection))["revision"],
+            1
+        );
+        let event = json!({"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":SESSION,
+            "cwd":fixture.root.path(),"tool_input":{"command":"restricted"}});
+        let mut checker = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"));
+        checker
+            .arg("codex-hook")
+            .env("PLUGIN_DATA", fixture.root.path())
+            .env("TOOL_RULE_HOOK_RULES", &fixture.decoy)
+            .env_remove("TOOL_RULE_HOOK_CONTEXT")
+            .env_remove("TOOL_RULE_HOOK_VERIFY");
+        let decision = decode(capture(&mut checker, &event));
+        assert_eq!(decision["hookSpecificOutput"]["permissionDecision"], "deny");
+        let reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap();
+        assert!(reason.contains(if mode == "context" {
+            "trusted actor A"
+        } else {
+            "checker failure"
+        }));
+        let trace: Value = serde_json::from_slice(&fs::read(&fixture.trace).unwrap()).unwrap();
+        assert_eq!(trace["request"], json!({"bridge":false,"input":event}));
     }
 }

@@ -83,14 +83,12 @@ fn raw_output(mut command: Command, bytes: &[u8]) -> Value {
     input.rewind().unwrap();
     decode(command.stdin(Stdio::from(input)).output().unwrap())
 }
-fn fixed_command(text: &str) -> Command {
+fn fixed_command(text: &str, mode: &str, data: &Path) -> Command {
     let argv = shlex::split(text).unwrap();
-    assert_eq!(
-        argv,
-        [env!("CARGO_BIN_EXE_tool-rule-hook"), "optional-hook"]
-    );
+    assert_eq!(argv, [env!("CARGO_BIN_EXE_tool-rule-hook"), mode]);
     let mut command = Command::new(&argv[0]);
     command.args(&argv[1..]);
+    command.env("PLUGIN_DATA", data);
     unselected(command)
 }
 fn reason(value: &Value) -> &str {
@@ -355,28 +353,43 @@ fn exported_codex_marketplace_and_claude_hook_references_resolve_with_fixed_comm
     assert_eq!(document["plugins"][0]["name"], manifest["name"]);
     let hook_path = plugin.join(manifest["hooks"].as_str().unwrap());
     for path in [hook_path, plugin.join("hooks/hooks.json")] {
+        let codex = path.file_name().unwrap() == "codex-hooks.json";
+        let mode = if codex { "codex-hook" } else { "optional-hook" };
+        let data = fixture.root.path().join("native-codex-data");
         let hooks: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         let command = hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
-        assert!(command.ends_with(" optional-hook"));
+        assert!(command.ends_with(&format!(" {mode}")));
         assert!(!command.contains("RULES"));
         assert!(!command.contains("stop-that-shit"));
         let ordinary = fixture.event("echo normal").to_string();
         let restricted = fixture.event("cargo test").to_string();
         assert_eq!(
-            raw_output(fixed_command(command), ordinary.as_bytes()),
+            raw_output(fixed_command(command, mode, &data), ordinary.as_bytes()),
             json!({})
         );
         assert_eq!(
-            raw_output(fixed_command(command), restricted.as_bytes()),
+            raw_output(fixed_command(command, mode, &data), restricted.as_bytes()),
             json!({})
         );
-        let mut selected = fixed_command(command);
-        selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        if codex {
+            let mut control = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"));
+            control
+                .arg("codex-session-bind")
+                .arg(data.join("tool-rule-hook"));
+            let selection = json!({"scope":"synthetic-independent","session":"synthetic-independent","directory":fixture.root.path(),"rules":fixture.rules});
+            output(control, &selection);
+        }
+        let mut selected = fixed_command(command, mode, &data);
+        if !codex {
+            selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        }
         assert_eq!(raw_output(selected, ordinary.as_bytes()), json!({}));
-        let mut selected = fixed_command(command);
-        selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        let mut selected = fixed_command(command, mode, &data);
+        if !codex {
+            selected.env("TOOL_RULE_HOOK_RULES", &fixture.rules);
+        }
         let denied = raw_output(selected, restricted.as_bytes());
         assert_eq!(denied["hookSpecificOutput"]["permissionDecision"], "deny");
         assert!(reason(&denied).contains("Project chooses focused checks."));

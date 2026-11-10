@@ -113,6 +113,17 @@ fn verifier_preserves_role_instance_session_and_agent_checks() {
                 .success()
         );
         changed = envelope;
+        if kind == AgentKind::Codex {
+            let mut child = changed.clone();
+            child["input"]["agent_id"] = json!("native-child-in-same-session-tree");
+            let rejected = fixture.invoke(
+                &["tool-policy", "verify"],
+                &child,
+                &fixture.context.instance,
+            );
+            assert!(!rejected.status.success());
+            assert!(String::from_utf8_lossy(&rejected.stderr).contains("child caller"));
+        }
         changed["bridge"] = json!(!bridge);
         assert!(
             !fixture

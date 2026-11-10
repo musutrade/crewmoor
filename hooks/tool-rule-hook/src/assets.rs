@@ -17,8 +17,6 @@ pub fn export(root: &Path) -> Result<()> {
     let executable = executable
         .to_str()
         .ok_or("checker installation path is not UTF-8")?;
-    let command = format!("'{}' optional-hook", executable.replace('\'', "'\\''"));
-    let quoted = serde_json::to_string(&command)?;
     fs::create_dir(root)?;
     for (relative, source) in [
         (".codex-plugin/plugin.json", CODEX),
@@ -26,6 +24,13 @@ pub fn export(root: &Path) -> Result<()> {
         ("hooks/codex-hooks.json", CODEX_HOOKS),
         ("hooks/hooks.json", CLAUDE_HOOKS),
     ] {
+        let mode = if relative == "hooks/codex-hooks.json" {
+            "codex-hook"
+        } else {
+            "optional-hook"
+        };
+        let command = format!("'{}' {mode}", executable.replace('\'', "'\\''"));
+        let quoted = serde_json::to_string(&command)?;
         let path = root.join(relative);
         fs::create_dir_all(path.parent().ok_or("plugin asset has no parent")?)?;
         fs::write(

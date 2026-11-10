@@ -1,4 +1,5 @@
 //! Explicit controller-owned bindings. Native tool calls only read this store.
+
 use crate::{Policy, Result, hook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -60,10 +61,10 @@ fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
 ) -> std::result::Result<Option<T>, D::Error> {
     Option::<T>::deserialize(deserializer)
 }
-fn key(scope: &str, session: &str) -> Result<String> {
+fn key(host: &str, scope: &str, session: &str) -> Result<String> {
     crate::nonblank(scope)?;
     crate::nonblank(session)?;
-    Ok(serde_json::to_string(&("opencode", scope, session))?)
+    Ok(serde_json::to_string(&(host, scope, session))?)
 }
 fn read(root: &Path) -> Result<Store> {
     crate::absolute(root)?;
@@ -106,17 +107,24 @@ fn publish(root: &Path, store: &Store) -> Result<()> {
     atomic(&root.join("bindings.json"), &bytes)
 }
 pub fn control(mode: &str, root: &Path, input: Value) -> Result<Value> {
+    let (host, mode) = match mode.strip_prefix("codex-") {
+        Some(mode) => ("codex", mode),
+        None => ("opencode", mode),
+    };
     match mode {
-        "session-bind" | "session-update" => select(root, input, mode == "session-update"),
-        "session-end" => end(root, serde_json::from_value(input)?),
-        "session-show" => show(root, serde_json::from_value(input)?),
+        "session-bind" | "session-update" => select(host, root, input, mode == "session-update"),
+        "session-end" => end(host, root, serde_json::from_value(input)?),
+        "session-show" => show(host, root, serde_json::from_value(input)?),
         _ => Err("unknown session control operation".into()),
     }
 }
-fn select(root: &Path, input: Value, updating: bool) -> Result<Value> {
+fn select(host: &str, root: &Path, input: Value, updating: bool) -> Result<Value> {
     let selection: Selection = serde_json::from_value(input)?;
+    if host == "codex" && selection.workspace.is_some() {
+        return Err("Codex binding uses native tree/caller IDs, not a workspace claim".into());
+    }
     let binding = prepare(&selection)?;
-    let identity = key(&selection.scope, &selection.session)?;
+    let identity = key(host, &selection.scope, &selection.session)?;
     mutate(root, |store| {
         let revision = next_revision(
             store.bindings.get(&identity),
@@ -170,8 +178,8 @@ fn next_revision(current: Option<&Binding>, expected: Option<u64>, updating: boo
         .checked_add(1)
         .ok_or("revision exhausted")?)
 }
-fn end(root: &Path, identity: Identity) -> Result<Value> {
-    let key = key(&identity.scope, &identity.session)?;
+fn end(host: &str, root: &Path, identity: Identity) -> Result<Value> {
+    let key = key(host, &identity.scope, &identity.session)?;
     mutate(root, |store| {
         let current = store.bindings.get_mut(&key).ok_or("session is unbound")?;
         current.revision = next_revision(Some(current), identity.expected_revision, true)?;
@@ -179,11 +187,11 @@ fn end(root: &Path, identity: Identity) -> Result<Value> {
         Ok(json!({"revision":current.revision,"ended":true}))
     })
 }
-fn show(root: &Path, identity: Identity) -> Result<Value> {
+fn show(host: &str, root: &Path, identity: Identity) -> Result<Value> {
     let store = read(root)?;
     let binding = store
         .bindings
-        .get(&key(&identity.scope, &identity.session)?)
+        .get(&key(host, &identity.scope, &identity.session)?)
         .ok_or("session is unbound")?;
     Ok(
         json!({"scope":binding.scope,"session":binding.session,"revision":binding.revision,"ended":binding.ended,"rules":binding.rules}),
@@ -194,7 +202,7 @@ pub fn resolve(root: &Path, scope: &str, event: &Value) -> Result<Binding> {
         .as_str()
         .ok_or("native calling session missing")?;
     let store = read(root)?;
-    let binding=store.bindings.get(&key(scope,session)?).ok_or("native session is unbound; trusted controller must bind this exact session; no parent inheritance")?;
+    let binding=store.bindings.get(&key("opencode",scope,session)?).ok_or("native session is unbound; trusted controller must bind this exact session; no parent inheritance")?;
     if binding.ended {
         return Err("native session binding has ended; start a new bound session".into());
     }
@@ -220,7 +228,7 @@ impl Verifier {
         crate::absolute(&self.context)?;
         Ok(())
     }
-    pub fn check(&self, event: &Value, budget: u64) -> Result<String> {
+    pub(crate) fn check_mode(&self, event: &Value, budget: u64, bridge: bool) -> Result<String> {
         self.validate()?;
         let mut command = std::process::Command::new(&self.argv[0]);
         command
@@ -229,7 +237,7 @@ impl Verifier {
             .env(hook::CONTEXT_ENV, &self.context);
         let result = hook::execute(
             command,
-            &json!({"bridge":true,"input":event}),
+            &json!({"bridge":bridge,"input":event}),
             budget.min(1_000),
         )?;
         Ok(result["context"]
@@ -237,4 +245,80 @@ impl Verifier {
             .ok_or("context verifier response missing")?
             .into())
     }
+}
+
+pub(crate) struct CodexBindings(Store);
+impl CodexBindings {
+    pub(crate) fn load(root: &Path) -> Result<Self> {
+        let store = read(root)?;
+        for (identity, binding) in &store.bindings {
+            validate_store_key(identity, binding)?;
+        }
+        Ok(Self(store))
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        !self
+            .0
+            .bindings
+            .keys()
+            .any(|key| key.starts_with("[\"codex\","))
+    }
+    pub(crate) fn resolve(&self, event: &Value) -> Result<Option<Binding>> {
+        let (tree, caller) = codex_caller(event)?;
+        let Some(binding) = self.0.bindings.get(&key("codex", tree, caller)?) else {
+            return if self.contains_tree(tree)? {
+                Err("native Codex caller is unbound in a selected tree; bind this exact caller; no parent or sibling inheritance".into())
+            } else {
+                Ok(None)
+            };
+        };
+        validate_codex_binding(binding)?;
+        Ok(Some(binding.clone()))
+    }
+    fn contains_tree(&self, tree: &str) -> Result<bool> {
+        for (identity, binding) in &self.0.bindings {
+            if binding.scope == tree && *identity == key("codex", tree, &binding.session)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+fn codex_caller(event: &Value) -> Result<(&str, &str)> {
+    if event["hook_event_name"] != "PreToolUse" {
+        return Err("expected native Codex PreToolUse input".into());
+    }
+    let tree = event["session_id"]
+        .as_str()
+        .ok_or("native Codex session tree missing")?;
+    let caller = match event.get("agent_id") {
+        None | Some(Value::Null) => tree,
+        Some(value) => value
+            .as_str()
+            .ok_or("native Codex caller ID must be text")?,
+    };
+    crate::nonblank(tree)?;
+    crate::nonblank(caller)?;
+    Ok((tree, caller))
+}
+fn validate_codex_binding(binding: &Binding) -> Result<()> {
+    if binding.ended {
+        return Err("native Codex binding has ended; start and bind a new native session".into());
+    }
+    if binding.workspace.is_some() {
+        return Err("stored Codex binding has unsupported workspace metadata".into());
+    }
+    if binding.rules.is_some() != binding.policy.is_some() {
+        return Err("stored Codex rule selection and policy snapshot are incomplete".into());
+    }
+    crate::absolute(&binding.directory)
+}
+fn validate_store_key(identity: &str, binding: &Binding) -> Result<()> {
+    let (host, _, _): (String, String, String) = serde_json::from_str(identity)?;
+    if !matches!(host.as_str(), "codex" | "opencode")
+        || identity != key(&host, &binding.scope, &binding.session)?
+    {
+        return Err("stored session binding key is invalid or inconsistent".into());
+    }
+    Ok(())
 }
