@@ -395,6 +395,18 @@ fn exported_codex_marketplace_and_claude_hook_references_resolve_with_fixed_comm
         assert!(reason(&denied).contains("Project chooses focused checks."));
     }
     assert!(plugin.join(".claude-plugin/plugin.json").is_file());
+    let preserved = fs::read(plugin.join("hooks/codex-hooks.json")).unwrap();
+    let refused = Command::new(env!("CARGO_BIN_EXE_tool-rule-hook"))
+        .arg("export-plugin")
+        .arg(&plugin)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    assert_eq!(
+        fs::read(plugin.join("hooks/codex-hooks.json")).unwrap(),
+        preserved
+    );
 }
 
 #[test]

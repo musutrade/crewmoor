@@ -316,11 +316,12 @@ fn codex_binding_passes_native_mode_and_keeps_verifier_failures_strict() {
         let reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
             .as_str()
             .unwrap();
-        assert!(reason.contains(if mode == "context" {
+        let expected = if mode == "context" {
             "trusted actor A"
         } else {
             "checker failure"
-        }));
+        };
+        assert!(reason.contains(expected));
         let trace: Value = serde_json::from_slice(&fs::read(&fixture.trace).unwrap()).unwrap();
         assert_eq!(trace["request"], json!({"bridge":false,"input":event}));
     }

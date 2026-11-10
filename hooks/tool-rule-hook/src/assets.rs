@@ -18,17 +18,12 @@ pub fn export(root: &Path) -> Result<()> {
         .to_str()
         .ok_or("checker installation path is not UTF-8")?;
     fs::create_dir(root)?;
-    for (relative, source) in [
-        (".codex-plugin/plugin.json", CODEX),
-        (".claude-plugin/plugin.json", CLAUDE),
-        ("hooks/codex-hooks.json", CODEX_HOOKS),
-        ("hooks/hooks.json", CLAUDE_HOOKS),
+    for (relative, source, mode) in [
+        (".codex-plugin/plugin.json", CODEX, "codex-hook"),
+        (".claude-plugin/plugin.json", CLAUDE, "optional-hook"),
+        ("hooks/codex-hooks.json", CODEX_HOOKS, "codex-hook"),
+        ("hooks/hooks.json", CLAUDE_HOOKS, "optional-hook"),
     ] {
-        let mode = if relative == "hooks/codex-hooks.json" {
-            "codex-hook"
-        } else {
-            "optional-hook"
-        };
         let command = format!("'{}' {mode}", executable.replace('\'', "'\\''"));
         let quoted = serde_json::to_string(&command)?;
         let path = root.join(relative);
