@@ -83,12 +83,27 @@ a Codex local marketplace catalog. Exporting files is not installation. Native
 Codex marketplace/plugin add writes user configuration/cache and enables the
 plugin at user scope; it is outside CrewMoor's role launch. No such installation,
 user trust mutation or current-team reconfiguration occurs here.
-The exported command uses the independent `optional-hook` entry: all three
-selection variables absent returns `{}` without granting permission or reading
-stdin; any one present invokes the same strict checker. Role-local `hook`
-injection stays strict. Partial selection loss still denies; losing all three
-variables is indistinguishable from never selecting this plugin. Check actual
-host inheritance when deploying a global plugin.
+The Codex global export now uses independent `codex-hook`, reading this plugin's
+host-provided `PLUGIN_DATA/tool-rule-hook` native-session bindings. It does not
+treat shared-runtime process variables as a per-client role selection. A trusted
+controller must explicitly bind the known native tree/calling root or child ID
+before business tools, using `codex-session-bind STORE`; it can provide the same
+optional CrewMoor verifier/context. Unbound trees are unselected, participating
+trees require an exact caller binding (including explicit `rules:null`), and
+ended/damaged/verifier-failed bindings deny without environment fallback.
+Native `session_id` is the tree; `agent_id`, if present, identifies the child.
+CrewMoor's existing root-role verifier explicitly rejects a child caller rather
+than accepting its shared tree ID as that registered root role.
+
+This adds no automatic Codex launcher binding or core startup change. The current
+role-local strict `hook`/environment/verifier route remains; Claude's global
+`optional-hook` remains its separate process contract. All three variables absent
+there return `{}`; partial selection stays strict. For ordinary shared-runtime
+Codex independent use, select the explicit native-session route rather than
+claiming that client RULES reached the Hook. The package README documents native
+data location, bind/update/end, snapshot timing, parent/caller separation and
+the version0.1.1 asset/cache/trust migration. Existing running teams and installed
+declarations are never silently rewritten.
 
 ## OpenCode: native session selection
 

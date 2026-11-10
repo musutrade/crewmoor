@@ -1,6 +1,7 @@
 //! Standalone static command rules; host/session selection is explicit.
 mod ansi;
 mod assets;
+mod codex;
 mod hook;
 mod normalize;
 mod python;

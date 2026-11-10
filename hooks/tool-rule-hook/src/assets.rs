@@ -17,15 +17,15 @@ pub fn export(root: &Path) -> Result<()> {
     let executable = executable
         .to_str()
         .ok_or("checker installation path is not UTF-8")?;
-    let command = format!("'{}' optional-hook", executable.replace('\'', "'\\''"));
-    let quoted = serde_json::to_string(&command)?;
     fs::create_dir(root)?;
-    for (relative, source) in [
-        (".codex-plugin/plugin.json", CODEX),
-        (".claude-plugin/plugin.json", CLAUDE),
-        ("hooks/codex-hooks.json", CODEX_HOOKS),
-        ("hooks/hooks.json", CLAUDE_HOOKS),
+    for (relative, source, mode) in [
+        (".codex-plugin/plugin.json", CODEX, "codex-hook"),
+        (".claude-plugin/plugin.json", CLAUDE, "optional-hook"),
+        ("hooks/codex-hooks.json", CODEX_HOOKS, "codex-hook"),
+        ("hooks/hooks.json", CLAUDE_HOOKS, "optional-hook"),
     ] {
+        let command = format!("'{}' {mode}", executable.replace('\'', "'\\''"));
+        let quoted = serde_json::to_string(&command)?;
         let path = root.join(relative);
         fs::create_dir_all(path.parent().ok_or("plugin asset has no parent")?)?;
         fs::write(

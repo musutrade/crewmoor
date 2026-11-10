@@ -1,6 +1,6 @@
 [package]
 name = "tool-rule-hook"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 publish = false
 description = "Configurable static pre-tool engineering checks for native agent hooks"

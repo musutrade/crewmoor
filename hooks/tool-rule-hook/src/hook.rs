@@ -24,12 +24,13 @@ pub fn cli(args: &[String]) -> Result<()> {
         [mode,path]=>cli_file(mode,Path::new(path)),
         [mode,first,second]=>cli_three(mode,Path::new(first),second),
         [mode] if mode=="optional-hook"=>emit_optional(),
+        [mode] if mode=="codex-hook"=>crate::codex::emit(),
         [mode] if ["hook","bridge","compat-hook","compat-bridge"].contains(&mode.as_str())=>emit(mode),
-        _=>Err("usage: tool-rule-hook hook|optional-hook|bridge; validate RULES; export-plugin|export-marketplace|export-opencode NEW_DIRECTORY; session-bind|session-update|session-end|session-show STORE < REQUEST; bridge-session STORE REALM; rules-update DEST SOURCE".into()),
+        _=>Err("usage: tool-rule-hook hook|optional-hook|codex-hook|bridge; validate RULES; export-plugin|export-marketplace|export-opencode NEW_DIRECTORY; [codex-]session-bind|session-update|session-end|session-show STORE < REQUEST; bridge-session STORE REALM; rules-update DEST SOURCE".into()),
     }
 }
 fn cli_file(mode: &str, path: &Path) -> Result<()> {
-    if mode.starts_with("session-") {
+    if mode.starts_with("session-") || mode.starts_with("codex-session-") {
         let output = crate::session::control(mode, path, input()?)?;
         println!("{output}");
         return Ok(());
@@ -67,6 +68,13 @@ fn emit_session(root: &Path, scope: &str) -> Result<()> {
 fn check_session(root: &Path, scope: &str) -> Result<Decision> {
     let event = input()?;
     let binding = crate::session::resolve(root, scope, &event)?;
+    check_binding(binding, event, true)
+}
+pub(crate) fn check_binding(
+    binding: crate::session::Binding,
+    event: Value,
+    bridge: bool,
+) -> Result<Decision> {
     let source = binding
         .rules
         .as_ref()
@@ -78,7 +86,7 @@ fn check_session(root: &Path, scope: &str) -> Result<Decision> {
     );
     if let Some(verifier) = &binding.verifier {
         context.push_str(" verified_context=");
-        context.push_str(&verifier.check(&event, 1_000)?);
+        context.push_str(&verifier.check_mode(&event, 1_000, bridge)?);
     }
     let Some(policy) = binding.policy else {
         return Ok(Decision {
@@ -88,8 +96,12 @@ fn check_session(root: &Path, scope: &str) -> Result<Decision> {
         });
     };
     policy.validate()?;
-    let event = session_cwd(event, &binding.directory)?;
-    let (command, cwd) = command(&event, true, &policy.base_dir)?;
+    let event = if bridge {
+        session_cwd(event, &binding.directory)?
+    } else {
+        event
+    };
+    let (command, cwd) = command(&event, bridge, &policy.base_dir)?;
     let scan = command
         .map(|command| bounded(policy.clone(), cwd, command))
         .transpose()?
@@ -166,7 +178,7 @@ pub(crate) fn load(path: &Path) -> Result<Policy> {
     let source = crate::shell::read_source(path)?;
     Ok(serde_json::from_str(&source)?)
 }
-fn input() -> Result<Value> {
+pub(crate) fn input() -> Result<Value> {
     let mut text = String::new();
     std::io::stdin().take(1_048_577).read_to_string(&mut text)?;
     crate::bounded_source(&text)?;
@@ -349,7 +361,7 @@ fn bounded(policy: Policy, cwd: PathBuf, command: String) -> Result<Scan> {
         .map_err(|_| "static checker timed out or failed")?
         .map_err(Into::into)
 }
-fn deny(entry: &str, detail: &str, context: &str, unresolved: bool) -> Decision {
+pub(crate) fn deny(entry: &str, detail: &str, context: &str, unresolved: bool) -> Decision {
     Decision {
         decision: "deny",
         unresolved,
@@ -358,7 +370,7 @@ fn deny(entry: &str, detail: &str, context: &str, unresolved: bool) -> Decision 
         )),
     }
 }
-fn native_output(decision: &Decision) -> Value {
+pub(crate) fn native_output(decision: &Decision) -> Value {
     if decision.decision == "deny" {
         json!({"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":decision.reason}})
     } else {

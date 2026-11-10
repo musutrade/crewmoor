@@ -1,0 +1,6 @@
+{
+  "scope": "ACTUAL_NATIVE_SESSION_TREE_ID",
+  "session": "ACTUAL_NATIVE_CALLING_ROOT_OR_CHILD_ID",
+  "directory": "/absolute/project",
+  "rules": "/absolute/external/rules.json"
+}

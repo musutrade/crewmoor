@@ -24,8 +24,9 @@ For an unpacked `.crate`, use its `Cargo.toml` and its directory for `--path`.
 `cargo install` installs the binary. Both exporters embed all required assets in
 that binary and create a **new** directory, refusing existing destinations. The
 Codex/Claude exporter writes their native plugin manifests and hook documents.
-Their command is the exporting binary's absolute path followed by `optional-hook`; no
-project, role or rule path is embedded in it. The OpenCode exporter writes one
+The Codex command is the exporting binary's absolute path plus `codex-hook`;
+Claude uses `optional-hook`. No project, role or rule path is embedded in either.
+The OpenCode exporter writes one
 native server plugin directory. All roles reuse those fixed directories and the
 same binary. Assets and examples are also included in the source archive,
 including the hidden manifest directories.
@@ -99,10 +100,87 @@ configuration, unreadable source, unsupported syntax, missing identity and timeo
 produce checker denial; dynamic unrecognized execution may produce `no_match`
 with `unresolved:true`.
 
-## Codex and Claude: trusted process selection
+## Codex 0.167.0: native session rules
+
+The fixed global Codex entry selects from this plugin's own host-provided
+`PLUGIN_DATA/tool-rule-hook` store. It ignores `TOOL_RULE_HOOK_RULES`,
+`TOOL_RULE_HOOK_CONTEXT` and `TOOL_RULE_HOOK_VERIFY`: a shared execution host's
+variables can belong to a different client, and a client's selection can be absent
+in the actual Hook process. No environment-to-session bootstrap occurs. Use the
+explicit process entries below only where that environment has been verified.
+
+A trusted operator/controller must get the actual native identity and bind it
+**before the first business tool**; ordinary prompts, tool arguments and profile
+names never write this mapping. For a new root TUI, native `/status` gives its
+root thread ID. Do not use a closed or guessed ID. Native `session_id` is the tree
+ID; child `agent_id` is its concrete calling thread. Set binding `scope` to that
+tree ID and `session` to the exact calling root/child ID. Root IDs coincide in a
+new standalone root; this is not a general rule for children/resumed threads.
+
+```sh
+tool-rule-hook codex-session-bind /actual/PLUGIN_DATA/tool-rule-hook < bind.json
+tool-rule-hook codex-session-show /actual/PLUGIN_DATA/tool-rule-hook < identity.json
+tool-rule-hook codex-session-update /actual/PLUGIN_DATA/tool-rule-hook < update.json
+tool-rule-hook codex-session-end /actual/PLUGIN_DATA/tool-rule-hook < end.json
+```
+
+See [examples/codex-session-bind.json](examples/codex-session-bind.json). The CLI
+caller is responsible for obtaining trustworthy native identity; self-reported
+JSON is not an authentication credential. The store path must match this actual
+plugin's native data root, not STS or a client's arbitrary environment. For this
+legacy plugin format on pinned Codex 0.167.0, native store.rs places plugin data
+at the actual Codex home's `plugins/data/<plugin-name>-<marketplace-name>`.
+For `tool-rule-hook@tool-rule-hook-local`, that suffix is
+`plugins/data/tool-rule-hook-tool-rule-hook-local`. Add `/tool-rule-hook` for
+STORE. Confirm the actual host home/installation; do not change `CODEX_HOME`,
+guess another environment's path or copy credentials. Binding a guessed path is
+not evidence that the actual native Hook loaded it.
+
+An entirely unbound native tree is unselected and returns `{}`. Once any caller
+in a tree has a Codex binding, **every caller in that tree needs its own binding**:
+unknown children/siblings/root deny, rather than inheriting another role. Use
+explicit `rules:null` for an intentional unrestricted caller; its optional
+verifier still runs. Different root trees in one cwd remain independent. OpenCode
+keys are a separate host namespace and keep their original format/contracts.
+
+Bind refuses replacement. Update/end require the current `expected_revision`,
+checked under the existing writer lock. A binding contains a validated immutable
+rules snapshot; editing its source file or using `rules-update` alone does not
+alter it. Explicit session-update loads the chosen source, publishes the next
+whole revision and applies at the next Hook read; an in-flight call can finish
+on the old revision. Same legitimate tree/caller identity on resume retains the
+binding. New-ID restart requires a new explicit bind. End leaves a tombstone;
+update/rebind cannot resurrect it. Ending one caller does not automatically end
+other separately bound callers. No SessionEnd automation or lifecycle ledger is
+added, and the native tool path only reads state.
+
+Feedback distinguishes calling session, native tree (`scope`), rule source and
+revision. Codex's native `cwd` is the actual tool cwd, which can differ from the
+trusted startup/configuration directory. It resolves shell/Python paths; it is
+not falsely used as proof of the startup location. A bound verifier receives
+`{bridge:false,input:NATIVE_EVENT}` and fails closed on errors, invalid output or
+timeout. There is no fallback to client rules or another session's policy.
+
+Missing/relative native `PLUGIN_DATA`, an unreadable/damaged store, ended binding
+or incomplete bound policy returns a checker denial. With no Codex bindings the
+entry does not read stdin and returns `{}`; after selection exists it requires
+valid native tree/caller metadata to distinguish callers. A damaged shared
+namespace can therefore deny unselected calls until the operator repairs it.
+No match is not native permission allow, and host fail-open/trust/write_stdin
+limits still apply. The files/controller are not a tamper-resistant sandbox.
+
+Version 0.1.1 changes the exported Codex declaration from `optional-hook` to
+`codex-hook`. Updating just the binary leaves an old cached declaration unchanged;
+export/install/review the new native plugin asset and verify the actual cache
+version/command. The normal host may request trust again. This source change
+does not modify existing installations, user trust/configuration or current teams.
+Ordinary shared-runtime real acceptance must verify native store selection and
+same-cwd root isolation; synthetic protocol tests do not establish host loading.
+
+## Claude and explicit hooks: trusted process selection
 
 Set `TOOL_RULE_HOOK_RULES=/absolute/external/rules.json` only in the actual Agent
-process environment. The fixed exported `optional-hook` command reads it on each invocation; a
+process environment. Claude's fixed exported `optional-hook` command reads it on each invocation; a
 client's variable does not prove inheritance into a daemon/app-server. Like STS,
 this plugin uses the host's normal loading and execution path; it does not launch
 Agents or add daemon/startup flags. With Codex 0.167.0, verify the actual executing
@@ -117,7 +195,7 @@ actual Hook source/result. CrewMoor places the same selected values in its owned
 process settings and rejects conflicts in the explicit input settings. Arbitrary
 runtime edits to effective settings remain outside a tamper-resistant boundary.
 
-The global plugin's `optional-hook` entry returns `{}` only when all three
+The `optional-hook` process entry returns `{}` only when all three
 selection variables (`TOOL_RULE_HOOK_RULES`, `TOOL_RULE_HOOK_CONTEXT` and
 `TOOL_RULE_HOOK_VERIFY`) are absent. This is this plugin's `no_match`, never a
 native permission `allow`; other hooks and native permissions still apply. This
@@ -150,8 +228,9 @@ codex plugin add tool-rule-hook@tool-rule-hook-local --json
 These **write the actual user Codex configuration and plugin cache**, enable the
 plugin at user scope and can affect other sessions through configuration refresh.
 They are not performed by the exporter and are not a zero-user-write test path.
-Loaded/trusted plugins can run in other processes at that scope; those processes
-use the unselected `optional-hook` behavior above unless a selection variable is present.
+Loaded/trusted plugins can run in other processes at that scope; the new Codex
+entry uses the native session store above, while Claude's process entry uses
+the unselected `optional-hook` behavior unless a selection variable is present.
 They require appropriate installation authority and native trust review. Do not
 change `CODEX_HOME`, copy credentials or edit trust to bypass those boundaries.
 After stopping this plugin's test work, operator-run `codex plugin remove
