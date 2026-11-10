@@ -157,6 +157,14 @@ fn session_identity(
     if input[field].as_str() != Some(&session) {
         return Err("native tool session mismatch".into());
     }
+    event_identity(expected, input, bridge, require_event_instance)
+}
+fn event_identity(
+    expected: &feedback::Context,
+    input: &Value,
+    bridge: bool,
+    require_event_instance: bool,
+) -> Result<()> {
     if expected.registration.agent == AgentKind::Codex
         && input.get("agent_id").is_some_and(|id| !id.is_null())
     {

@@ -114,6 +114,14 @@ fn verifier_preserves_role_instance_session_and_agent_checks() {
         );
         changed = envelope;
         if kind == AgentKind::Codex {
+            let mut root = changed.clone();
+            root["input"]["agent_id"] = Value::Null;
+            assert!(
+                fixture
+                    .invoke(&["tool-policy", "verify"], &root, &fixture.context.instance)
+                    .status
+                    .success()
+            );
             let mut child = changed.clone();
             child["input"]["agent_id"] = json!("native-child-in-same-session-tree");
             let rejected = fixture.invoke(
@@ -125,16 +133,16 @@ fn verifier_preserves_role_instance_session_and_agent_checks() {
             assert!(String::from_utf8_lossy(&rejected.stderr).contains("child caller"));
         }
         changed["bridge"] = json!(!bridge);
-        assert!(
-            !fixture
-                .invoke(
-                    &["tool-policy", "verify"],
-                    &changed,
-                    &fixture.context.instance
-                )
-                .status
-                .success()
+        // Both native ID fields match, so mode rejection cannot be masked by a missing ID.
+        changed["input"]["session_id"] = json!("native-main");
+        changed["input"]["sessionID"] = json!("native-main");
+        let rejected = fixture.invoke(
+            &["tool-policy", "verify"],
+            &changed,
+            &fixture.context.instance,
         );
+        assert!(!rejected.status.success());
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("agent kind mismatch"));
     }
 }
 #[test]
