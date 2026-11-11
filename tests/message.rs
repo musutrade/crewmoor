@@ -2,6 +2,8 @@
 mod agents;
 #[path = "support/message_constraint.rs"]
 mod message_constraint;
+#[path = "support/running_team.rs"]
+mod running_team;
 use crewmoor::{
     config::AgentKind,
     config::Runtime,
@@ -24,7 +26,7 @@ impl Fixture {
         let listener = UnixListener::bind(&socket).unwrap();
         let dispatcher = register(dir.path(), "dispatcher", AgentKind::Codex, Some("codex-1"));
         let worker = register(dir.path(), "worker", AgentKind::Claude, Some("claude-1"));
-        let config = Config {
+        let mut config = Config {
             runtime: Runtime::Tui,
             core_id: None,
             core_version: None,
@@ -32,6 +34,7 @@ impl Fixture {
             socket,
             feedback_registry: dir.path().into(),
             worker_constraint: None,
+            team_config: None,
             dispatcher: Peer {
                 agent_executable: Some(agents::EXECUTABLE.into()),
                 instance: dispatcher,
@@ -43,6 +46,7 @@ impl Fixture {
                 handle: "w1:p2".into(),
             },
         };
+        running_team::configure(&mut config, "message-test", "dispatcher", "worker");
         let agents = agents::Agents::spawn(dir.path(), &[("w1:p1", "codex"), ("w1:p2", "claude")]);
         let result = Self {
             dir,
@@ -161,7 +165,7 @@ fn ordinary_content_is_never_interpreted_as_a_feedback_view() {
         assert_eq!(
             submitted["args"][4],
             format!(
-                "{{\"team\":\"message-test\",\"message\":{}}}",
+                "{{\"team\":\"message-test\",\"recipient_constraints\":\"\",\"message\":{}}}",
                 serde_json::to_string(&message).unwrap()
             )
         );

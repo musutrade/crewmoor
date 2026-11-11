@@ -3,6 +3,8 @@ use crewmoor::{
     feedback::{self, Evidence, Registration},
     message::{Binding, Config, Native, Peer},
 };
+#[path = "../support/running_team.rs"]
+mod running_team;
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -30,7 +32,7 @@ impl Fixture {
             peer(dir.path(), "worker", "t1", AgentKind::Claude),
         ];
         let [dispatcher, worker] = peers;
-        let config = Config {
+        let mut config = Config {
             runtime: Runtime::Core,
             core_id: Some("test-core".into()),
             core_version: Some("0.1.15".into()),
@@ -38,9 +40,11 @@ impl Fixture {
             socket: dir.path().join("core.sock"),
             feedback_registry: dir.path().into(),
             worker_constraint: None,
+            team_config: None,
             dispatcher,
             worker,
         };
+        running_team::configure(&mut config, "core-message-test", "dispatcher", "worker");
         let state = Arc::new(Mutex::new(json!({"core_id":"test-core","version":"0.1.15",
             "t0":terminal(dir.path(),"t0",children[0].id()),"t1":terminal(dir.path(),"t1",children[1].id())})));
         let calls = Arc::new(Mutex::new(Vec::new()));
@@ -162,14 +166,6 @@ fn respond(request: &Value, state: &mut Value) -> Option<Value> {
     Some(json!({"jsonrpc":"2.0","id":1,"result":result}))
 }
 fn send_result(state: &mut Value) -> Option<Value> {
-    if state["mode"] == "block-second" {
-        let count = state["send_count"].as_u64().unwrap_or(0) + 1;
-        state["send_count"] = json!(count);
-        if count == 2 {
-            return Some(json!({"jsonrpc":"2.0","id":1,"error":{"code":-32000,
-                "message":"constraint native rejection","data":{"kind":"blocked"}}}));
-        }
-    }
     match state["mode"].as_str().unwrap_or("") {
         "lost" => None,
         "blocked" => Some(json!({"jsonrpc":"2.0","id":1,"error":{"code":-32000,

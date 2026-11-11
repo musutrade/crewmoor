@@ -26,5 +26,6 @@ cwd = "/absolute/project"
 agent = "codex"
 agent_args = ["--no-alt-screen"]
 initial_prompt = "You are the worker. Wait for a crewmoor team assignment."
-# Optional independent bound-downlink reminder; generated verbatim, never startup text.
+# Optional receiving-role constraint; generated verbatim, never startup text.
+# Included in the same envelope addressed to this role; edit running team.json via team constraint.
 # message_constraint = "Use the verification scope agreed for the current task."

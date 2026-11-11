@@ -1,284 +1,396 @@
 use super::{Binding, Config, Fixture, Message, Native, Value, json, message, request};
-use crewmoor::{Result, message::Transport};
-use std::sync::{
-    Barrier, Mutex,
-    atomic::{AtomicBool, Ordering},
+use crewmoor::{Result, message::Transport, team::update_constraint};
+use std::{
+    fs,
+    process::Command,
+    sync::{Barrier, Mutex},
 };
 
 struct Controlled {
     prompts: Mutex<Vec<Value>>,
     mode: &'static str,
-    changed: AtomicBool,
-    barrier: Option<Barrier>,
 }
 impl Controlled {
     fn new(mode: &'static str) -> Self {
         Self {
             prompts: Mutex::new(Vec::new()),
             mode,
-            changed: AtomicBool::new(false),
-            barrier: None,
         }
     }
     fn count(&self) -> usize {
         self.prompts.lock().unwrap().len()
     }
-    fn prompt(&self, config: &Config, args: &[String]) -> Result<Value> {
-        let envelope: Value = serde_json::from_str(&args[3]).unwrap();
-        self.prompts.lock().unwrap().push(envelope.clone());
-        let nth = self.count();
-        match (self.mode, nth) {
-            ("a-failed", 1) | ("b-failed", 2) => return Err(message::NotStarted.into()),
-            ("a-unknown", 1) | ("b-unknown", 2) => return Err("synthetic lost response".into()),
-            _ => {}
-        }
-        let mut result = Native.call(config, args);
-        if self.mode == "b-post-session" && nth == 2 {
-            result.as_mut().unwrap()["agent"]["agent_session"]["value"] = json!("changed");
-        }
-        if self.mode == "b-interrupt" && nth == 2 {
-            panic!("controlled interruption after B native submission, before outcome recording");
-        }
-        if envelope["message"]["reply_to"].is_null()
-            && let Some(barrier) = &self.barrier
-        {
-            barrier.wait();
-        }
-        result
-    }
-    fn change(&self, config: &Config) {
-        if self.mode == "interrupt" {
-            panic!("controlled interruption after A acceptance and before B submission");
-        }
-        let path = config.socket.with_extension("json");
-        let mut state: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        match self.mode {
-            "session" => state["w1:p2"]["agent_session"]["value"] = json!("changed"),
-            "location" => state["w1:p2"]["terminal_id"] = json!("changed"),
-            "process" => state["processes"]["w1:p2"] = json!([]),
-            "socket" => {
-                std::fs::rename(&config.socket, config.socket.with_extension("old")).unwrap();
-                let _replacement = std::os::unix::net::UnixListener::bind(&config.socket).unwrap();
-            }
-            _ => {}
-        }
-        std::fs::write(path, state.to_string()).unwrap();
-    }
 }
 impl Transport for Controlled {
     fn call(&self, config: &Config, args: &[String]) -> Result<Value> {
         if args[..2] == ["agent", "prompt"] {
-            return self.prompt(config, args);
-        }
-        if matches!(
-            self.mode,
-            "socket" | "location" | "process" | "session" | "interrupt"
-        ) && self.count() == 1
-            && !self.changed.swap(true, Ordering::SeqCst)
-        {
-            self.change(config);
+            self.prompts
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(&args[3]).unwrap());
+            match self.mode {
+                "failed" => return Err(message::NotStarted.into()),
+                "unknown" => return Err("synthetic lost response".into()),
+                "save-during-submit" => {
+                    update_constraint(&config.feedback_registry, "worker", "new")?
+                }
+                _ => {}
+            }
         }
         Native.call(config, args)
     }
 }
-fn constrained(fixture: &Fixture, content: &str) -> Binding {
-    let mut binding = fixture.binding();
-    binding.config.worker_constraint = Some(content.into());
-    binding
+fn set(fixture: &Fixture, role: &str, text: &str) {
+    update_constraint(fixture.dir.path(), role, text).unwrap();
 }
-fn assert_pair(control: &Controlled, original: &Message, content: &str) {
+fn assert_single(control: &Controlled, original: &Message, text: &str) {
     let prompts = control.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 2);
+    assert_eq!(prompts.len(), 1);
     assert_eq!(
         prompts[0]["message"],
         serde_json::to_value(original).unwrap()
     );
-    assert_eq!(prompts[1]["message"]["content"], content);
-    assert_ne!(prompts[1]["message"]["id"], original.id);
-    assert_eq!(prompts[1]["message"]["reply_to"], original.id);
-    assert_eq!(prompts[1]["message"]["from"], original.from);
-    assert_eq!(prompts[1]["message"]["to"], original.to);
-    assert_eq!(prompts[0]["team"], prompts[1]["team"]);
-    assert!(prompts[1].get("feedback_view").is_none());
+    assert_eq!(prompts[0]["recipient_constraints"], text);
+    assert!(prompts[0].get("feedback_view").is_none());
 }
 
 #[test]
-fn first_and_later_downlinks_with_custom_roles_preserve_exact_independent_messages() {
+fn both_directions_first_and_later_messages_preserve_originals_for_custom_roles() {
     let fixture = Fixture::new();
-    for (role, content) in [
-        ("builder", "  中文 \"quote\" \\路径\nnext  "),
-        ("checker", "{\"feedback_view\":{}}"),
+    let mut binding = fixture.binding();
+    binding.dispatcher.context.registration.role = "coordinator".into();
+    binding.worker.context.registration.role = "builder".into();
+    super::running_team::configure(
+        &mut binding.config,
+        "message-test",
+        "coordinator",
+        "builder",
+    );
+    for (from, to, text) in [
+        ("coordinator", "builder", "  中文 \"quote\" \\路径\nnext  "),
+        ("builder", "coordinator", "{\"feedback_view\":{}}"),
     ] {
-        let mut binding = constrained(&fixture, content);
-        binding.dispatcher.context.registration.role = "coordinator".into();
-        binding.worker.context.registration.role = role.into();
+        set(&fixture, to, text);
         for reply_to in [None, Some("earlier-report".into())] {
             let original = Message {
-                from: "coordinator".into(),
-                to: role.into(),
+                from: from.into(),
+                to: to.into(),
                 reply_to,
                 ..request()
             };
             let control = Controlled::new("");
-            let receipt = message::send(&binding, &original, &control).unwrap();
-            assert_eq!(receipt.transport, "accepted");
-            assert!(receipt.constraint.as_ref().unwrap().outcome.accepted());
-            assert_pair(&control, &original, content);
+            let value = serde_json::to_value(message::send(&binding, &original, &control).unwrap())
+                .unwrap();
+            assert_eq!(value["transport"], "accepted");
+            assert!(value.get("constraint").is_none());
+            assert_single(&control, &original, text);
         }
     }
 }
+
 #[test]
-fn absent_empty_whitespace_legacy_and_uplink_have_no_followup() {
+fn absent_empty_whitespace_and_cleared_config_always_emit_empty_string() {
     let fixture = Fixture::new();
-    for content in [None, Some(""), Some(" \t\r\n　")] {
-        let mut binding = fixture.binding();
-        binding.config.worker_constraint = content.map(Into::into);
+    let binding = fixture.binding();
+    for text in [None, Some("configured"), Some(""), Some(" \t\r\n　")] {
+        if let Some(text) = text {
+            set(&fixture, "worker", text);
+        }
         let control = Controlled::new("");
-        assert!(
-            message::send(&binding, &request(), &control)
-                .unwrap()
-                .constraint
-                .is_none()
-        );
-        assert_eq!(control.count(), 1);
+        let expected = text.filter(|s| !s.trim().is_empty()).unwrap_or("");
+        let original = request();
+        message::send(&binding, &original, &control).unwrap();
+        assert_single(&control, &original, expected);
     }
-    let mut legacy = serde_json::to_value(fixture.binding()).unwrap();
-    legacy["config"]
-        .as_object_mut()
-        .unwrap()
-        .remove("worker_constraint");
-    let binding: Binding = serde_json::from_value(legacy).unwrap();
-    assert!(binding.config.worker_constraint.is_none());
-    let mut binding = constrained(&fixture, "downlink only");
-    // Even an invalid unused downlink reminder must not affect the worker's report/halt.
-    binding.config.worker_constraint = Some("x".repeat(16_385));
-    let original = Message {
+}
+
+#[test]
+fn one_config_read_per_submission_and_next_send_sees_saved_value_without_rebind() {
+    let fixture = Fixture::new();
+    let binding = fixture.binding();
+    set(&fixture, "worker", "old");
+    set(&fixture, "dispatcher", "unchanged");
+    let original = request();
+    let control = Controlled::new("save-during-submit");
+    message::send(&binding, &original, &control).unwrap();
+    assert_single(&control, &original, "old");
+    let control = Controlled::new("");
+    message::send(&binding, &original, &control).unwrap();
+    assert_single(&control, &original, "new");
+    let reply = Message {
         from: "worker".into(),
         to: "dispatcher".into(),
         ..request()
     };
-    let control = Controlled::new("");
-    assert!(
-        message::send(&binding, &original, &control)
-            .unwrap()
-            .constraint
-            .is_none()
-    );
-    assert!(
-        message::send_halt_to_dispatcher(&binding, &original, &control)
-            .unwrap()
-            .constraint
-            .is_none()
-    );
-    assert_eq!(control.count(), 2);
+    let receipt = message::send(&binding, &reply, &Native).unwrap();
+    assert_eq!(receipt.envelope.recipient_constraints, "unchanged");
 }
+
 #[test]
-fn each_body_has_its_own_utf8_limit_and_config_errors_precede_a() {
+fn source_errors_never_fall_back_to_legacy_snapshot_or_submit_business() {
     let fixture = Fixture::new();
+    let mut binding = fixture.binding();
+    binding.config.worker_constraint = Some("obsolete snapshot".into());
+    let path = binding.config.team_config.clone().unwrap();
+    let valid: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for field in [
+        "team",
+        "dispatcher",
+        "runtime",
+        "feedback_registry",
+        "missing-role",
+        "duplicate-role",
+        "oversize",
+    ] {
+        let mut document = valid.clone();
+        match field {
+            "missing-role" => {
+                document["roles"].as_array_mut().unwrap().pop();
+            }
+            "duplicate-role" => {
+                document["roles"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(valid["roles"][1].clone());
+            }
+            "oversize" => document["roles"][1]["message_constraint"] = json!("x".repeat(16_385)),
+            "runtime" => document[field] = json!("core"),
+            _ => document[field] = json!("wrong"),
+        }
+        fs::write(&path, document.to_string()).unwrap();
+        let control = Controlled::new("");
+        assert!(
+            message::send(&binding, &request(), &control).is_err(),
+            "{field}"
+        );
+        assert_eq!(control.count(), 0);
+    }
+    for bytes in [b"{".as_slice(), b"null".as_slice()] {
+        fs::write(&path, bytes).unwrap();
+        let control = Controlled::new("");
+        assert!(message::send(&binding, &request(), &control).is_err());
+        assert_eq!(control.count(), 0);
+    }
+    fs::remove_file(path).unwrap();
+    let control = Controlled::new("");
+    assert!(message::send(&binding, &request(), &control).is_err());
+    assert_eq!(control.count(), 0);
+    binding.config.team_config = Some(fixture.dir.path().into());
+    assert!(message::send(&binding, &request(), &control).is_err());
+    assert_eq!(control.count(), 0);
+    binding.config.team_config = None;
+    let error = message::send(&binding, &request(), &control)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("message source BINDING TEAM_DIR"));
+    assert_eq!(control.count(), 0);
+}
+
+#[test]
+fn source_cli_only_adds_source_preserving_sessions_routes_and_legacy_text() {
+    let fixture = Fixture::new();
+    let mut binding = fixture.binding();
+    set(&fixture, "worker", "current");
+    binding.config.team_config = None;
+    binding.config.worker_constraint = Some("old snapshot".into());
+    let before = serde_json::to_value(&binding).unwrap();
+    let path = fixture.dir.path().join("legacy.json");
+    fs::write(&path, before.to_string()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "message",
+            "source",
+            path.to_str().unwrap(),
+            fixture.dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let binding: Binding = serde_json::from_value(after.clone()).unwrap();
+    after["config"]
+        .as_object_mut()
+        .unwrap()
+        .remove("team_config");
+    assert_eq!(after, before);
+    let original = request();
+    let receipt = message::send(&binding, &original, &Native).unwrap();
+    assert_eq!(receipt.envelope.recipient_constraints, "current");
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "message",
+            "source",
+            path.to_str().unwrap(),
+            fixture.dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
+fn utf8_body_and_constraint_limits_are_independent_and_validated_before_submit() {
+    let fixture = Fixture::new();
+    let binding = fixture.binding();
     for text in ["x".repeat(16_384), format!("{}x", "中".repeat(5461))] {
-        let binding = constrained(&fixture, &text);
+        set(&fixture, "worker", &text);
         let original = Message {
             content: text.clone(),
             ..request()
         };
         let control = Controlled::new("");
         message::send(&binding, &original, &control).unwrap();
-        assert_pair(&control, &original, &text);
+        assert_single(&control, &original, &text);
     }
     for text in ["x".repeat(16_385), "中".repeat(5462)] {
-        for invalid_b in [false, true] {
-            let binding = constrained(&fixture, if invalid_b { &text } else { "valid" });
-            let original = Message {
-                content: if invalid_b {
-                    "valid".into()
-                } else {
-                    text.clone()
-                },
-                ..request()
-            };
-            let control = Controlled::new("");
-            assert!(message::send(&binding, &original, &control).is_err());
-            assert_eq!(control.count(), 0);
+        let before = fs::read(binding.config.team_config.as_ref().unwrap()).unwrap();
+        assert!(update_constraint(fixture.dir.path(), "worker", &text).is_err());
+        assert_eq!(
+            fs::read(binding.config.team_config.as_ref().unwrap()).unwrap(),
+            before
+        );
+        let original = Message {
+            content: text,
+            ..request()
+        };
+        let control = Controlled::new("");
+        assert!(message::send(&binding, &original, &control).is_err());
+        assert_eq!(control.count(), 0);
+    }
+}
+
+#[test]
+fn constraint_cli_saves_utf8_text_and_rejects_invalid_edits_without_changing_config() {
+    let fixture = Fixture::new();
+    let path = fixture.config.team_config.as_ref().unwrap();
+    let before: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let text = "  中文 \"text\" \\path\nsecond  ";
+    let input = fixture.dir.path().join("text.txt");
+    fs::write(&input, text).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "team",
+            "constraint",
+            fixture.dir.path().to_str().unwrap(),
+            "worker",
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut after: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(after["roles"][1]["message_constraint"], text);
+    after["roles"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("message_constraint");
+    assert_eq!(after, before);
+    let saved = fs::read(path).unwrap();
+    assert!(update_constraint(fixture.dir.path(), "missing", "text").is_err());
+    assert_eq!(fs::read(path).unwrap(), saved);
+    fs::write(&input, "x".repeat(16_385)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
+        .args([
+            "team",
+            "constraint",
+            fixture.dir.path().to_str().unwrap(),
+            "worker",
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(fs::read(path).unwrap(), saved);
+}
+
+#[test]
+fn native_failed_unknown_and_accepted_are_single_submission_without_followup_or_retry() {
+    let fixture = Fixture::new();
+    let binding = fixture.binding();
+    set(&fixture, "worker", "constraint");
+    for mode in ["failed", "unknown", ""] {
+        let control = Controlled::new(mode);
+        let original = request();
+        let result = message::send(&binding, &original, &control);
+        match mode {
+            "failed" => assert!(result.unwrap_err().is::<message::NotStarted>()),
+            "unknown" => assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .starts_with(message::SUBMISSION_UNCONFIRMED)
+            ),
+            _ => assert_eq!(result.unwrap().transport, "accepted"),
         }
-        let mut config = serde_json::to_value(&fixture.config).unwrap();
-        config["worker_constraint"] = json!(text);
-        assert!(Binding::bind(serde_json::from_value(config).unwrap(), &Native).is_err());
+        assert_single(&control, &original, "constraint");
     }
 }
+
+#[cfg(target_os = "linux")]
 #[test]
-fn a_failure_or_uncertainty_stops_and_b_failure_retains_a_without_retry() {
+fn json_expansion_is_checked_against_final_tui_argument_limit_before_submit() {
     let fixture = Fixture::new();
-    let binding = constrained(&fixture, "reminder");
-    for mode in ["a-failed", "a-unknown"] {
-        let control = Controlled::new(mode);
-        assert!(message::send(&binding, &request(), &control).is_err());
-        assert_eq!(control.count(), 1);
-    }
-    for (mode, status) in [
-        ("b-failed", "failed"),
-        ("b-unknown", "unknown"),
-        ("b-post-session", "unknown"),
-    ] {
-        let control = Controlled::new(mode);
-        let original = request();
-        let receipt = message::send(&binding, &original, &control).unwrap();
-        let value = serde_json::to_value(receipt).unwrap();
-        assert_eq!(value["transport"], "accepted");
-        assert_eq!(value["constraint"]["transport"], status);
-        assert!(value["constraint"]["error"].is_string());
-        assert_pair(&control, &original, "reminder");
-    }
-}
-#[test]
-fn b_rechecks_socket_location_process_and_session_without_redirecting() {
-    for mode in ["socket", "location", "process", "session"] {
-        let fixture = Fixture::new();
-        let binding = constrained(&fixture, "reminder");
-        let control = Controlled::new(mode);
-        let original = request();
-        let value =
-            serde_json::to_value(message::send(&binding, &original, &control).unwrap()).unwrap();
-        assert_eq!(value["transport"], "accepted", "{mode}");
-        assert_eq!(value["constraint"]["transport"], "failed", "{mode}");
+    let binding = fixture.binding();
+    // Both raw fields are legal, but JSON encodes each byte as six ASCII bytes.
+    let text = "\u{0001}".repeat(16_384);
+    set(&fixture, "worker", &text);
+    let original = Message {
+        content: text,
+        ..request()
+    };
+    let control = Controlled::new("");
+    let result = message::send(&binding, &original, &control);
+    let limit = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize * 32;
+    if 16_384 * 12 > limit {
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("single-argument limit")
+        );
+        assert_eq!(control.count(), 0);
+    } else {
+        assert!(result.is_ok());
         assert_eq!(control.count(), 1);
     }
 }
+
 #[test]
-fn interruption_does_not_report_b_and_concurrent_calls_may_interleave() {
+fn atomic_constraint_saves_preserve_other_fields_and_concurrent_sends_read_whole_versions() {
     let fixture = Fixture::new();
-    let binding = constrained(&fixture, "reminder");
-    for (mode, attempts) in [("interrupt", 1), ("b-interrupt", 2)] {
-        let control = Controlled::new(mode);
-        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _receipt = message::send(&binding, &request(), &control);
-        }));
-        assert!(interrupted.is_err());
-        assert_eq!(control.count(), attempts);
-    }
-    let mut control = Controlled::new("");
-    control.barrier = Some(Barrier::new(2));
+    let binding = fixture.binding();
+    set(&fixture, "dispatcher", "preserved");
+    set(&fixture, "worker", "old");
+    let before: Value =
+        serde_json::from_slice(&fs::read(binding.config.team_config.as_ref().unwrap()).unwrap())
+            .unwrap();
+    let barrier = Barrier::new(2);
     std::thread::scope(|scope| {
-        let first = scope.spawn(|| {
-            message::send(&binding, &request(), &control)
-                .unwrap()
-                .transport
+        scope.spawn(|| {
+            barrier.wait();
+            for n in 0..32 {
+                set(&fixture, "worker", if n % 2 == 0 { "old" } else { "new" });
+            }
         });
-        let second = scope.spawn(|| {
-            let original = Message {
-                id: "request-concurrent".into(),
-                ..request()
-            };
-            message::send(&binding, &original, &control)
-                .unwrap()
-                .transport
-        });
-        assert_eq!(first.join().unwrap(), "accepted");
-        assert_eq!(second.join().unwrap(), "accepted");
+        barrier.wait();
+        for _ in 0..8 {
+            let original = request();
+            let receipt = message::send(&binding, &original, &Native).unwrap();
+            assert!(["old", "new"].contains(&receipt.envelope.recipient_constraints.as_str()));
+        }
     });
-    let prompts = control.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 4);
-    assert!(prompts[0]["message"]["reply_to"].is_null());
-    assert!(prompts[1]["message"]["reply_to"].is_null());
-    assert!(prompts[2]["message"]["reply_to"].is_string());
-    assert!(prompts[3]["message"]["reply_to"].is_string());
+    let mut after: Value =
+        serde_json::from_slice(&fs::read(binding.config.team_config.as_ref().unwrap()).unwrap())
+            .unwrap();
+    assert_eq!(after["roles"][1]["message_constraint"], "new");
+    after["roles"][1]["message_constraint"] = before["roles"][1]["message_constraint"].clone();
+    assert_eq!(after, before);
 }

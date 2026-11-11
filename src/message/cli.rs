@@ -6,7 +6,8 @@ pub fn cli(args: &[String]) -> Result<()> {
     match args {
         [cmd, config, binding] if cmd == "bind" => bind(config, binding),
         [cmd, binding, message] if cmd == "send" => send(binding, message),
-        _ => Err("usage: crewmoor message bind CONFIG NEW_BINDING | send BINDING MESSAGE".into()),
+        [cmd, binding, dir] if cmd == "source" => source(binding, dir),
+        _ => Err("usage: crewmoor message bind CONFIG NEW_BINDING | send BINDING MESSAGE | source BINDING TEAM_DIR".into()),
     }
 }
 fn bind(config: &str, binding: &str) -> Result<()> {
@@ -21,15 +22,26 @@ fn send(binding: &str, message: &str) -> Result<()> {
     let binding: Binding = serde_json::from_slice(&fs::read(binding)?)?;
     let message: Message = serde_json::from_slice(&fs::read(message)?)?;
     let receipt = super::send(&binding, &message, &Native)?;
-    print(&receipt)?;
-    if receipt
-        .constraint
-        .as_ref()
-        .is_some_and(|b| !b.outcome.accepted())
-    {
-        return Err("business message accepted; constraint failed or unknown (see receipt); do not automatically resend either message".into());
-    }
-    Ok(())
+    print(&receipt)
+}
+fn source(path: &str, dir: &str) -> Result<()> {
+    let path = Path::new(path);
+    crate::config::absolute(path)?;
+    let mut document: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let mut binding: Binding = serde_json::from_value(document.clone())?;
+    binding.attach_source(Path::new(dir).join("team.json"))?;
+    document["config"]["team_config"] = serde_json::to_value(&binding.config.team_config)?;
+    replace_binding(path, &document)?;
+    print(&binding)
+}
+/// Persist the preserved binding document through the existing atomic replacement helper.
+fn replace_binding(path: &Path, document: &serde_json::Value) -> Result<()> {
+    let parent = path.parent().ok_or("binding parent missing")?;
+    let file = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("invalid binding filename")?;
+    crate::issue::replace(parent, file, &serde_json::to_vec_pretty(document)?)
 }
 fn print(value: &impl serde::Serialize) -> Result<()> {
     let encoded = serde_json::to_string_pretty(value)?;

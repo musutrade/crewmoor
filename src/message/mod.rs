@@ -2,13 +2,14 @@ mod binding;
 mod cli;
 mod constraint;
 mod core;
+#[cfg(target_os = "linux")]
+mod size;
 mod transport;
 mod tui;
 
 pub use binding::{Binding, Config, Member, Peer};
 pub use cli::cli;
 pub(crate) use constraint::validate as validate_constraint;
-pub use constraint::{ConstraintAttempt, ConstraintOutcome};
 pub use transport::{Bounded, Native, NotStarted, Transport};
 /// Prefix of every send error raised after the native prompt call was made.
 pub const SUBMISSION_UNCONFIRMED: &str = "message submission unconfirmed";
@@ -28,10 +29,21 @@ pub struct Message {
 #[derive(Debug, Serialize)]
 pub struct Envelope<'a> {
     pub team: &'a str,
+    /// Current running-team configuration for the bound receiving role.
+    pub recipient_constraints: String,
     /// Explicit feedback presentation; ordinary text is never inspected or decoded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feedback_view: Option<FeedbackView>,
     pub message: &'a Message,
+}
+impl Envelope<'_> {
+    fn encode(&self, compact: bool) -> Result<String> {
+        if self.feedback_view.is_some() && !compact {
+            Ok(serde_json::to_string_pretty(self)?)
+        } else {
+            Ok(serde_json::to_string(self)?)
+        }
+    }
 }
 #[derive(Debug, Serialize)]
 pub struct FeedbackView {
@@ -46,8 +58,6 @@ pub struct Receipt<'a> {
     pub native_turn: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_prompt: Option<crate::opencode::api::PromptReceipt>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub constraint: Option<ConstraintAttempt>,
 }
 impl Message {
     fn validate(&self) -> Result<()> {
@@ -66,18 +76,14 @@ impl Message {
         Ok(())
     }
 }
-/// Submit A unchanged, then attempt one configured downlink reminder after acceptance.
-/// `Ok` preserves A's acceptance on partial success: inspect `receipt.constraint` for B.
+/// Submit one envelope with the unchanged business message and current recipient constraints.
 pub fn send<'a>(
     binding: &'a Binding,
     message: &'a Message,
     transport: &impl Transport,
 ) -> Result<Receipt<'a>> {
-    let constraint = constraint::prepare(binding, message)?;
     let recipient = route(binding, message, transport)?;
-    let mut receipt = do_send(binding, recipient, message, None, true, transport)?;
-    receipt.constraint = constraint.map(|message| constraint::attempt(binding, message, transport));
-    Ok(receipt)
+    do_send(binding, recipient, message, None, true, transport)
 }
 /// Send a halt notification to the dispatcher only.
 /// Skips the sender session check because the worker has a rejected session after `/clear`.
@@ -169,16 +175,17 @@ fn do_send<'a>(
 ) -> Result<Receipt<'a>> {
     let envelope = Envelope {
         team: &binding.team,
+        recipient_constraints: constraint::recipient(binding, &message.to)?,
         feedback_view,
         message,
     };
-    let text = if envelope.feedback_view.is_some() && !compact {
-        serde_json::to_string_pretty(&envelope)?
-    } else {
-        serde_json::to_string(&envelope)?
-    };
+    let text = envelope.encode(compact)?;
     if recipient.context.registration.agent == crate::config::AgentKind::OpenCode {
         return send_opencode(binding, recipient, envelope, &text, transport);
+    }
+    #[cfg(target_os = "linux")]
+    if binding.config.runtime == crate::config::Runtime::Tui {
+        size::linux_argument(&text)?;
     }
     let args = match binding.config.runtime {
         crate::config::Runtime::Tui => strings(&["agent", "prompt", &recipient.handle, &text]),
@@ -191,7 +198,6 @@ fn do_send<'a>(
         transport: "accepted",
         native_turn,
         native_prompt: None,
-        constraint: None,
     })
 }
 fn send_opencode<'a>(
@@ -223,7 +229,6 @@ fn send_opencode<'a>(
         transport: "accepted",
         native_turn: None,
         native_prompt: Some(verified),
-        constraint: None,
     })
 }
 fn submission(

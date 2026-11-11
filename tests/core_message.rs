@@ -54,20 +54,26 @@ fn native_socket_protocol_delivers_both_directions_without_cli_autostart_or_stat
 }
 
 #[test]
-fn core_cli_and_public_entry_submit_two_independent_turns_for_downlinks() {
-    let mut fixture = Fixture::new();
-    fixture.config.worker_constraint = Some("  core 约束\n\\path  ".into());
+fn core_cli_and_public_entry_each_submit_one_envelope_with_current_receiver_constraints() {
+    let fixture = Fixture::new();
+    crewmoor::team::update_constraint(fixture.dir.path(), "worker", "  core 约束\n\\path  ")
+        .unwrap();
+    crewmoor::team::update_constraint(fixture.dir.path(), "dispatcher", "dispatch only").unwrap();
     let binding = fixture.bind();
     let original = request();
     let receipt = message::send(&binding, &original, &Native).unwrap();
     let value = serde_json::to_value(receipt).unwrap();
     assert_eq!(value["native_turn"], 0);
-    assert_eq!(value["constraint"]["native_turn"], 0);
-    assert_eq!(value["constraint"]["transport"], "accepted");
+    assert_eq!(
+        value["envelope"]["recipient_constraints"],
+        "  core 约束\n\\path  "
+    );
+    assert!(value.get("constraint").is_none());
     let binding_path = fixture.dir.path().join("binding.json");
     let message_path = fixture.dir.path().join("message.json");
     fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
     fs::write(&message_path, serde_json::to_vec(&original).unwrap()).unwrap();
+    crewmoor::team::update_constraint(fixture.dir.path(), "worker", "new value").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_crewmoor"))
         .args([
             "message",
@@ -77,30 +83,37 @@ fn core_cli_and_public_entry_submit_two_independent_turns_for_downlinks() {
         ])
         .output()
         .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["constraint"]["transport"], "accepted");
-    let sends = fixture.sends();
-    assert_eq!(sends.len(), 4);
-    assert!(sends.iter().all(|send| send["terminal"] == "t1"));
-    let envelopes: Vec<serde_json::Value> = sends
-        .iter()
-        .map(|send| serde_json::from_str(send["text"].as_str().unwrap()).unwrap())
-        .collect();
-    assert_eq!(
-        envelopes[0]["message"],
-        serde_json::to_value(original).unwrap()
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(envelopes[1]["message"]["content"], "  core 约束\n\\path  ");
-    assert_ne!(envelopes[0]["message"]["id"], envelopes[1]["message"]["id"]);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["envelope"]["recipient_constraints"], "new value");
+    assert!(value.get("constraint").is_none());
+    let reply = Message {
+        from: "worker".into(),
+        to: "dispatcher".into(),
+        ..request()
+    };
+    let receipt = message::send(&binding, &reply, &Native).unwrap();
+    assert_eq!(receipt.envelope.recipient_constraints, "dispatch only");
+    let sends = fixture.sends();
+    assert_eq!(sends.len(), 3);
+    assert_eq!(sends[0]["terminal"], "t1");
+    assert_eq!(sends[1]["terminal"], "t1");
+    assert_eq!(sends[2]["terminal"], "t0");
+    let first: serde_json::Value =
+        serde_json::from_str(sends[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(first["message"], serde_json::to_value(original).unwrap());
 }
 
 #[test]
-fn cli_partial_success_preserves_receipt_and_exits_nonzero_without_retry() {
-    let mut fixture = Fixture::new();
-    fixture.config.worker_constraint = Some("reminder".into());
+fn cli_unknown_submission_has_no_accepted_or_constraint_receipt_and_never_retries() {
+    let fixture = Fixture::new();
+    crewmoor::team::update_constraint(fixture.dir.path(), "worker", "constraint").unwrap();
     let binding = fixture.bind();
-    fixture.state.lock().unwrap()["mode"] = json!("block-second");
+    fixture.state.lock().unwrap()["mode"] = json!("lost");
     let binding_path = fixture.dir.path().join("binding.json");
     let message_path = fixture.dir.path().join("message.json");
     fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
@@ -115,22 +128,19 @@ fn cli_partial_success_preserves_receipt_and_exits_nonzero_without_retry() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["transport"], "accepted");
-    assert_eq!(value["constraint"]["transport"], "unknown");
-    assert!(
-        value["constraint"]["error"]
-            .as_str()
-            .unwrap()
-            .contains("constraint native rejection")
-    );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("business message accepted"));
-    assert_eq!(fixture.sends().len(), 2);
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("submission unconfirmed"));
+    assert_eq!(fixture.sends().len(), 1);
 }
 #[test]
 fn core_forwards_readable_hook_and_authored_report_with_unchanged_send_parameters() {
-    let mut fixture = Fixture::new();
-    fixture.config.worker_constraint = Some("must not follow feedback".into());
+    let fixture = Fixture::new();
+    crewmoor::team::update_constraint(
+        fixture.dir.path(),
+        "dispatcher",
+        "dispatcher feedback constraint",
+    )
+    .unwrap();
     let binding = fixture.bind();
     let binding_path = fixture.dir.path().join("binding.json");
     fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
@@ -169,7 +179,7 @@ fn core_forwards_readable_hook_and_authored_report_with_unchanged_send_parameter
 }
 
 #[test]
-fn core_custom_receiver_roles_each_use_their_own_snapshot_for_codex_and_claude() {
+fn core_custom_receiver_roles_use_current_constraints_for_codex_and_claude() {
     for (role, kind, content) in [
         (
             "builder",
@@ -197,15 +207,19 @@ fn core_custom_receiver_roles_each_use_their_own_snapshot_for_codex_and_claude()
             crewmoor::feedback::register(fixture.dir.path(), registration)
                 .unwrap()
                 .instance;
-        fixture.config.worker_constraint = Some(content.into());
+        let path = fixture.config.team_config.as_ref().unwrap();
+        let mut team: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        team["roles"][1]["role"] = json!(role);
+        fs::write(path, team.to_string()).unwrap();
+        crewmoor::team::update_constraint(fixture.dir.path(), role, content).unwrap();
         let binding = fixture.bind();
         let original = Message {
             to: role.into(),
             ..request()
         };
         let receipt = message::send(&binding, &original, &Native).unwrap();
-        assert_eq!(receipt.constraint.unwrap().message.content, content);
-        assert_eq!(fixture.sends().len(), 2);
+        assert_eq!(receipt.envelope.recipient_constraints, content);
+        assert_eq!(fixture.sends().len(), 1);
     }
 }
 fn assert_readable_core_feedback(send: &serde_json::Value, event: &str) {
@@ -222,6 +236,10 @@ fn assert_readable_core_feedback(send: &serde_json::Value, event: &str) {
     let wire: serde_json::Value = serde_json::from_str(text).unwrap();
     let legacy: serde_json::Value =
         serde_json::from_str(wire["message"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        wire["recipient_constraints"],
+        "dispatcher feedback constraint"
+    );
     assert_eq!(wire["feedback_view"]["version"], 1);
     assert_eq!(wire["feedback_view"]["fact"], legacy);
     assert_eq!(legacy["record"]["event"], event);

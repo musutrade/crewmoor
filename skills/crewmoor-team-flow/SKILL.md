@@ -82,6 +82,14 @@ Agent 实际收到、guard 调用及配置生效；不能确认的事实报 unkn
 回复使用新 `id`，`reply_to` 保持原请求 ID。CLI 检查标识符格式及其不等于自己的
 `id`，不维护消息历史或自动核实关联；正确关联由 Agent/本技能负责。
 
+接收 Envelope 的 `recipient_constraints` 与 `team`、`message` 同级，是 CrewMoor
+本次从运行 `TEAM_DIR/team.json` 按接收角色读取的约束原文；未配置时为空字符串。
+正文和约束只有一次原生提交，不再另发约束 B。发送文件仍只填写业务 Message，
+不自行填写该字段。纠正配置使用 `crewmoor team constraint TEAM_DIR ROLE TEXT_FILE`
+原子保存；修改初始化 TOML 不影响运行团队。旧 binding 缺来源时使用
+`crewmoor message source BINDING TEAM_DIR` 一次补齐，不重启或 rebind。
+字段不提高模型指令优先级，也不替代 Hook；受理、实际收件与遵守分别报告。
+
 `transport: accepted` 只代表原生发送受理，不等于接收、执行或完成。实际收件依靠
 接收方主动回报。结果不明时保存原请求与收据，报告一次，不自动重发。普通业务
 消息只走 `crewmoor message send`，不绕过它使用 `herdr agent prompt`、`hc send`
