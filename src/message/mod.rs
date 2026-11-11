@@ -36,6 +36,15 @@ pub struct Envelope<'a> {
     pub feedback_view: Option<FeedbackView>,
     pub message: &'a Message,
 }
+impl Envelope<'_> {
+    fn encode(&self, compact: bool) -> Result<String> {
+        if self.feedback_view.is_some() && !compact {
+            Ok(serde_json::to_string_pretty(self)?)
+        } else {
+            Ok(serde_json::to_string(self)?)
+        }
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct FeedbackView {
     pub version: u8,
@@ -170,11 +179,7 @@ fn do_send<'a>(
         feedback_view,
         message,
     };
-    let text = if envelope.feedback_view.is_some() && !compact {
-        serde_json::to_string_pretty(&envelope)?
-    } else {
-        serde_json::to_string(&envelope)?
-    };
+    let text = envelope.encode(compact)?;
     if recipient.context.registration.agent == crate::config::AgentKind::OpenCode {
         return send_opencode(binding, recipient, envelope, &text, transport);
     }
