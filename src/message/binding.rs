@@ -25,7 +25,10 @@ pub struct Config {
     pub runtime_binary: PathBuf,
     pub socket: PathBuf,
     pub feedback_registry: PathBuf,
-    /// Worker role configuration captured by team bind; no live configuration lookup.
+    /// Explicit running TEAM_DIR/team.json; missing in pre-#71 bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_config: Option<PathBuf>,
+    /// Legacy data only: retained when migrating, never used to compose a message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_constraint: Option<String>,
     pub dispatcher: Peer,
@@ -60,7 +63,9 @@ pub struct Binding {
 }
 impl Config {
     fn validate(&self) -> Result<()> {
-        super::validate_constraint(self.worker_constraint.as_deref())?;
+        if let Some(path) = &self.team_config {
+            crate::config::absolute(path)?;
+        }
         for path in [&self.runtime_binary, &self.socket, &self.feedback_registry] {
             crate::config::absolute(path)?;
         }
@@ -102,6 +107,15 @@ impl Peer {
     }
 }
 impl Binding {
+    /// Add the missing running-team source without recapturing native sessions or routes.
+    pub fn attach_source(&mut self, path: PathBuf) -> Result<()> {
+        if self.config.team_config.is_some() {
+            return Err("binding already has a running team configuration source".into());
+        }
+        super::constraint::load(self, &path)?;
+        self.config.team_config = Some(path);
+        Ok(())
+    }
     pub fn bind(mut config: Config, transport: &impl Transport) -> Result<Self> {
         config.validate()?;
         config.socket = config.socket.canonicalize()?;

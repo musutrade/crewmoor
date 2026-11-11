@@ -84,7 +84,7 @@ environment variable or discovery.
 
 | Path | Writer | Content |
 |---|---|---|
-| `team.json` | `team start` | Snapshot of the team configuration |
+| `team.json` | `team start` | Running team configuration; current message constraints |
 | `roles/<role>/context.json` | `team start` | The role's Issue #4 feedback context |
 | `roles/<role>/launch/record.json` | Issue #2 launch | Launch record: handle, admission, process facts |
 | `<team>.<role>.json` | Issue #2 launch | Owner binding of that role's launch record |
@@ -186,7 +186,7 @@ agent_executable = "/home/gem/.local/bin/codex"
 agent_version = "codex-cli 0.166.0"
 agent_args = ["--no-alt-screen"]
 initial_prompt = "You are the worker. Wait for a team message before acting."
-# Optional independent reminder after each accepted bound downlink; <=16384 UTF-8 bytes.
+# Optional receiving-role constraint in each envelope; <=16384 UTF-8 bytes.
 # Newlines are allowed; omit or use blank text to disable. Persisted, so no secrets.
 # message_constraint = "Use the verification scope agreed for the current task."
 ```
@@ -218,29 +218,38 @@ recorded; use `team stop` on the same directory.
 
 For independent execution-before-command role rules, see
 [`tool_policy`](tool-policy.md) and its generation template. It is opt-in per
-new role and uses native pre-tool entry points; message reminders do not provide
+new role and uses native pre-tool entry points; message constraints do not provide
 that mechanical control. Hook configuration is not proof of native loading,
 actual refusal or Agent receipt.
 
-### Optional bound message reminders with `message_constraint`
+### Recipient constraints with `message_constraint`
 
-Each role can configure `message_constraint`, independently of its startup
-`initial_prompt`. Generation preserves the original text, start saves it in
-`team.json`, and bind snapshots it into the worker pair's
-`config.worker_constraint`. Sending never reloads the source config or `team.json`.
-Old/omitted, empty or all-whitespace values add no message. A nonblank reminder
-uses the message channel's 16384 UTF-8 byte limit and may include newlines;
-it is validated before startup writes and before any business submission.
-It is not passed to the native startup command.
+Every role, including the dispatcher, can configure `message_constraint`
+independently of `initial_prompt`. Generation preserves the user text and start
+saves it in the running `TEAM_DIR/team.json`. Bind records that file's explicit
+source in `config.team_config`; it no longer snapshots a worker's constraint.
 
-After each accepted normal dispatcher-to-worker message A, the common send entry
-attempts exactly one independent B with the configured original text, a new id,
-the same bound destination and `reply_to: A.id`. A is unchanged. Worker reports,
-Hook feedback and halt notifications do not trigger it. See
-[message reminders](messages.md#optional-automatic-role-reminder) for receipts,
-partial success/unknown results and concurrency/interruption limits. Acceptance
-is not proof of receipt or enforcement. Configuration and receipts retain the
-text; do not include secrets.
+Each bound message reads the running configuration once, selects the receiving
+role's current text and includes it as `recipient_constraints` in the same
+Envelope as the unchanged business Message. There is one native submission;
+no independent reminder B or compatibility mode remains. Absent, empty and
+all-whitespace constraints produce an empty String. Nonblank text is retained
+verbatim with its 16384 UTF-8 byte limit. It never enters startup argv.
+
+To correct a running role's text without restart or rebind, save a UTF-8 text
+file and call `crewmoor team constraint TEAM_DIR ROLE TEXT_FILE`. This parses
+and validates before staging and atomically replacing `team.json` in the same
+directory, preserving unrelated configuration. Editing the TOML template does
+not update a running team. Concurrent sends see a complete old/new file; the
+next read after the save uses the new value. Already sent messages are unchanged.
+
+Old bindings missing the source use the one-time
+`crewmoor message source BINDING TEAM_DIR` migration, retaining native identities
+and routes. Legacy snapshot text is preserved as data but never used for sending.
+See [message constraints](messages.md#recipient-constraints-in-the-same-submission)
+for source errors, serialized limits, feedback preservation and single-message
+receipts. Native acceptance is not proof of Agent receipt or compliance, and
+constraints do not replace mechanical Hook rules.
 
 ### Optional initialization with `initial_prompt`
 

@@ -278,7 +278,7 @@ fn team_bind_needs_registered_sessions_then_binds_launched_resources_and_message
 }
 
 #[test]
-fn role_constraint_is_snapshotted_without_entering_startup_and_bound_once() {
+fn role_constraint_uses_running_config_without_entering_startup_or_rebinding() {
     let setup = Setup::new();
     let mut team = setup.team();
     let text = "  约束 \"原样\" \\path\n第二行  ";
@@ -297,12 +297,15 @@ fn role_constraint_is_snapshotted_without_entering_startup_and_bound_once() {
     team::bind(&setup.team_dir(), "worker", &Native).unwrap();
     let path = setup.team_dir().join("roles/worker/binding.json");
     let binding: Binding = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-    assert_eq!(binding.config.worker_constraint.as_deref(), Some(text));
+    assert!(binding.config.worker_constraint.is_none());
+    assert_eq!(
+        binding.config.team_config,
+        Some(setup.team_dir().join("team.json"))
+    );
     let snapshot_path = setup.team_dir().join("team.json");
-    let mut snapshot: Value = serde_json::from_slice(&fs::read(&snapshot_path).unwrap()).unwrap();
+    let snapshot: Value = serde_json::from_slice(&fs::read(&snapshot_path).unwrap()).unwrap();
     assert_eq!(snapshot["roles"][0]["message_constraint"], text);
-    snapshot["roles"][0]["message_constraint"] = json!("later edit");
-    fs::write(snapshot_path, snapshot.to_string()).unwrap();
+    team::update_constraint(&setup.team_dir(), "worker", "later edit").unwrap();
     let original = Message {
         id: "snapshot-request".into(),
         from: "lead".into(),
@@ -311,7 +314,7 @@ fn role_constraint_is_snapshotted_without_entering_startup_and_bound_once() {
         content: "A".into(),
     };
     let receipt = message::send(&binding, &original, &Native).unwrap();
-    assert_eq!(receipt.constraint.unwrap().message.content, text);
+    assert_eq!(receipt.envelope.recipient_constraints, "later edit");
 }
 
 #[test]

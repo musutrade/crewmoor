@@ -47,6 +47,7 @@ feedback instance UUIDs and exact returned pane handles:
   "runtime_binary": "/absolute/path/to/herdr",
   "socket": "/absolute/path/to/herdr.sock",
   "feedback_registry": "/absolute/feedback-registry",
+  "team_config": "/absolute/state/teams/sample/team.json",
   "dispatcher": {"instance": "DISPATCHER_FEEDBACK_UUID", "handle": "w1:p1"},
   "worker": {"instance": "WORKER_FEEDBACK_UUID", "handle": "w1:p2"}
 }
@@ -137,9 +138,9 @@ introduced. Neither terminal output nor Herdr detection state is interpreted
 as hooks state. Business progress and hooks retain their existing feedback
 entry and semantics.
 
-## Optional automatic role reminder
+## Recipient constraints in the same submission
 
-Configure `message_constraint` on a team role independently of `initial_prompt`:
+Configure `message_constraint` on any team role independently of `initial_prompt`:
 
 ```toml
 [[roles]]
@@ -149,80 +150,104 @@ message_constraint = """Use the task's agreed verification scope.
 Report the checks you actually ran."""
 ```
 
-The text is supplied by the user or authorized configuration; there is no default
-rule. `team generate` preserves it verbatim. `team start` saves it in `team.json`
-without including it in startup argv. `team bind` copies that worker's text into
-`binding.config.worker_constraint`. A direct `message bind` configuration can
-set the same optional `worker_constraint` field. Sends use this fixed snapshot;
-later edits to the original template, team config or `team.json` do not update an
-existing binding. No hot reload or automatic rebind is provided. Older templates,
-teams and bindings omit the field and retain single-message behavior.
+`team generate` preserves the user text; `team start` saves it in the running
+`TEAM_DIR/team.json`, without passing it to startup argv. That running JSON file
+is the only effective source for messages. Editing the original TOML template
+does not update an existing team.
 
-For every normal bound dispatcher-to-worker call, including the first and calls
-with `reply_to`, the public Rust `message::send` entry submits the business
-message A unchanged. Only after A's explicit native acceptance does it immediately
-attempt one independent reminder B, using the same binding, target and registered
-session checks. Direction comes from the binding identities, regardless of role
-names. B uses the same `from` and `to` as A, a new `constraint-<UUID>` id,
-`reply_to: A.id`, and exactly the configured String content in the ordinary
-`{team,message}` envelope. It has no system source, priority or extra permission.
-B bypasses only the automatic-followup orchestration, so it cannot generate C.
-Worker reports/replies, explicit Hook feedback and halt notifications do not
-trigger B. Startup `initial_prompt` remains a separate, once-only native launch
-argument and never triggers B.
-
-Missing, empty and all-whitespace values disable B. Nonblank text is never trimmed
-or rewritten: Chinese, quotes, backslashes, newlines and JSON-looking strings keep
-the ordinary message encoding. A and B each have their own 16384 UTF-8 byte limit;
-their combined length is irrelevant. Known configuration/length errors are
-checked before A is submitted. The text is stored with team/binding configuration
-and message receipts, so do not put secrets in it.
-
-The original accepted receipt stays at the top level. When B is enabled it adds
-`constraint` with B's exact `message`, its own `transport` and any native receipt
-fields or `error`. Its `reply_to` identifies A:
+The caller still supplies only the original business Message:
+`id`, `from`, `to`, `reply_to`, `content`. The public Rust entry, CLI and existing
+transports build one Envelope, reading the current configuration once before
+native submission and selecting the **bound receiving role**:
 
 ```json
 {
-  "envelope": {"team":"sample","message":{"id":"task-1","from":"lead","to":"builder","reply_to":null,"content":"A"}},
-  "transport": "accepted",
-  "constraint": {
-    "message": {"id":"constraint-<UUID>","from":"lead","to":"builder","reply_to":"task-1","content":"Configured original text"},
-    "transport": "accepted"
-  }
+  "team": "sample",
+  "recipient_constraints": "User-configured builder text",
+  "message": {"id":"task-1","from":"lead","to":"builder","reply_to":null,"content":"Business original"}
 }
 ```
 
-An A failure or unconfirmed submission returns the existing send error and never
-attempts B. After A is accepted, B can be `accepted`, `failed` (rejected before
-submission), or `unknown` (native submission was attempted but could not be
-confirmed). Existing conservative native error semantics remain: a native
-rejection after the prompt call is reported unconfirmed. A changed socket,
-process, location or native session is checked again for B; it is never redirected.
-The public Rust entry returns A's receipt with B's outcome even on partial
-success. The CLI prints that complete receipt to stdout and exits nonzero if B
-failed or is unknown; stderr explicitly retains A's accepted result. Retain both
-stdout and stderr when recording a CLI send. Neither message is automatically
-retried, and callers must inspect B's outcome instead of treating an error as
-permission to resend A.
+Both lead → builder and builder → lead use the receiver's own text. There are no
+hardcoded role names or new routes. Nonblank text is kept verbatim, including
+Chinese, newlines, quotes, backslashes and JSON-looking strings. Missing, empty
+or all-whitespace values always produce `"recipient_constraints": ""`. No default
+rules are generated. The caller cannot set this field in Message. Strict
+Envelope consumers must accept the new String field alongside `team`, `message`
+and optional `feedback_view`; do not reinterpret ordinary content as JSON.
 
-Acceptance does not prove the Agent received, read or acted on either message.
-A may begin executing before B arrives; B is a later reminder and the Agent
-decides its relevance. Each invocation orders A acceptance before its B attempt,
-but concurrent calls may interleave between them. There is no pair atomicity or
-queue/lock. Interruption after A acceptance can leave only A; interruption after
-B submission but before the receipt can leave B unknown. There is no crash
-recovery, replay or cross-process exactly-once guarantee.
+The business Message stays unchanged and is submitted **once**, together with
+its constraints. The independent B generation, second send, mode switches and
+partial-success receipt have been removed. The receipt contains the single
+`envelope`, `transport` and applicable native receipt. `accepted` is native
+admission, not proof of reading, execution or compliance. Failed/unconfirmed
+submissions keep the existing semantics and are never automatically retried.
+This field is ordinary prompt data, not a system message or a Hook rule.
 
-`tests/message.rs` covers the common orchestration with controlled synthetic
-transport failures, identity changes, interleaving and interruption.
-`tests/team.rs` and `tests/team_generate.rs` cover configuration snapshots and
-startup isolation. `tests/core_message.rs` exercises the public entry and CLI
-against a synthetic native socket; `tests/opencode_flow.rs` covers the private
-OpenCode API path for TUI and core. These are simulation/protocol tests. Actual
-automatic A/B submissions and Agent receipt for each Agent/runtime combination
-require separate authorized acceptance; the ordinary old-binding exchange is
-not evidence for this feature.
+Startup `initial_prompt` remains a once-only native launch argument. It is never
+replayed by bind, update or send. First and later messages use the same rules.
+Hook/report feedback and halt notifications preserve their `feedback_view`,
+compact Stop presentation, routing and session checks while receiving the same
+recipient field from the common envelope entry.
+
+### Existing binding source
+
+New `team bind` bindings record `config.team_config` as the explicit absolute
+`TEAM_DIR/team.json`. Direct `message bind` callers supply that field in their
+configuration. A pre-#71 binding remains readable, but cannot send until its
+source is explicitly supplied:
+
+```text
+crewmoor message source /absolute/existing-binding.json /absolute/TEAM_DIR
+```
+
+This one-time operation validates the source against the fixed pair and atomically
+adds only the source to the existing binding, preserving its sessions, native
+identities, routing and any legacy `worker_constraint` text. That old snapshot is
+retained as data only and never determines a new envelope. No Agent restart or
+native rebind is needed. A missing source produces instructions for this command;
+missing/unreadable/malformed configuration, mismatched team or absent/ambiguous
+bound roles fail before submission, with no fallback to an empty constraint or
+snapshot and no background recovery.
+
+### Save corrected text safely
+
+Place the authorized text in a UTF-8 file (an empty file clears the constraint),
+then use the minimal update command:
+
+```text
+crewmoor team constraint /absolute/TEAM_DIR builder /absolute/new-text.txt
+```
+
+The equivalent library call is `team::update_constraint(team_dir, role, text)`.
+It parses the running document against the team schema, checks the role and
+constraint length, changes only that role's field, stages a private file in the
+same directory and atomically renames it over `team.json`, reusing the existing
+atomic replacement helper. Unrelated fields are retained. Do not truncate-write
+the live document. This changes only message text, with no changes to sessions,
+launch arguments, routing or Hook rules. Coordinate multiple writers: concurrent
+saves are last-writer-wins and do not merge edits.
+
+A concurrent send sees a complete old or new configuration; a send starting its
+read after a successful save sees the new value. Previously sent messages and
+active work are not modified, and no corrective message is sent automatically.
+There is no watcher, cache or rebind.
+
+Content and each nonblank constraint retain their separate 16384 UTF-8 byte
+limits. The final serialized TUI argument is also checked against Linux's
+`MAX_ARG_STRLEN` (`PAGE_SIZE * 32`, including NUL): JSON escaping can expand two
+otherwise legal fields beyond this limit. Oversize text fails before native
+submission, with no truncation, splitting or discarded constraints. Core uses
+its existing socket JSON transport and OpenCode its fixed session API; neither
+passes this text as a CLI argument. Team configuration and receipts retain the
+text, so keep secrets out of it.
+
+`tests/message.rs` covers both directions, custom roles, serialization, per-send
+reads, source migration/errors, atomic saves, length boundaries and single-send
+outcomes. `tests/team.rs` covers new source binding and startup isolation;
+`tests/core_message.rs` and `tests/opencode_flow.rs` cover their existing protocol
+paths. These are synthetic tests; real native admission, actual Agent receipt,
+constraint compliance and Hook enforcement remain separate evidence.
 
 ## Evidence
 

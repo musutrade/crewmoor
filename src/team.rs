@@ -1,5 +1,6 @@
 //! Thin team entries over existing launch (#2), feedback registration (#4) and
 //! message binding (#9). One team directory per start; never reused or overwritten.
+mod constraint;
 mod generate;
 use crate::{
     Result,
@@ -8,6 +9,7 @@ use crate::{
     message::{self, Binding, Peer, Transport},
     record::Record,
 };
+pub use constraint::update_constraint;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -44,7 +46,7 @@ pub struct Role {
     #[serde(default)]
     pub agent_args: Vec<String>,
     pub initial_prompt: Option<String>,
-    /// Independent reminder after each accepted bound dispatcher message.
+    /// Original text included in every envelope addressed to this role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_constraint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -338,7 +340,8 @@ fn message_config(team: &Team, dir: &Path, worker: &str) -> Result<message::Conf
         runtime_binary: team.runtime_binary.clone(),
         socket,
         feedback_registry: team.feedback_registry.clone(),
-        worker_constraint: team.role(worker)?.message_constraint.clone(),
+        team_config: Some(dir.join("team.json")),
+        worker_constraint: None,
         dispatcher: peer(dir, &team.dispatcher)?,
         worker: peer(dir, worker)?,
     })
@@ -407,7 +410,7 @@ fn stop_role(
     let stopped = operate(&root)?;
     Ok(json!(stopped.phase))
 }
-const USAGE: &str = "usage: crewmoor team generate TEMPLATE [--output NEW_TEAM.toml] | start CONFIG STATE | bind TEAM_DIR WORKER | stop TEAM_DIR";
+const USAGE: &str = "usage: crewmoor team generate TEMPLATE [--output NEW_TEAM.toml] | start CONFIG STATE | bind TEAM_DIR WORKER | stop TEAM_DIR | constraint TEAM_DIR ROLE TEXT_FILE";
 pub fn cli(args: &[String]) -> Result<()> {
     let (cmd, rest) = args.split_first().ok_or(USAGE)?;
     if cmd == "generate" {
@@ -417,6 +420,7 @@ pub fn cli(args: &[String]) -> Result<()> {
         "start" => start_cli(rest),
         "bind" => bind_cli(rest),
         "stop" => stop_cli(rest),
+        "constraint" => constraint::cli(rest),
         _ => Err(USAGE.into()),
     }?;
     let encoded = serde_json::to_string_pretty(&value)?;

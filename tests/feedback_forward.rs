@@ -1,5 +1,7 @@
 #[path = "support/agents.rs"]
 mod agents;
+#[path = "support/running_team.rs"]
+mod running_team;
 use crewmoor::{
     config::{AgentKind, Runtime},
     feedback::{self, Evidence, Registration},
@@ -34,7 +36,7 @@ impl Fixture {
         let listener = UnixListener::bind(&socket).unwrap();
         let dispatcher = register(dir.path(), "dispatcher", "dispatcher-session");
         let worker = register(dir.path(), "worker", "worker-session");
-        let config = Config {
+        let mut config = Config {
             runtime: Runtime::Tui,
             core_id: None,
             core_version: None,
@@ -42,6 +44,7 @@ impl Fixture {
             socket,
             feedback_registry: dir.path().into(),
             worker_constraint: None,
+            team_config: None,
             dispatcher: Peer {
                 instance: dispatcher,
                 handle: "w1:p1".into(),
@@ -53,6 +56,7 @@ impl Fixture {
                 agent_executable: Some(agents::EXECUTABLE.into()),
             },
         };
+        running_team::configure(&mut config, "forward-test", "dispatcher", "worker");
         let agents = agents::Agents::spawn(dir.path(), &[("w1:p1", "codex"), ("w1:p2", "codex")]);
         let state = json!({"w1:p1":agent("w1:p1","one","dispatcher-session"),"w1:p2":agent("w1:p2","two","worker-session"),
             "processes":agents.processes()});
