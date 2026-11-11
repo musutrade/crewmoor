@@ -31,13 +31,17 @@ fn source(path: &str, dir: &str) -> Result<()> {
     let mut binding: Binding = serde_json::from_value(document.clone())?;
     binding.attach_source(Path::new(dir).join("team.json"))?;
     document["config"]["team_config"] = serde_json::to_value(&binding.config.team_config)?;
+    replace_binding(path, &document)?;
+    print(&binding)
+}
+/// Persist the preserved binding document through the existing atomic replacement helper.
+fn replace_binding(path: &Path, document: &serde_json::Value) -> Result<()> {
     let parent = path.parent().ok_or("binding parent missing")?;
     let file = path
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or("invalid binding filename")?;
-    crate::issue::replace(parent, file, &serde_json::to_vec_pretty(&document)?)?;
-    print(&binding)
+    crate::issue::replace(parent, file, &serde_json::to_vec_pretty(document)?)
 }
 fn print(value: &impl serde::Serialize) -> Result<()> {
     let encoded = serde_json::to_string_pretty(value)?;
